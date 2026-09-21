@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from little.active.inquisitor import ActiveInquisitor
+from little.core.models import UpdateType
 from little.language.parser import LearningEngine, SimpleParser
 from little.memory.store import MemoryStore
 
@@ -188,11 +189,26 @@ def cmd_skills_list(args: argparse.Namespace) -> None:
 def cmd_interact(args: argparse.Namespace) -> None:
     store, engine = get_engine(Path(args.db))
     inquisitor = ActiveInquisitor(store, engine)
-    print("=" * 65)
-    print(" LITTLE Cognitive Architecture — Continuous Learning REPL")
-    print(" Commands: 'quit' to exit, 'skills' to list procedural skills.")
-    print(" Try: math, slicing, facts, or asking questions!")
-    print("=" * 65 + "\n")
+    print("=" * 68)
+    print(" LITTLE Cognitive Architecture — Continuous Learning Interactive REPL")
+    print(" Commands: 'help' for examples, 'memory' for stored facts, 'quit' to exit.")
+    print(" Try: facts, questions, math, slicing, or physical dynamics!")
+    print("=" * 68 + "\n")
+
+    greetings = {
+        "hi", "hii", "hiii", "hello", "hey", "heyy", "howdy", "greetings",
+        "good morning", "good afternoon", "good evening", "yo", "sup", "hola",
+    }
+    help_cmds = {"help", "?", "commands", "menu"}
+    identity_cmds = {
+        "who are you", "who are you?", "what are you", "what are you?",
+        "who r u", "what r u", "what is little", "what is little?",
+        "what can you do", "what can you do?", "capabilities",
+    }
+    question_starters = (
+        "what", "is", "are", "does", "do", "can", "could", "how",
+        "calculate", "who", "which", "why", "where", "tell me", "describe",
+    )
 
     try:
         while True:
@@ -205,21 +221,131 @@ def cmd_interact(args: argparse.Namespace) -> None:
             if not user_input:
                 continue
 
-            if user_input.lower() in ("exit", "quit", ":q"):
+            clean_lower = user_input.lower().strip()
+
+            if clean_lower in ("exit", "quit", ":q"):
                 print("Goodbye!")
                 break
 
-            if user_input.lower() == "skills":
+            if clean_lower == "clear":
+                import os
+                os.system("clear" if os.name != "nt" else "cls")
+                continue
+
+            if clean_lower in greetings:
+                print(
+                    "\n👋 Hello! I am LITTLE (Lightweight In-memory Transitive & Temporal Learning Engine).\n"
+                    "I learn concepts, perform deductive logic, simulate physical decay over continuous time,\n"
+                    "execute Python algorithms with 0% error, and ask questions when uncertain.\n\n"
+                    "💡 Type 'help' to see example queries, or 'memory' to view my knowledge base!\n"
+                )
+                continue
+
+            if clean_lower in help_cmds:
+                print("""
+========================================================================
+ LITTLE Cognitive Architecture — Interactive Capabilities
+========================================================================
+
+1. 📚 Teach Facts (declarative statements):
+   • "A dog is an animal."
+   • "An animal is a living thing."
+   • "An animal is not a vehicle."
+   • "The apple is red."
+   • "Alice has a dog."
+
+2. ❓ Ask Questions (transitive deduction & properties):
+   • "Is a dog an animal?"
+   • "Is a dog a living thing?"       (Multi-hop deductive reasoning)
+   • "Is a dog a vehicle?"           (Disjoint refutation -> False)
+   • "What is an apple?"             (Knowledge graph summary)
+   • "What color is the apple?"
+
+3. 🔪 Physical Transformations & Continuous Dynamics (CfC ODEs):
+   • "Slice an apple into 4 pieces."
+   • "Is an apple slice part of an apple?"
+   • "What color is the apple slice after 2 hours?" (Browns over continuous time)
+   • "Is the apple slice fresh after 30 minutes?"
+
+4. ⚡ Exact Python Algorithmic Skills (0.45 ms, 100% precision):
+   • "What is 123 + 456?"            / "Calculate 50 * 25"
+   • "What is the factorial of 10?"
+   • "What is the fibonacci of 25?"
+   • "Is 104729 prime?"
+   • "What is the reverse of 'antigravity'?"
+   • "Is 'racecar' a palindrome?"
+
+5. 🔍 Inspection & REPL Utilities:
+   • "memory" or "concepts"          (List all stored concepts & relations)
+   • "inspect <concept>"             (Inspect properties & edges, e.g. 'inspect apple')
+   • "skills"                        (List registered procedural Python skills)
+   • "who are you"                   (Self-identity & architecture explanation)
+   • "clear"                         (Clear terminal screen)
+   • "quit" or "exit"                (Save and exit)
+========================================================================
+""")
+                continue
+
+            if clean_lower in ("memory", "concepts", "list concepts"):
+                concepts = store.list_concepts()
+                relations = store.get_relations()
+                print(f"\n[Persistent Memory: {len(concepts)} Concepts, {len(relations)} Relations]")
+                if concepts:
+                    c_names = [c.name for c in concepts]
+                    print(f"Concepts:  {', '.join(c_names)}")
+                if relations:
+                    print("Relations:")
+                    for r in relations[:20]:
+                        s = store.get_concept(r.subject_id)
+                        o = store.get_concept(r.object_id)
+                        s_name = s.name if s else r.subject_id
+                        o_name = o.name if o else r.object_id
+                        print(f"  ↳ ({s_name} {r.predicate} {o_name}) [conf: {r.confidence:.2f}]")
+                    if len(relations) > 20:
+                        print(f"  ... and {len(relations) - 20} more")
+                print()
+                continue
+
+            if clean_lower.startswith("inspect "):
+                target = clean_lower[8:].strip()
+                concept = store.get_concept(target)
+                if not concept:
+                    print(f"\nConcept '{target}' not found in memory.\n")
+                    continue
+                print(f"\n[CONCEPT: {concept.name.upper()}]")
+                print(f"ID:          {concept.id}")
+                print(f"Category:    {concept.category or 'None'}")
+                print(f"Attributes:  {json.dumps(concept.attributes, indent=2)}")
+                print(f"Confidence:  {concept.confidence}")
+                out_rels = store.get_relations(subject_id=concept.id)
+                if out_rels:
+                    print("Outgoing Relations:")
+                    for r in out_rels:
+                        obj = store.get_concept(r.object_id)
+                        obj_name = obj.name if obj else r.object_id
+                        print(f"  ↳ {concept.name} --[{r.predicate}]--> {obj_name} (conf: {r.confidence:.2f})")
+                in_rels = store.get_relations(object_id=concept.id)
+                if in_rels:
+                    print("Incoming Relations:")
+                    for r in in_rels:
+                        subj = store.get_concept(r.subject_id)
+                        subj_name = subj.name if subj else r.subject_id
+                        print(f"  ↳ {subj_name} --[{r.predicate}]--> {concept.name} (conf: {r.confidence:.2f})")
+                print()
+                continue
+
+            if clean_lower == "skills":
+                print("\n[Registered Procedural Skills]")
                 for s in store.list_skills():
                     print(f"  • {s.name}({', '.join(s.parameters)}) - {s.description}")
+                print()
                 continue
 
             # Determine whether input is question or statement/action
             is_question = (
                 user_input.endswith("?")
-                or user_input.lower().startswith(
-                    ("what", "is", "are", "does", "can", "how", "calculate")
-                )
+                or clean_lower.startswith(question_starters)
+                or clean_lower in identity_cmds
             )
 
             if is_question:
@@ -230,7 +356,8 @@ def cmd_interact(args: argparse.Namespace) -> None:
 
                 # Check if unknown and prompt active clarification
                 if res.is_unknown:
-                    parsed = SimpleParser.parse_question(user_input)
+                    known = {c.name.lower() for c in store.list_concepts()}
+                    parsed = SimpleParser.parse_question(user_input, known_concepts=known)
                     if parsed:
                         s, p, o = parsed
                         prompt = inquisitor.inspect_uncertainty(res, s, p, o)
@@ -252,7 +379,11 @@ def cmd_interact(args: argparse.Namespace) -> None:
             else:
                 # Statement or Action
                 res = engine.learn(user_input)
-                print(f"\n[Learned: {res.update_type.value}] {res.message}\n")
+                if res.update_type == UpdateType.NO_OP:
+                    print(f"\n[Learned: NO_OP] Could not extract structured relations from: '{user_input}'")
+                    print("💡 Tip: Try phrasing as a fact (e.g. 'A dog is an animal', 'An apple is red') or action ('Slice apple into 4 pieces'). Type 'help' for examples.\n")
+                else:
+                    print(f"\n[Learned: {res.update_type.value}] {res.message}\n")
     finally:
         store.close()
 

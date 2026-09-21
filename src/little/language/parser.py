@@ -23,6 +23,13 @@ from little.memory.store import MemoryStore
 from little.procedural.runner import SkillRunner
 from little.procedural.skills import register_builtin_skills
 
+NON_CONCEPT_WORDS = {
+    "who", "what", "where", "when", "why", "how",
+    "you", "me", "i", "he", "she", "it", "we", "they", "them",
+    "this", "that", "these", "those",
+    "hi", "hello", "hey", "hii", "ok", "okay", "yes", "no",
+}
+
 
 @dataclass
 class ParsedTriple:
@@ -63,12 +70,13 @@ class SimpleParser:
         if m_neg:
             s = cls.clean_noun(m_neg.group(1))
             o = cls.clean_noun(m_neg.group(2))
-            triples.append(
-                ParsedTriple(
-                    subject=s, predicate="disjoint_with", object_=o, is_negative=False
+            if s not in NON_CONCEPT_WORDS and o not in NON_CONCEPT_WORDS:
+                triples.append(
+                    ParsedTriple(
+                        subject=s, predicate="disjoint_with", object_=o, is_negative=False
+                    )
                 )
-            )
-            return triples
+                return triples
 
         # 2. "disjoint with" / "different from"
         m_disj = re.match(
@@ -79,12 +87,13 @@ class SimpleParser:
         if m_disj:
             s = cls.clean_noun(m_disj.group(1))
             o = cls.clean_noun(m_disj.group(2))
-            triples.append(
-                ParsedTriple(
-                    subject=s, predicate="disjoint_with", object_=o, is_negative=False
+            if s not in NON_CONCEPT_WORDS and o not in NON_CONCEPT_WORDS:
+                triples.append(
+                    ParsedTriple(
+                        subject=s, predicate="disjoint_with", object_=o, is_negative=False
+                    )
                 )
-            )
-            return triples
+                return triples
 
         # 3. Property statements with adjectives: "The apple is green", "The sky is blue"
         colors = {
@@ -106,28 +115,31 @@ class SimpleParser:
         if m_color:
             s = cls.clean_noun(m_color.group(1))
             val = m_color.group(2).lower()
-            triples.append(
-                ParsedTriple(
-                    subject=s, predicate="color", object_=val, is_property=True
+            if s not in NON_CONCEPT_WORDS:
+                triples.append(
+                    ParsedTriple(
+                        subject=s, predicate="color", object_=val, is_property=True
+                    )
                 )
-            )
-            return triples
+                return triples
 
         # 4. "has a" / "owns a" / "have"
         m_has = re.match(r"^(.*?)\s+(?:has|owns|have)\s+(.*?)$", clean, re.IGNORECASE)
         if m_has:
             s = cls.clean_noun(m_has.group(1))
             o = cls.clean_noun(m_has.group(2))
-            triples.append(ParsedTriple(subject=s, predicate="has", object_=o))
-            return triples
+            if s not in NON_CONCEPT_WORDS and o not in NON_CONCEPT_WORDS:
+                triples.append(ParsedTriple(subject=s, predicate="has", object_=o))
+                return triples
 
         # 5. Taxonomic "is a" / "are" classification: "A dog is an animal", "Dogs are animals"
         m_is_a = re.match(r"^(.*?)\s+(?:is|are)\s+(.*?)$", clean, re.IGNORECASE)
         if m_is_a:
             s = cls.clean_noun(m_is_a.group(1))
             o = cls.clean_noun(m_is_a.group(2))
-            triples.append(ParsedTriple(subject=s, predicate="is_a", object_=o))
-            return triples
+            if s not in NON_CONCEPT_WORDS and o not in NON_CONCEPT_WORDS:
+                triples.append(ParsedTriple(subject=s, predicate="is_a", object_=o))
+                return triples
 
         # 6. Fallback: split on common verbs
         m_verb = re.match(r"^(.*?)\s+([a-z_]+)\s+(.*?)$", clean, re.IGNORECASE)
@@ -135,7 +147,8 @@ class SimpleParser:
             s = cls.clean_noun(m_verb.group(1))
             p = m_verb.group(2).lower()
             o = cls.clean_noun(m_verb.group(3))
-            triples.append(ParsedTriple(subject=s, predicate=p, object_=o))
+            if s not in NON_CONCEPT_WORDS and o not in NON_CONCEPT_WORDS:
+                triples.append(ParsedTriple(subject=s, predicate=p, object_=o))
 
         return triples
 
@@ -160,6 +173,18 @@ class SimpleParser:
     ) -> tuple[str, str, Any] | None:
         """Extract (subject, predicate, target) from natural English questions."""
         q = text.strip().rstrip("?").strip()
+
+        # 0. Identity query: "who are you", "what are you", "what is little"
+        if re.match(
+            r"^(?:who|what)\s+(?:are|is)\s+(?:you|little|mivi|mivi_model)(?:\s+model|\s+ai)?$",
+            q,
+            re.IGNORECASE,
+        ) or re.match(
+            r"^(?:what\s+can\s+you\s+do|what\s+are\s+your\s+capabilities)$",
+            q,
+            re.IGNORECASE,
+        ):
+            return ("little", "__identity__", None)
 
         # 1. Arithmetic calculations: "What is 123 + 456?", "Calculate 50 * 25"
         m_calc_sym = re.match(
@@ -291,6 +316,23 @@ class SimpleParser:
             s = cls.clean_noun(m_does_have.group(1))
             o = cls.clean_noun(m_does_have.group(2))
             return (s, "has", o)
+
+        # 6. Concept definition query: "What is an apple?", "Who is Alice?", "Tell me about a dog"
+        m_def = re.match(
+            r"^(?:what|who)\s+(?:is|are)\s+(?:an?|the)?\s*([a-zA-Z0-9_\s-]+)$",
+            q,
+            re.IGNORECASE,
+        )
+        if not m_def:
+            m_def = re.match(
+                r"^tell\s+me\s+about\s+(?:an?|the)?\s*([a-zA-Z0-9_\s-]+)$",
+                q,
+                re.IGNORECASE,
+            )
+        if m_def:
+            target_noun = cls.clean_noun(m_def.group(1))
+            if target_noun and target_noun not in NON_CONCEPT_WORDS:
+                return (target_noun, "__definition__", None)
 
         # 5. Taxonomic queries: "Is a dog an animal?" / "Is an rtx 4090 hardware?" / "Are dogs animals?"
         m_tax = re.match(r"^(?:is|are)\s+(.+)$", q, re.IGNORECASE)
@@ -488,6 +530,100 @@ class LearningEngine:
             )
 
         subj, pred, target = parsed
+
+        # Identity query:
+        if pred == "__identity__":
+            bio = (
+                "I am LITTLE (Lightweight In-memory Transitive & Temporal Learning Engine), "
+                "a continuous-learning cognitive architecture. Instead of predicting next tokens statistically like an LLM, "
+                "I maintain an explicit semantic knowledge graph in persistent memory, execute exact multi-hop deductive logic "
+                "with zero catastrophic forgetting, simulate continuous physical dynamics (e.g. apple browning over time), "
+                "execute exact Python algorithms with 0% error, and actively ask questions when uncertain."
+            )
+            return InferenceResult(
+                query=question,
+                status=BeliefStatus.SUPPORTED,
+                answer=bio,
+                confidence=1.0,
+                evidence=["Self-identity specification"],
+                trace=["LITTLE Cognitive Architecture v0.1.0"],
+            )
+
+        # Concept definition query:
+        if pred == "__definition__":
+            concept = self.memory.get_concept(subj)
+            if not concept:
+                return InferenceResult(
+                    query=question,
+                    status=BeliefStatus.UNKNOWN,
+                    answer=None,
+                    confidence=0.0,
+                    evidence=[],
+                    trace=[f"Concept '{subj}' is unknown in memory."],
+                )
+
+            desc_parts: list[str] = []
+            out_rels = self.memory.get_relations(subject_id=concept.id)
+            is_a_rels = [
+                self.memory.get_concept(r.object_id).name
+                for r in out_rels
+                if r.predicate == "is_a" and self.memory.get_concept(r.object_id)
+            ]
+            part_of_rels = [
+                self.memory.get_concept(r.object_id).name
+                for r in out_rels
+                if r.predicate == "part_of" and self.memory.get_concept(r.object_id)
+            ]
+            has_rels = [
+                self.memory.get_concept(r.object_id).name
+                for r in out_rels
+                if r.predicate == "has" and self.memory.get_concept(r.object_id)
+            ]
+            disjoint_rels = [
+                self.memory.get_concept(r.object_id).name
+                for r in out_rels
+                if r.predicate == "disjoint_with" and self.memory.get_concept(r.object_id)
+            ]
+
+            in_rels = self.memory.get_relations(object_id=concept.id)
+            parts = [
+                self.memory.get_concept(r.subject_id).name
+                for r in in_rels
+                if r.predicate == "part_of" and self.memory.get_concept(r.subject_id)
+            ]
+
+            if is_a_rels:
+                desc_parts.append(f"is a {', '.join(is_a_rels)}")
+            if part_of_rels:
+                desc_parts.append(f"is part of {', '.join(part_of_rels)}")
+            if has_rels:
+                desc_parts.append(f"has {', '.join(has_rels)}")
+            if parts:
+                desc_parts.append(f"consists of parts: {', '.join(parts)}")
+            if disjoint_rels:
+                desc_parts.append(f"is not a {', '.join(disjoint_rels)}")
+
+            attrs = self.inference.get_inherited_attributes(subj)
+            if attrs:
+                attr_strs = []
+                for k, v in attrs.items():
+                    val = ", ".join(v) if isinstance(v, list) else str(v)
+                    attr_strs.append(f"{k}={val}")
+                desc_parts.append(f"attributes: ({', '.join(attr_strs)})")
+
+            if not desc_parts:
+                explanation = f"'{concept.name}' is registered in memory (confidence: {concept.confidence:.1f})."
+            else:
+                explanation = f"{concept.name.capitalize()} {'; '.join(desc_parts)}."
+
+            return InferenceResult(
+                query=question,
+                status=BeliefStatus.SUPPORTED,
+                answer=explanation,
+                confidence=concept.confidence,
+                evidence=[f"Retrieved concept definition for '{concept.name}'"],
+                trace=[f"Knowledge graph query for concept ID: {concept.id}"],
+            )
 
         # Procedural Mathematics query:
         if pred == "__math__":

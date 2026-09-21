@@ -38,17 +38,32 @@ class ActiveInquisitor:
         inference_result: InferenceResult,
         subject: str,
         predicate: str,
-        target: str,
+        target: str | None,
     ) -> ClarificationPrompt | None:
         """If the inference result is UNKNOWN or ambiguous, generate a clarification prompt."""
         if inference_result.status != BeliefStatus.UNKNOWN:
             return None
 
         clean_subj = subject.strip().lower()
-        clean_pred = predicate.strip().lower()
-        clean_target = target.strip().lower()
+        clean_pred = predicate.strip().lower() if predicate else "is_a"
+        clean_target = str(target).strip().lower() if target is not None else ""
 
         subj_concept = self.memory.get_concept(clean_subj)
+
+        # Case 0: Concept definition query on unknown subject (e.g. "What is a mango?")
+        if not clean_target:
+            if not subj_concept:
+                return ClarificationPrompt(
+                    original_query=inference_result.query,
+                    missing_concept=clean_subj,
+                    question_for_user=f"I have no memory of '{clean_subj}'. What category or type of thing is a {clean_subj}?",
+                    pending_subject=clean_subj,
+                    pending_predicate="is_a",
+                    pending_object="",
+                    expected_type="text",
+                )
+            return None
+
         target_concept = self.memory.get_concept(clean_target)
 
         # Case 1: Subject concept completely missing
@@ -91,6 +106,15 @@ class ActiveInquisitor:
     ) -> LearningResult:
         """Parse user response, incorporate into persistent memory, and return LearningResult."""
         clean_resp = user_response.strip().lower()
+
+        # If pending_object is empty (we asked for the category of pending_subject)
+        if not prompt.pending_object:
+            from little.language.parser import SimpleParser
+
+            cat = SimpleParser.clean_noun(clean_resp)
+            if cat:
+                statement = f"A {prompt.pending_subject} is a {cat}."
+                return self.learning_engine.learn(statement)
 
         # Check positive confirmation
         positive_affirmations = {"yes", "true", "correct", "indeed", "yep", "sure", "y"}
