@@ -49,6 +49,19 @@ class SimpleParser:
     )
 
     @classmethod
+    def normalize_text(cls, text: str) -> str:
+        s = text.strip()
+        # English contractions normalization
+        s = re.sub(r"\bwhat['’]?s\b", "what is", s, flags=re.IGNORECASE)
+        s = re.sub(r"\bwho['’]?s\b", "who is", s, flags=re.IGNORECASE)
+        s = re.sub(r"\bwhere['’]?s\b", "where is", s, flags=re.IGNORECASE)
+        s = re.sub(r"\bhow['’]?s\b", "how is", s, flags=re.IGNORECASE)
+        s = re.sub(r"\bisn['’]?t\b", "is not", s, flags=re.IGNORECASE)
+        s = re.sub(r"\baren['’]?t\b", "are not", s, flags=re.IGNORECASE)
+        s = re.sub(r"\bcan['’]?t\b", "cannot", s, flags=re.IGNORECASE)
+        return s
+
+    @classmethod
     def clean_noun(cls, text: str) -> str:
         s = cls.LEADING_ARTICLE.sub("", text.strip().lower()).strip()
         # Handle plural to singular basic normalization
@@ -60,7 +73,7 @@ class SimpleParser:
 
     @classmethod
     def parse_statement(cls, text: str) -> list[ParsedTriple]:
-        clean = text.strip().rstrip(".").strip()
+        clean = cls.normalize_text(text).rstrip(".").strip()
         triples: list[ParsedTriple] = []
 
         # 1. Negative / Disjoint statements: "An animal is not a vehicle" / "Animals are not vehicles"
@@ -172,7 +185,7 @@ class SimpleParser:
         cls, text: str, known_concepts: set[str] | None = None
     ) -> tuple[str, str, Any] | None:
         """Extract (subject, predicate, target) from natural English questions."""
-        q = text.strip().rstrip("?").strip()
+        q = cls.normalize_text(text).rstrip("?").strip()
 
         # 0. Identity query: "who are you", "what are you", "what is little"
         if re.match(
@@ -186,9 +199,9 @@ class SimpleParser:
         ):
             return ("little", "__identity__", None)
 
-        # 1. Arithmetic calculations: "What is 123 + 456?", "Calculate 50 * 25"
+        # 1. Arithmetic calculations: "4+4", "4 + 4", "What is 123 + 456?", "whats 4+4", "50 * 25"
         m_calc_sym = re.match(
-            r"^(?:what is|calculate)\s+(\d+(?:\.\d+)?)\s*([\+\-\*\/])\s*(\d+(?:\.\d+)?)$",
+            r"^(?:(?:what\s+is|calculate|solve|eval|evaluate)\s+)?(\d+(?:\.\d+)?)\s*([\+\-\*\/\^]|\*\*)\s*(\d+(?:\.\d+)?)$",
             q,
             re.IGNORECASE,
         )
@@ -204,11 +217,18 @@ class SimpleParser:
                 if "." in m_calc_sym.group(3)
                 else int(m_calc_sym.group(3))
             )
-            sym_map = {"+": "ADD", "-": "SUBTRACT", "*": "MULTIPLY", "/": "DIVIDE"}
+            sym_map = {
+                "+": "ADD",
+                "-": "SUBTRACT",
+                "*": "MULTIPLY",
+                "/": "DIVIDE",
+                "^": "POWER",
+                "**": "POWER",
+            }
             return (sym_map[op_sym], "__math__", {"a": num1, "b": num2})
 
         m_calc_word = re.match(
-            r"^(?:what is|calculate)\s+(\d+(?:\.\d+)?)\s+(plus|minus|times|multiplied by|divided by)\s+(\d+(?:\.\d+)?)$",
+            r"^(?:(?:what\s+is|calculate|solve|eval|evaluate)\s+)?(\d+(?:\.\d+)?)\s+(plus|minus|times|multiplied by|divided by|to the power of)\s+(\d+(?:\.\d+)?)$",
             q,
             re.IGNORECASE,
         )
@@ -230,32 +250,41 @@ class SimpleParser:
                 "times": "MULTIPLY",
                 "multiplied by": "MULTIPLY",
                 "divided by": "DIVIDE",
+                "to the power of": "POWER",
             }
             return (word_map[op_word], "__math__", {"a": num1, "b": num2})
 
         m_fact = re.match(
-            r"^(?:what is|calculate)\s+(?:the\s+)?factorial of\s+(\d+)$",
+            r"^(?:(?:what\s+is|calculate)\s+)?(?:the\s+)?factorial\s+(?:of\s+)?(\d+)$",
             q,
             re.IGNORECASE,
         )
+        if not m_fact:
+            m_fact = re.match(
+                r"^(?:(?:what\s+is|calculate)\s+)?(\d+)!$",
+                q,
+                re.IGNORECASE,
+            )
         if m_fact:
             n = int(m_fact.group(1))
             return ("FACTORIAL", "__math__", {"n": n})
 
         m_fib = re.match(
-            r"^(?:what is|calculate)\s+(?:the\s+)?fibonacci\s+(?:number\s+)?(?:of\s+|for\s+)?(\d+)$",
+            r"^(?:(?:what\s+is|calculate)\s+)?(?:the\s+)?(?:fibonacci|fib)\s+(?:number\s+)?(?:of\s+|for\s+)?(\d+)$",
             q,
             re.IGNORECASE,
         )
         if m_fib:
             return ("FIBONACCI", "__math__", {"n": int(m_fib.group(1))})
 
-        m_prime = re.match(r"^is\s+(\d+)\s+prime$", q, re.IGNORECASE)
+        m_prime = re.match(r"^(?:is\s+)?(\d+)\s+prime$", q, re.IGNORECASE)
+        if not m_prime:
+            m_prime = re.match(r"^prime\s+(\d+)$", q, re.IGNORECASE)
         if m_prime:
             return ("IS_PRIME", "__math__", {"n": int(m_prime.group(1))})
 
         m_rev = re.match(
-            r"^(?:what is|calculate)\s+(?:the\s+)?reverse\s+of\s+['\"]?([^'\"]+)['\"]?$",
+            r"^(?:(?:what\s+is|calculate)\s+)?(?:the\s+)?reverse\s+(?:of\s+)?['\"]?([^'\"]+)['\"]?$",
             q,
             re.IGNORECASE,
         )
@@ -263,7 +292,7 @@ class SimpleParser:
             return ("REVERSE_STRING", "__math__", {"text": m_rev.group(1).strip()})
 
         m_pal = re.match(
-            r"^is\s+['\"]?([^'\"]+)['\"]?\s+a\s+palindrome$",
+            r"^(?:is\s+)?['\"]?([^'\"]+)['\"]?\s+(?:a\s+)?palindrome$",
             q,
             re.IGNORECASE,
         )

@@ -74,3 +74,21 @@ def test_definition_unknown_curiosity_flow():
     res_after = engine.ask("What is a mango?")
     assert res_after.status == BeliefStatus.SUPPORTED
     assert "fruit" in str(res_after.answer).lower()
+
+
+def test_contractions_and_flexible_math():
+    """Verify that contractions like 'whats 4+4' and raw math expressions work seamlessly."""
+    store = MemoryStore(":memory:")
+    engine = LearningEngine(store)
+
+    assert engine.ask("whats 4+4").answer == 8
+    assert engine.ask("what's 4+4").answer == 8
+    assert engine.ask("4+4").answer == 8
+    assert engine.ask("4 + 4").answer == 8
+    assert engine.ask("5 * 5").answer == 25
+    assert engine.ask("10 / 2").answer == 5.0
+    assert engine.ask("2^8").answer == 256
+    assert engine.ask("5!").answer == 120
+    assert engine.ask("fibonacci 10").answer == 55
+    assert engine.ask("is 7 prime").answer is True
+

@@ -342,8 +342,12 @@ def cmd_interact(args: argparse.Namespace) -> None:
                 continue
 
             # Determine whether input is question or statement/action
+            known = {c.name.lower() for c in store.list_concepts()}
+            parsed_q = SimpleParser.parse_question(user_input, known_concepts=known)
+
             is_question = (
-                user_input.endswith("?")
+                parsed_q is not None
+                or user_input.endswith("?")
                 or clean_lower.startswith(question_starters)
                 or clean_lower in identity_cmds
             )
@@ -356,8 +360,7 @@ def cmd_interact(args: argparse.Namespace) -> None:
 
                 # Check if unknown and prompt active clarification
                 if res.is_unknown:
-                    known = {c.name.lower() for c in store.list_concepts()}
-                    parsed = SimpleParser.parse_question(user_input, known_concepts=known)
+                    parsed = parsed_q or SimpleParser.parse_question(user_input, known_concepts=known)
                     if parsed:
                         s, p, o = parsed
                         prompt = inquisitor.inspect_uncertainty(res, s, p, o)
