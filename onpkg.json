@@ -1,0 +1,44 @@
+{
+  "agent_instructions": {
+    "active_skills": [],
+    "docs_directory": "onpkg_docs/"
+  },
+  "architecture": {},
+  "packages": {
+    "added_by_agent": [],
+    "core": []
+  },
+  "project": {
+    "name": "little",
+    "package_manager": "uv",
+    "runtime": "python",
+    "stack": "custom"
+  },
+  "scripts": {
+    "test": "uv run pytest",
+    "lint": "uv run ruff check .",
+    "format": "uv run ruff format ."
+  },
+  "sources": {
+    "directories": [
+      "research"
+    ],
+    "file_patterns": [
+      "*.md"
+    ],
+    "files": [
+      "README(1).md",
+      "architecture.md",
+      "coreidea.md",
+      "implementationplan.md",
+      "prd.md",
+      "research/01_non_autoregressive_and_edge_engines.md",
+      "research/02_ternary_quantization_and_hardware_efficiency.md",
+      "research/03_liquid_foundation_models_and_dynamical_systems.md",
+      "research/04_deepseek_architectures_and_memory_sparsity.md",
+      "research/README.md",
+      "spec.md",
+      "todo.md"
+    ]
+  }
+}

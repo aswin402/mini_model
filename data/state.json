@@ -1,0 +1,207 @@
+{
+  "concepts": [
+    {
+      "id": "concept_a3dbc7fac6d6",
+      "name": "animal",
+      "aliases": [],
+      "category": null,
+      "attributes": {},
+      "confidence": 1.0,
+      "status": "ACTIVE",
+      "created_at": "2026-09-21T13:53:22.438947+00:00"
+    },
+    {
+      "id": "concept_4bf48448eb32",
+      "name": "apple",
+      "aliases": [],
+      "category": null,
+      "attributes": {
+        "color": [
+          "red",
+          "green"
+        ]
+      },
+      "confidence": 1.0,
+      "status": "ACTIVE",
+      "created_at": "2026-09-21T13:53:23.127646+00:00"
+    },
+    {
+      "id": "concept_357ca343672c",
+      "name": "car",
+      "aliases": [],
+      "category": null,
+      "attributes": {},
+      "confidence": 1.0,
+      "status": "ACTIVE",
+      "created_at": "2026-09-21T13:53:22.799534+00:00"
+    },
+    {
+      "id": "concept_adf744d10e19",
+      "name": "dog",
+      "aliases": [],
+      "category": null,
+      "attributes": {},
+      "confidence": 1.0,
+      "status": "ACTIVE",
+      "created_at": "2026-09-21T13:53:22.430081+00:00"
+    },
+    {
+      "id": "concept_a914e2216265",
+      "name": "living thing",
+      "aliases": [],
+      "category": null,
+      "attributes": {},
+      "confidence": 1.0,
+      "status": "ACTIVE",
+      "created_at": "2026-09-21T13:53:22.624940+00:00"
+    },
+    {
+      "id": "concept_c053829b091f",
+      "name": "vehicle",
+      "aliases": [],
+      "category": null,
+      "attributes": {},
+      "confidence": 1.0,
+      "status": "ACTIVE",
+      "created_at": "2026-09-21T13:53:22.809602+00:00"
+    }
+  ],
+  "relations": [
+    {
+      "id": "rel_f85c965785bf",
+      "subject_id": "concept_adf744d10e19",
+      "predicate": "is_a",
+      "object_id": "concept_a3dbc7fac6d6",
+      "weight_positive": 1,
+      "weight_negative": 0,
+      "confidence": 0.5,
+      "source_experience_id": null,
+      "created_at": "2026-09-21T13:53:22.443298+00:00"
+    },
+    {
+      "id": "rel_7da404503675",
+      "subject_id": "concept_a3dbc7fac6d6",
+      "predicate": "is_a",
+      "object_id": "concept_a914e2216265",
+      "weight_positive": 1,
+      "weight_negative": 0,
+      "confidence": 0.5,
+      "source_experience_id": null,
+      "created_at": "2026-09-21T13:53:22.634490+00:00"
+    },
+    {
+      "id": "rel_052cbf94cf20",
+      "subject_id": "concept_357ca343672c",
+      "predicate": "is_a",
+      "object_id": "concept_c053829b091f",
+      "weight_positive": 1,
+      "weight_negative": 0,
+      "confidence": 0.5,
+      "source_experience_id": null,
+      "created_at": "2026-09-21T13:53:22.816075+00:00"
+    },
+    {
+      "id": "rel_c8ff105fcaa0",
+      "subject_id": "concept_a3dbc7fac6d6",
+      "predicate": "disjoint_with",
+      "object_id": "concept_c053829b091f",
+      "weight_positive": 1,
+      "weight_negative": 0,
+      "confidence": 0.5,
+      "source_experience_id": null,
+      "created_at": "2026-09-21T13:53:22.969731+00:00"
+    }
+  ],
+  "experiences": [
+    {
+      "id": "exp_b980031dd68b",
+      "input_text": "The apple is green.",
+      "extracted_triples": [
+        {
+          "subject": "apple",
+          "predicate": "color",
+          "object": "green",
+          "is_property": true,
+          "is_negative": false
+        }
+      ],
+      "source": "user",
+      "timestamp": "2026-09-21T13:53:23.307527+00:00"
+    },
+    {
+      "id": "exp_547e409615bc",
+      "input_text": "The apple is red.",
+      "extracted_triples": [
+        {
+          "subject": "apple",
+          "predicate": "color",
+          "object": "red",
+          "is_property": true,
+          "is_negative": false
+        }
+      ],
+      "source": "user",
+      "timestamp": "2026-09-21T13:53:23.141875+00:00"
+    },
+    {
+      "id": "exp_756d8cff30cc",
+      "input_text": "An animal is not a vehicle.",
+      "extracted_triples": [
+        {
+          "subject": "animal",
+          "predicate": "disjoint_with",
+          "object": "vehicle",
+          "is_property": false,
+          "is_negative": false
+        }
+      ],
+      "source": "user",
+      "timestamp": "2026-09-21T13:53:22.978272+00:00"
+    },
+    {
+      "id": "exp_afebc5fb73ce",
+      "input_text": "A car is a vehicle.",
+      "extracted_triples": [
+        {
+          "subject": "car",
+          "predicate": "is_a",
+          "object": "vehicle",
+          "is_property": false,
+          "is_negative": false
+        }
+      ],
+      "source": "user",
+      "timestamp": "2026-09-21T13:53:22.821035+00:00"
+    },
+    {
+      "id": "exp_5c8ac992e061",
+      "input_text": "An animal is a living thing.",
+      "extracted_triples": [
+        {
+          "subject": "animal",
+          "predicate": "is_a",
+          "object": "living thing",
+          "is_property": false,
+          "is_negative": false
+        }
+      ],
+      "source": "user",
+      "timestamp": "2026-09-21T13:53:22.638890+00:00"
+    },
+    {
+      "id": "exp_c4b5eaf61985",
+      "input_text": "A dog is an animal.",
+      "extracted_triples": [
+        {
+          "subject": "dog",
+          "predicate": "is_a",
+          "object": "animal",
+          "is_property": false,
+          "is_negative": false
+        }
+      ],
+      "source": "user",
+      "timestamp": "2026-09-21T13:53:22.447766+00:00"
+    }
+  ]
+}

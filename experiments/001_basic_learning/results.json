@@ -1,0 +1,14 @@
+{
+  "training_facts_count": 20,
+  "total_queries_evaluated": 38,
+  "direct_accuracy": 100.0,
+  "transitive_accuracy": 100.0,
+  "disjoint_refutation_accuracy": 100.0,
+  "unknown_detection_rate": 100.0,
+  "hallucination_rate": 0.0,
+  "avg_query_latency_ms": 0.1124,
+  "database_size_bytes": 4096,
+  "concepts_stored": 18,
+  "relations_stored": 18,
+  "training_time_total_s": 0.2603
+}

@@ -1,0 +1,14 @@
+{
+  "task_a_acc_initial": 100.0,
+  "task_a_acc_after_task_b": 100.0,
+  "task_a_acc_after_task_c": 100.0,
+  "task_b_acc_initial": 100.0,
+  "task_b_acc_after_task_c": 100.0,
+  "task_c_acc_initial": 100.0,
+  "catastrophic_forgetting_task_a": 0.0,
+  "catastrophic_forgetting_task_b": 0.0,
+  "total_concepts_learned": 33,
+  "total_relations_learned": 30,
+  "db_file_size_bytes": 4096,
+  "elapsed_seconds": 0.4107
+}
