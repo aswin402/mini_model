@@ -9,7 +9,9 @@ from little.memory.store import MemoryStore
 def test_conversational_pronoun_protection():
     """Verify that conversational sentences like 'who are you' do not create garbage concepts."""
     triples = SimpleParser.parse_statement("who are you")
-    assert len(triples) == 0, f"Expected no triples for conversational input, got: {triples}"
+    assert len(triples) == 0, (
+        f"Expected no triples for conversational input, got: {triples}"
+    )
 
     triples_hello = SimpleParser.parse_statement("hello")
     assert len(triples_hello) == 0
@@ -67,7 +69,9 @@ def test_definition_unknown_curiosity_flow():
 
     # User answers: "fruit"
     learn_res = inquisitor.resolve_response(prompt, "fruit")
-    assert "mango" in learn_res.concepts_created or "fruit" in learn_res.concepts_created
+    assert (
+        "mango" in learn_res.concepts_created or "fruit" in learn_res.concepts_created
+    )
     assert any("mango is_a fruit" in r for r in learn_res.relations_created)
 
     # Re-ask
@@ -91,4 +95,3 @@ def test_contractions_and_flexible_math():
     assert engine.ask("5!").answer == 120
     assert engine.ask("fibonacci 10").answer == 55
     assert engine.ask("is 7 prime").answer is True
-

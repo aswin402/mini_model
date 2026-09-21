@@ -15,6 +15,7 @@ from typing import Any, Self
 from little.core.models import (
     Concept,
     ConceptStatus,
+    Construction,
     Entity,
     Experience,
     Relation,
@@ -41,6 +42,7 @@ class MemoryStore:
     def _init_db(self) -> None:
         with self._conn:
             self._conn.executescript(SCHEMA_V1)
+        self.seed_default_constructions()
 
     def close(self) -> None:
         if self._conn:
@@ -484,7 +486,9 @@ class MemoryStore:
             try:
                 params = json.loads(row["input_signature"])
             except (json.JSONDecodeError, TypeError, ValueError):
-                params = [p.strip() for p in row["input_signature"].split(",") if p.strip()]
+                params = [
+                    p.strip() for p in row["input_signature"].split(",") if p.strip()
+                ]
         return Skill(
             id=row["id"],
             name=row["name"],
@@ -506,7 +510,11 @@ class MemoryStore:
                 try:
                     params = json.loads(row["input_signature"])
                 except (json.JSONDecodeError, TypeError, ValueError):
-                    params = [p.strip() for p in row["input_signature"].split(",") if p.strip()]
+                    params = [
+                        p.strip()
+                        for p in row["input_signature"].split(",")
+                        if p.strip()
+                    ]
             skills.append(
                 Skill(
                     id=row["id"],
@@ -520,6 +528,382 @@ class MemoryStore:
         return skills
 
     # -------------------------------------------------------------------------
+    # Construction Grammar Memory: Syntactic-Semantic Constructions
+    # -------------------------------------------------------------------------
+
+    def save_construction(self, construction: Construction) -> str:
+        """Save or update a Construction Grammar mapping in memory."""
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO constructions (
+                    id, name, pattern_tokens_json, slot_roles_json, predicate_template,
+                    construction_type, is_negative, is_property, confidence,
+                    evidence_positive, evidence_negative, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    pattern_tokens_json = excluded.pattern_tokens_json,
+                    slot_roles_json = excluded.slot_roles_json,
+                    predicate_template = excluded.predicate_template,
+                    construction_type = excluded.construction_type,
+                    is_negative = excluded.is_negative,
+                    is_property = excluded.is_property,
+                    confidence = excluded.confidence,
+                    evidence_positive = excluded.evidence_positive,
+                    evidence_negative = excluded.evidence_negative;
+                """,
+                (
+                    construction.id,
+                    construction.name,
+                    json.dumps(construction.pattern_tokens),
+                    json.dumps(construction.slot_roles),
+                    construction.predicate_template,
+                    construction.construction_type,
+                    1 if construction.is_negative else 0,
+                    1 if construction.is_property else 0,
+                    construction.confidence,
+                    construction.evidence_positive,
+                    construction.evidence_negative,
+                    construction.created_at,
+                ),
+            )
+        return construction.id
+
+    def get_construction(self, construction_id: str) -> Construction | None:
+        """Retrieve a construction by ID."""
+        cursor = self._conn.execute(
+            """
+            SELECT id, name, pattern_tokens_json, slot_roles_json, predicate_template,
+                   construction_type, is_negative, is_property, confidence,
+                   evidence_positive, evidence_negative, created_at
+            FROM constructions WHERE id = ?;
+            """,
+            (construction_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return self._row_to_construction(row)
+
+    def get_construction_by_name(self, name: str) -> Construction | None:
+        """Retrieve a construction by its unique name."""
+        cursor = self._conn.execute(
+            """
+            SELECT id, name, pattern_tokens_json, slot_roles_json, predicate_template,
+                   construction_type, is_negative, is_property, confidence,
+                   evidence_positive, evidence_negative, created_at
+            FROM constructions WHERE name = ?;
+            """,
+            (name.strip().lower(),),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return self._row_to_construction(row)
+
+    def list_constructions(
+        self, construction_type: str | None = None
+    ) -> list[Construction]:
+        """List all stored grammatical constructions, optionally filtered by type."""
+        if construction_type:
+            cursor = self._conn.execute(
+                """
+                SELECT id, name, pattern_tokens_json, slot_roles_json, predicate_template,
+                       construction_type, is_negative, is_property, confidence,
+                       evidence_positive, evidence_negative, created_at
+                FROM constructions WHERE construction_type = ? ORDER BY confidence DESC, name ASC;
+                """,
+                (construction_type.strip().lower(),),
+            )
+        else:
+            cursor = self._conn.execute(
+                """
+                SELECT id, name, pattern_tokens_json, slot_roles_json, predicate_template,
+                       construction_type, is_negative, is_property, confidence,
+                       evidence_positive, evidence_negative, created_at
+                FROM constructions ORDER BY confidence DESC, name ASC;
+                """
+            )
+        return [self._row_to_construction(row) for row in cursor.fetchall()]
+
+    def add_construction_evidence(
+        self, construction_id: str, positive: bool = True
+    ) -> None:
+        """Reinforce or penalize a construction's confidence based on real-world usage."""
+        col = "evidence_positive" if positive else "evidence_negative"
+        with self._conn:
+            self._conn.execute(
+                f"UPDATE constructions SET {col} = {col} + 1 WHERE id = ?;",
+                (construction_id,),
+            )
+            row = self._conn.execute(
+                "SELECT evidence_positive, evidence_negative FROM constructions WHERE id = ?;",
+                (construction_id,),
+            ).fetchone()
+            if row:
+                pos = row["evidence_positive"]
+                neg = row["evidence_negative"]
+                conf = round(pos / (pos + neg + 1.0), 4)
+                self._conn.execute(
+                    "UPDATE constructions SET confidence = ? WHERE id = ?;",
+                    (conf, construction_id),
+                )
+
+    def seed_default_constructions(self) -> None:
+        """Seed core Construction Grammar patterns into SQLite if not already present."""
+        cursor = self._conn.execute("SELECT COUNT(*) as cnt FROM constructions;")
+        row = cursor.fetchone()
+        if row and row["cnt"] > 0:
+            return
+
+        defaults = [
+            # Statements: Categorical & Taxonomic
+            Construction.create(
+                "cxn_is_a",
+                ["{X}", "is", "a", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "is_a",
+            ),
+            Construction.create(
+                "cxn_is_an",
+                ["{X}", "is", "an", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "is_a",
+            ),
+            Construction.create(
+                "cxn_is_bare",
+                ["{X}", "is", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "is_a",
+            ),
+            Construction.create(
+                "cxn_are_bare",
+                ["{X}", "are", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "is_a",
+            ),
+            # Statements: Negative & Disjoint
+            Construction.create(
+                "cxn_is_not_a",
+                ["{X}", "is", "not", "a", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "disjoint_with",
+            ),
+            Construction.create(
+                "cxn_is_not_an",
+                ["{X}", "is", "not", "an", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "disjoint_with",
+            ),
+            Construction.create(
+                "cxn_is_not",
+                ["{X}", "is", "not", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "disjoint_with",
+            ),
+            Construction.create(
+                "cxn_are_not",
+                ["{X}", "are", "not", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "disjoint_with",
+            ),
+            Construction.create(
+                "cxn_cannot_be",
+                ["{X}", "cannot", "be", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "disjoint_with",
+            ),
+            Construction.create(
+                "cxn_is_disjoint_with",
+                ["{X}", "is", "disjoint", "with", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "disjoint_with",
+            ),
+            Construction.create(
+                "cxn_is_different_from",
+                ["{X}", "is", "different", "from", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "disjoint_with",
+            ),
+            # Statements: Possession & Capability
+            Construction.create(
+                "cxn_has_a",
+                ["{X}", "has", "a", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "has",
+            ),
+            Construction.create(
+                "cxn_has_an",
+                ["{X}", "has", "an", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "has",
+            ),
+            Construction.create(
+                "cxn_has_bare",
+                ["{X}", "has", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "has",
+            ),
+            Construction.create(
+                "cxn_have_bare",
+                ["{X}", "have", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "has",
+            ),
+            Construction.create(
+                "cxn_owns_a",
+                ["{X}", "owns", "a", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "owns",
+            ),
+            Construction.create(
+                "cxn_can_be",
+                ["{X}", "can", "be", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "can_be",
+            ),
+            # Statements: Mereology / Part-Whole
+            Construction.create(
+                "cxn_part_of",
+                ["{X}", "is", "part", "of", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "part_of",
+            ),
+            Construction.create(
+                "cxn_part_of_a",
+                ["{X}", "is", "a", "part", "of", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "part_of",
+            ),
+            # Questions: Identity & Definition
+            Construction.create(
+                "q_who_are_you",
+                ["who", "are", "you"],
+                {},
+                "__identity__",
+                construction_type="question",
+            ),
+            Construction.create(
+                "q_what_are_you",
+                ["what", "are", "you"],
+                {},
+                "__identity__",
+                construction_type="question",
+            ),
+            Construction.create(
+                "q_what_is",
+                ["what", "is", "{X}"],
+                {"X": "subject"},
+                "__definition__",
+                construction_type="question",
+            ),
+            Construction.create(
+                "q_who_is",
+                ["who", "is", "{X}"],
+                {"X": "subject"},
+                "__definition__",
+                construction_type="question",
+            ),
+            Construction.create(
+                "q_tell_me_about",
+                ["tell", "me", "about", "{X}"],
+                {"X": "subject"},
+                "__definition__",
+                construction_type="question",
+            ),
+            # Questions: Inquiry
+            Construction.create(
+                "q_is_a_a",
+                ["is", "{X}", "a", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "is_a",
+                construction_type="question",
+            ),
+            Construction.create(
+                "q_is_a_an",
+                ["is", "{X}", "an", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "is_a",
+                construction_type="question",
+            ),
+            Construction.create(
+                "q_is_bare",
+                ["is", "{X}", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "is_a",
+                construction_type="question",
+            ),
+            Construction.create(
+                "q_are_bare",
+                ["are", "{X}", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "is_a",
+                construction_type="question",
+            ),
+            Construction.create(
+                "q_is_part_of",
+                ["is", "{X}", "part", "of", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "part_of",
+                construction_type="question",
+            ),
+            Construction.create(
+                "q_is_part_of_a",
+                ["is", "{X}", "a", "part", "of", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "part_of",
+                construction_type="question",
+            ),
+            Construction.create(
+                "q_does_have",
+                ["does", "{X}", "have", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "has",
+                construction_type="question",
+            ),
+            Construction.create(
+                "q_can_be",
+                ["can", "{X}", "be", "{Y}"],
+                {"X": "subject", "Y": "object"},
+                "can_be",
+                construction_type="question",
+            ),
+            # Actions: Physical & Topological
+            Construction.create(
+                "act_slice_into_pieces",
+                ["slice", "{X}", "into", "{count}", "pieces"],
+                {"X": "object", "count": "count"},
+                "SLICE",
+                construction_type="action",
+            ),
+            Construction.create(
+                "act_cut_into_pieces",
+                ["cut", "{X}", "into", "{count}", "pieces"],
+                {"X": "object", "count": "count"},
+                "SLICE",
+                construction_type="action",
+            ),
+        ]
+        for c in defaults:
+            self.save_construction(c)
+
+    def _row_to_construction(self, row: sqlite3.Row) -> Construction:
+        return Construction(
+            id=row["id"],
+            name=row["name"],
+            pattern_tokens=json.loads(row["pattern_tokens_json"]),
+            slot_roles=json.loads(row["slot_roles_json"]),
+            predicate_template=row["predicate_template"],
+            construction_type=row["construction_type"],
+            is_negative=bool(row["is_negative"]),
+            is_property=bool(row["is_property"]),
+            confidence=row["confidence"],
+            evidence_positive=row["evidence_positive"],
+            evidence_negative=row["evidence_negative"],
+            created_at=row["created_at"],
+        )
+
+    # -------------------------------------------------------------------------
     # Introspection & Export (PRD NFR-004 Requirement)
     # -------------------------------------------------------------------------
 
@@ -530,4 +914,5 @@ class MemoryStore:
             "relations": [r.to_dict() for r in self.get_relations()],
             "experiences": [e.to_dict() for e in self.list_experiences(limit=500)],
             "skills": [s.to_dict() for s in self.list_skills()],
+            "constructions": [c.to_dict() for c in self.list_constructions()],
         }

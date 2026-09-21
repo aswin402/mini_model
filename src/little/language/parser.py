@@ -19,15 +19,39 @@ from little.core.models import (
 from little.dynamics.cfc import ContinuousDynamicsEngine
 from little.dynamics.transformations import TransformationEngine
 from little.inference.engine import InferenceEngine
+from little.language.construction import ConstructionEngine
 from little.memory.store import MemoryStore
 from little.procedural.runner import SkillRunner
 from little.procedural.skills import register_builtin_skills
 
 NON_CONCEPT_WORDS = {
-    "who", "what", "where", "when", "why", "how",
-    "you", "me", "i", "he", "she", "it", "we", "they", "them",
-    "this", "that", "these", "those",
-    "hi", "hello", "hey", "hii", "ok", "okay", "yes", "no",
+    "who",
+    "what",
+    "where",
+    "when",
+    "why",
+    "how",
+    "you",
+    "me",
+    "i",
+    "he",
+    "she",
+    "it",
+    "we",
+    "they",
+    "them",
+    "this",
+    "that",
+    "these",
+    "those",
+    "hi",
+    "hello",
+    "hey",
+    "hii",
+    "ok",
+    "okay",
+    "yes",
+    "no",
 }
 
 
@@ -65,7 +89,19 @@ class SimpleParser:
     def clean_noun(cls, text: str) -> str:
         s = cls.LEADING_ARTICLE.sub("", text.strip().lower()).strip()
         # Exceptions that end with 's' but are singular
-        if s in {"mars", "paris", "lens", "series", "species", "physics", "mathematics", "news", "status", "canvas", "atlantis"}:
+        if s in {
+            "mars",
+            "paris",
+            "lens",
+            "series",
+            "species",
+            "physics",
+            "mathematics",
+            "news",
+            "status",
+            "canvas",
+            "atlantis",
+        }:
             return s
         # Handle plural to singular basic normalization
         if s.endswith("ies") and len(s) > 4:
@@ -89,7 +125,10 @@ class SimpleParser:
             if s not in NON_CONCEPT_WORDS and o not in NON_CONCEPT_WORDS:
                 triples.append(
                     ParsedTriple(
-                        subject=s, predicate="disjoint_with", object_=o, is_negative=False
+                        subject=s,
+                        predicate="disjoint_with",
+                        object_=o,
+                        is_negative=False,
                     )
                 )
                 return triples
@@ -106,7 +145,10 @@ class SimpleParser:
             if s not in NON_CONCEPT_WORDS and o not in NON_CONCEPT_WORDS:
                 triples.append(
                     ParsedTriple(
-                        subject=s, predicate="disjoint_with", object_=o, is_negative=False
+                        subject=s,
+                        predicate="disjoint_with",
+                        object_=o,
+                        is_negative=False,
                     )
                 )
                 return triples
@@ -419,11 +461,14 @@ class LearningEngine:
 
     def learn(self, text: str) -> LearningResult:
         """Process an input statement or action, extract concepts & relations, and persist them."""
-        # 0. Check procedural actions (e.g. slicing, transformations)
-        action = SimpleParser.parse_action(text)
+        # 0. Check procedural actions via Construction Grammar or fallback
+        action = ConstructionEngine.parse_action_with_constructions(text, self.memory)
+        if not action:
+            action = SimpleParser.parse_action(text)
+
         if action:
             act_name, act_args = action
-            if act_name == "SLICE":
+            if act_name.upper() == "SLICE":
                 res = TransformationEngine.slice_object(
                     self.memory,
                     object_name=act_args["object"],
@@ -432,13 +477,30 @@ class LearningEngine:
                 return LearningResult(
                     input_text=text,
                     update_type=UpdateType.NEW_ENTITY,
-                    experience_id=res.entities_created[0].id if res.entities_created else "",
+                    experience_id=res.entities_created[0].id
+                    if res.entities_created
+                    else "",
                     concepts_created=[res.slice_concept],
                     relations_created=res.relations_created,
                     message=res.message,
                 )
 
-        triples = SimpleParser.parse_statement(text)
+        # 1. Parse statements via Construction Grammar first (with Open Pivot Learning)
+        cxn_triples = ConstructionEngine.parse_with_constructions(text, self.memory)
+        triples: list[ParsedTriple] = []
+        if cxn_triples:
+            for ct in cxn_triples:
+                triples.append(
+                    ParsedTriple(
+                        subject=ct.subject,
+                        predicate=ct.predicate,
+                        object_=ct.object_,
+                        is_property=ct.is_property,
+                        is_negative=ct.is_negative,
+                    )
+                )
+        else:
+            triples = SimpleParser.parse_statement(text)
 
         if not triples:
             exp = self.memory.add_experience(input_text=text, extracted_triples=[])
@@ -491,6 +553,7 @@ class LearningEngine:
                     existing_attrs[prop_key] = prop_val
 
                 self.memory.update_concept_attributes(subj_concept.id, existing_attrs)
+                relations_created.append(f"({subj_concept.name} {prop_key}={prop_val})")
                 update_types.append(UpdateType.PROPERTY_UPDATE)
             else:
                 # Relational edge: resolve or create object concept
@@ -550,7 +613,14 @@ class LearningEngine:
     def ask(self, question: str) -> InferenceResult:
         """Answer questions by querying the knowledge graph via InferenceEngine."""
         known = {c.name.lower() for c in self.memory.list_concepts()}
+        # 1. Check specialized queries (math, factorial, temporal, definition)
         parsed = SimpleParser.parse_question(question, known_concepts=known)
+        # 2. Fallback to dynamic Construction Grammar question patterns
+        if not parsed:
+            parsed = ConstructionEngine.parse_question_with_constructions(
+                question, self.memory
+            )
+
         if not parsed:
             return InferenceResult(
                 query=question,
@@ -614,7 +684,8 @@ class LearningEngine:
             disjoint_rels = [
                 self.memory.get_concept(r.object_id).name
                 for r in out_rels
-                if r.predicate == "disjoint_with" and self.memory.get_concept(r.object_id)
+                if r.predicate == "disjoint_with"
+                and self.memory.get_concept(r.object_id)
             ]
 
             in_rels = self.memory.get_relations(object_id=concept.id)

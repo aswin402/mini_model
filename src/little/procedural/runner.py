@@ -60,7 +60,9 @@ class SkillRunner:
         # 1. Parameter validation
         for param in skill.parameters:
             if param not in kwargs:
-                err_msg = f"Missing required parameter '{param}' for skill '{skill.name}'"
+                err_msg = (
+                    f"Missing required parameter '{param}' for skill '{skill.name}'"
+                )
                 trace.append(f"Error: {err_msg}")
                 return ExecutionResult(
                     skill_name=skill.name,
@@ -80,13 +82,19 @@ class SkillRunner:
             trace.append(f"Evaluating skill code: {code_str}")
 
             # If it's a single expression (e.g. "a + b"), evaluate it directly
-            if "\n" not in code_str and not code_str.startswith("def ") and not code_str.startswith("return "):
+            if (
+                "\n" not in code_str
+                and not code_str.startswith("def ")
+                and not code_str.startswith("return ")
+            ):
                 val = eval(code_str, global_scope, local_scope)
             else:
                 # Multi-line or function block: wrap in a function if needed
                 if not code_str.startswith("def "):
                     params_str = ", ".join(skill.parameters)
-                    indented_body = "\n".join("    " + line for line in code_str.splitlines())
+                    indented_body = "\n".join(
+                        "    " + line for line in code_str.splitlines()
+                    )
                     wrapper = f"def _exec({params_str}):\n{indented_body}"
                     exec(wrapper, global_scope, local_scope)  # noqa: S102
                     fn = local_scope["_exec"]
@@ -95,7 +103,9 @@ class SkillRunner:
                     exec(code_str, global_scope, local_scope)  # noqa: S102
                     # Find function name
                     fn_name = code_str.split("(")[0].replace("def ", "").strip()
-                    val = local_scope[fn_name](**{k: kwargs[k] for k in skill.parameters})
+                    val = local_scope[fn_name](
+                        **{k: kwargs[k] for k in skill.parameters}
+                    )
 
             trace.append(f"Skill execution succeeded. Output: {val}")
             return ExecutionResult(
@@ -114,7 +124,15 @@ class SkillRunner:
                 error=err_msg,
                 trace=trace,
             )
-        except (ArithmeticError, NameError, TypeError, ValueError, SyntaxError, KeyError, IndexError) as ex:
+        except (
+            ArithmeticError,
+            NameError,
+            TypeError,
+            ValueError,
+            SyntaxError,
+            KeyError,
+            IndexError,
+        ) as ex:
             err_msg = f"{type(ex).__name__}: {ex}"
             trace.append(f"Execution failed: {err_msg}")
             return ExecutionResult(

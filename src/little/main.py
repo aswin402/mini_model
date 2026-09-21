@@ -196,18 +196,51 @@ def cmd_interact(args: argparse.Namespace) -> None:
     print("=" * 68 + "\n")
 
     greetings = {
-        "hi", "hii", "hiii", "hello", "hey", "heyy", "howdy", "greetings",
-        "good morning", "good afternoon", "good evening", "yo", "sup", "hola",
+        "hi",
+        "hii",
+        "hiii",
+        "hello",
+        "hey",
+        "heyy",
+        "howdy",
+        "greetings",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "yo",
+        "sup",
+        "hola",
     }
     help_cmds = {"help", "?", "commands", "menu"}
     identity_cmds = {
-        "who are you", "who are you?", "what are you", "what are you?",
-        "who r u", "what r u", "what is little", "what is little?",
-        "what can you do", "what can you do?", "capabilities",
+        "who are you",
+        "who are you?",
+        "what are you",
+        "what are you?",
+        "who r u",
+        "what r u",
+        "what is little",
+        "what is little?",
+        "what can you do",
+        "what can you do?",
+        "capabilities",
     }
     question_starters = (
-        "what", "is", "are", "does", "do", "can", "could", "how",
-        "calculate", "who", "which", "why", "where", "tell me", "describe",
+        "what",
+        "is",
+        "are",
+        "does",
+        "do",
+        "can",
+        "could",
+        "how",
+        "calculate",
+        "who",
+        "which",
+        "why",
+        "where",
+        "tell me",
+        "describe",
     )
 
     try:
@@ -229,6 +262,7 @@ def cmd_interact(args: argparse.Namespace) -> None:
 
             if clean_lower == "clear":
                 import os
+
                 os.system("clear" if os.name != "nt" else "cls")
                 continue
 
@@ -289,7 +323,9 @@ def cmd_interact(args: argparse.Namespace) -> None:
             if clean_lower in ("memory", "concepts", "list concepts"):
                 concepts = store.list_concepts()
                 relations = store.get_relations()
-                print(f"\n[Persistent Memory: {len(concepts)} Concepts, {len(relations)} Relations]")
+                print(
+                    f"\n[Persistent Memory: {len(concepts)} Concepts, {len(relations)} Relations]"
+                )
                 if concepts:
                     c_names = [c.name for c in concepts]
                     print(f"Concepts:  {', '.join(c_names)}")
@@ -300,7 +336,9 @@ def cmd_interact(args: argparse.Namespace) -> None:
                         o = store.get_concept(r.object_id)
                         s_name = s.name if s else r.subject_id
                         o_name = o.name if o else r.object_id
-                        print(f"  ↳ ({s_name} {r.predicate} {o_name}) [conf: {r.confidence:.2f}]")
+                        print(
+                            f"  ↳ ({s_name} {r.predicate} {o_name}) [conf: {r.confidence:.2f}]"
+                        )
                     if len(relations) > 20:
                         print(f"  ... and {len(relations) - 20} more")
                 print()
@@ -323,14 +361,18 @@ def cmd_interact(args: argparse.Namespace) -> None:
                     for r in out_rels:
                         obj = store.get_concept(r.object_id)
                         obj_name = obj.name if obj else r.object_id
-                        print(f"  ↳ {concept.name} --[{r.predicate}]--> {obj_name} (conf: {r.confidence:.2f})")
+                        print(
+                            f"  ↳ {concept.name} --[{r.predicate}]--> {obj_name} (conf: {r.confidence:.2f})"
+                        )
                 in_rels = store.get_relations(object_id=concept.id)
                 if in_rels:
                     print("Incoming Relations:")
                     for r in in_rels:
                         subj = store.get_concept(r.subject_id)
                         subj_name = subj.name if subj else r.subject_id
-                        print(f"  ↳ {subj_name} --[{r.predicate}]--> {concept.name} (conf: {r.confidence:.2f})")
+                        print(
+                            f"  ↳ {subj_name} --[{r.predicate}]--> {concept.name} (conf: {r.confidence:.2f})"
+                        )
                 print()
                 continue
 
@@ -354,28 +396,38 @@ def cmd_interact(args: argparse.Namespace) -> None:
 
             if is_question:
                 res = engine.ask(user_input)
-                print(f"\n[{res.status.value}] Answer: {res.answer} (Confidence: {res.confidence * 100:.1f}%)")
+                print(
+                    f"\n[{res.status.value}] Answer: {res.answer} (Confidence: {res.confidence * 100:.1f}%)"
+                )
                 if res.evidence:
                     print(f"Evidence: {', '.join(res.evidence)}")
 
                 # Check if unknown and prompt active clarification
                 if res.is_unknown:
-                    parsed = parsed_q or SimpleParser.parse_question(user_input, known_concepts=known)
+                    parsed = parsed_q or SimpleParser.parse_question(
+                        user_input, known_concepts=known
+                    )
                     if parsed:
                         s, p, o = parsed
                         prompt = inquisitor.inspect_uncertainty(res, s, p, o)
                         if prompt:
-                            print(f"\n🤔 [Curiosity Question] {prompt.question_for_user}")
+                            print(
+                                f"\n🤔 [Curiosity Question] {prompt.question_for_user}"
+                            )
                             try:
                                 resp = input("Your Answer> ").strip()
                                 if resp:
-                                    learn_res = inquisitor.resolve_response(prompt, resp)
+                                    learn_res = inquisitor.resolve_response(
+                                        prompt, resp
+                                    )
                                     re_res = engine.ask(user_input)
                                     gain = inquisitor.calculate_information_gain(
                                         res.confidence, re_res.confidence
                                     )
                                     print(f"✓ Learned: {learn_res.message}")
-                                    print(f"  New belief: {re_res.status.value} (Conf: {re_res.confidence*100:.1f}%, Info Gain: {gain:.2f} bits)\n")
+                                    print(
+                                        f"  New belief: {re_res.status.value} (Conf: {re_res.confidence * 100:.1f}%, Info Gain: {gain:.2f} bits)\n"
+                                    )
                             except (EOFError, KeyboardInterrupt):
                                 break
                 print()
@@ -383,8 +435,12 @@ def cmd_interact(args: argparse.Namespace) -> None:
                 # Statement or Action
                 res = engine.learn(user_input)
                 if res.update_type == UpdateType.NO_OP:
-                    print(f"\n[Learned: NO_OP] Could not extract structured relations from: '{user_input}'")
-                    print("💡 Tip: Try phrasing as a fact (e.g. 'A dog is an animal', 'An apple is red') or action ('Slice apple into 4 pieces'). Type 'help' for examples.\n")
+                    print(
+                        f"\n[Learned: NO_OP] Could not extract structured relations from: '{user_input}'"
+                    )
+                    print(
+                        "💡 Tip: Try phrasing as a fact (e.g. 'A dog is an animal', 'An apple is red') or action ('Slice apple into 4 pieces'). Type 'help' for examples.\n"
+                    )
                 else:
                     print(f"\n[Learned: {res.update_type.value}] {res.message}\n")
     finally:
@@ -407,16 +463,22 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
     # init
-    p_init = subparsers.add_parser("init", parents=[db_parent], help="Initialize local database")
+    p_init = subparsers.add_parser(
+        "init", parents=[db_parent], help="Initialize local database"
+    )
     p_init.set_defaults(func=cmd_init)
 
     # learn
-    p_learn = subparsers.add_parser("learn", parents=[db_parent], help="Teach LITTLE a fact or observation")
+    p_learn = subparsers.add_parser(
+        "learn", parents=[db_parent], help="Teach LITTLE a fact or observation"
+    )
     p_learn.add_argument("statement", nargs="+", help="Natural language statement")
     p_learn.set_defaults(func=cmd_learn)
 
     # ask
-    p_ask = subparsers.add_parser("ask", parents=[db_parent], help="Ask LITTLE a question")
+    p_ask = subparsers.add_parser(
+        "ask", parents=[db_parent], help="Ask LITTLE a question"
+    )
     p_ask.add_argument("question", nargs="+", help="Natural language question")
     p_ask.add_argument(
         "-v", "--verbose", action="store_true", help="Display reasoning trace"
@@ -432,25 +494,39 @@ def main() -> None:
     p_inspect.set_defaults(func=cmd_inspect)
 
     # memory list
-    p_mem = subparsers.add_parser("memory", parents=[db_parent], help="Memory management commands")
+    p_mem = subparsers.add_parser(
+        "memory", parents=[db_parent], help="Memory management commands"
+    )
     p_mem_sub = p_mem.add_subparsers(dest="memory_cmd")
-    p_mem_list = p_mem_sub.add_parser("list", parents=[db_parent], help="List stored concepts and relations")
+    p_mem_list = p_mem_sub.add_parser(
+        "list", parents=[db_parent], help="List stored concepts and relations"
+    )
     p_mem_list.set_defaults(func=cmd_memory_list)
 
     # skills list
-    p_skills = subparsers.add_parser("skills", parents=[db_parent], help="Procedural skills commands")
+    p_skills = subparsers.add_parser(
+        "skills", parents=[db_parent], help="Procedural skills commands"
+    )
     p_skills_sub = p_skills.add_subparsers(dest="skills_cmd")
-    p_skills_list = p_skills_sub.add_parser("list", parents=[db_parent], help="List procedural skills")
+    p_skills_list = p_skills_sub.add_parser(
+        "list", parents=[db_parent], help="List procedural skills"
+    )
     p_skills_list.set_defaults(func=cmd_skills_list)
 
     # interact / chat
-    p_chat = subparsers.add_parser("chat", parents=[db_parent], help="Interactive learning REPL")
+    p_chat = subparsers.add_parser(
+        "chat", parents=[db_parent], help="Interactive learning REPL"
+    )
     p_chat.set_defaults(func=cmd_interact)
-    p_interact = subparsers.add_parser("interact", parents=[db_parent], help="Interactive learning REPL")
+    p_interact = subparsers.add_parser(
+        "interact", parents=[db_parent], help="Interactive learning REPL"
+    )
     p_interact.set_defaults(func=cmd_interact)
 
     # export
-    p_export = subparsers.add_parser("export", parents=[db_parent], help="Export memory state to JSON")
+    p_export = subparsers.add_parser(
+        "export", parents=[db_parent], help="Export memory state to JSON"
+    )
     p_export.add_argument("-o", "--output", help="Destination JSON file path")
     p_export.set_defaults(func=cmd_export)
 
@@ -464,4 +540,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

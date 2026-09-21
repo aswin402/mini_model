@@ -26,7 +26,10 @@ def test_continuous_dynamics_evolution():
     # After 15 minutes (900s): starts browning
     after_15min = ContinuousDynamicsEngine.evolve_state(slice_state, delta_seconds=900)
     assert 0.35 <= after_15min.oxidation <= 0.45
-    assert ContinuousDynamicsEngine.get_perceived_color(after_15min, "white") == "light brown"
+    assert (
+        ContinuousDynamicsEngine.get_perceived_color(after_15min, "white")
+        == "light brown"
+    )
 
     # After 2 hours (7200s): heavily oxidized/brown
     after_2hr = ContinuousDynamicsEngine.evolve_state(slice_state, delta_seconds=7200)
@@ -37,7 +40,9 @@ def test_continuous_dynamics_evolution():
 def test_transformation_slicing_and_relational_reasoning():
     store = MemoryStore(":memory:")
     # Teach that apple is a fruit
-    apple = store.create_concept("apple", category="fruit", attributes={"interior_color": "white"})
+    apple = store.create_concept(
+        "apple", category="fruit", attributes={"interior_color": "white"}
+    )
     fruit = store.create_concept("fruit")
     store.add_relation(subject_id=apple.id, predicate="is_a", object_id=fruit.id)
 

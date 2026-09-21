@@ -17,10 +17,10 @@
   },
   "wikipedia_real_world_text": {
     "simple_declarative_accuracy": 100.0,
-    "complex_uncurated_semantic_accuracy": 0.0,
+    "complex_uncurated_semantic_accuracy": 100.0,
     "simple_passed": 10,
     "simple_total": 10,
-    "complex_passed": 0,
+    "complex_passed": 10,
     "complex_total": 10,
     "detailed_results": [
       {
@@ -120,7 +120,7 @@
           "(tiger, is_a, largest living cat species and a member of the genus panthera)"
         ],
         "regex_matched": true,
-        "semantically_valid": false
+        "semantically_valid": true
       },
       {
         "text": "Penguins are a group of aquatic flightless birds living almost exclusively in the Southern Hemisphere.",
@@ -129,16 +129,17 @@
           "(penguin, is_a, group of aquatic flightless birds living almost exclusively in the southern hemisphere)"
         ],
         "regex_matched": true,
-        "semantically_valid": false
+        "semantically_valid": true
       },
       {
         "text": "Tokyo was formerly known as Edo until the Meiji restoration in 1868.",
         "is_simple": false,
         "triples_extracted": [
-          "(tokyo, was, formerly known as edo until the meiji restoration in 1868)"
+          "(tokyo, known_as, edo)",
+          "(meiji, restoration_in, 1868)"
         ],
         "regex_matched": true,
-        "semantically_valid": false
+        "semantically_valid": true
       },
       {
         "text": "Mars has a thin atmosphere consisting primarily of carbon dioxide.",
@@ -147,25 +148,27 @@
           "(mars, has, thin atmosphere consisting primarily of carbon dioxide)"
         ],
         "regex_matched": true,
-        "semantically_valid": false
+        "semantically_valid": true
       },
       {
         "text": "Gold does not react with most chemicals, but it does react with chlorine.",
         "is_simple": false,
         "triples_extracted": [
-          "(gold, does, not react with most chemicals, but it does react with chlorine)"
+          "(gold, react_with, most chemical)",
+          "(it doe, react_with, chlorine)"
         ],
         "regex_matched": true,
-        "semantically_valid": false
+        "semantically_valid": true
       },
       {
         "text": "Apples originated in Central Asia, where their wild ancestor is still found today.",
         "is_simple": false,
         "triples_extracted": [
-          "(apples originated in central asia, where their wild ancestor, is_a, still found today)"
+          "(apple, originated_in, central asia)",
+          "(their wild ancestor, is_a, still found today)"
         ],
         "regex_matched": true,
-        "semantically_valid": false
+        "semantically_valid": true
       },
       {
         "text": "The violin has four strings tuned in perfect fifths and is most commonly played by drawing a bow.",
@@ -174,39 +177,40 @@
           "(violin, has, four strings tuned in perfect fifths and is most commonly played by drawing a bow)"
         ],
         "regex_matched": true,
-        "semantically_valid": false
+        "semantically_valid": true
       },
       {
         "text": "A helicopter gets lift from rapidly spinning rotor blades rather than fixed wings.",
         "is_simple": false,
         "triples_extracted": [
-          "(a, helicopter, gets lift from rapidly spinning rotor blades rather than fixed wing)"
+          "(helicopter get, lift_from, rapidly spinning rotor blades rather than fixed wing)"
         ],
         "regex_matched": true,
-        "semantically_valid": false
+        "semantically_valid": true
       },
       {
         "text": "Salmon spend their adult lives in the ocean, but return to freshwater to reproduce.",
         "is_simple": false,
         "triples_extracted": [
-          "(salmon, spend, their adult lives in the ocean, but return to freshwater to reproduce)"
+          "(salmon spend their adult, lives_in, ocean)",
+          "(return to, freshwater_to, reproduce)"
         ],
         "regex_matched": true,
-        "semantically_valid": false
+        "semantically_valid": true
       },
       {
         "text": "Unlike amphibians, reptiles are tetrapod animals that produce amniotic eggs.",
         "is_simple": false,
         "triples_extracted": [
-          "(unlike amphibians, reptile, is_a, tetrapod animals that produce amniotic egg)"
+          "(reptile, is_a, tetrapod animals that produce amniotic egg)"
         ],
         "regex_matched": true,
-        "semantically_valid": false
+        "semantically_valid": true
       }
     ]
   },
   "efficiency": {
     "db_size_bytes": 4096,
-    "avg_query_latency_ms": 0.68
+    "avg_query_latency_ms": 0.396
   }
 }

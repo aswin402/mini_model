@@ -55,6 +55,22 @@ CREATE TABLE IF NOT EXISTS procedures (
     created_at TEXT NOT NULL
 );
 
+-- 6. Constructions Table (Construction Grammar Memory)
+CREATE TABLE IF NOT EXISTS constructions (
+    id TEXT PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    pattern_tokens_json TEXT NOT NULL,
+    slot_roles_json TEXT NOT NULL DEFAULT '{}',
+    predicate_template TEXT NOT NULL,
+    construction_type TEXT NOT NULL DEFAULT 'statement',
+    is_negative INTEGER NOT NULL DEFAULT 0,
+    is_property INTEGER NOT NULL DEFAULT 0,
+    confidence REAL NOT NULL DEFAULT 1.0,
+    evidence_positive INTEGER NOT NULL DEFAULT 1,
+    evidence_negative INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
 -- Performance Indexes
 CREATE INDEX IF NOT EXISTS idx_concepts_name ON concepts(name);
 CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
@@ -63,4 +79,6 @@ CREATE INDEX IF NOT EXISTS idx_relations_subj_pred ON relations(subject_id, pred
 CREATE INDEX IF NOT EXISTS idx_relations_obj_pred ON relations(object_id, predicate);
 CREATE INDEX IF NOT EXISTS idx_relations_pred ON relations(predicate);
 CREATE INDEX IF NOT EXISTS idx_experiences_timestamp ON experiences(timestamp);
+CREATE INDEX IF NOT EXISTS idx_constructions_name ON constructions(name);
+CREATE INDEX IF NOT EXISTS idx_constructions_type ON constructions(construction_type);
 """

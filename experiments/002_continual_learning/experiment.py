@@ -178,7 +178,7 @@ def run_experiment() -> dict[str, float | int | str]:
 ## 2. Key Insights vs. Monolithic LLMs
 - **Why Neural Networks Suffer Catastrophic Forgetting**: In deep neural architectures, all concepts share the same dense weight matrices $W$. Backpropagating gradients $\\Delta W$ for Task B necessarily corrupts the activation interference patterns formed during Task A unless compute-heavy replay or LoRA adapters are employed.
 - **Why LITTLE Has 0.0% Forgetting**: LITTLE separates the computational inference engine from episodic and semantic memory storage. Storing facts in persistent relational graphs guarantees that subsequent updates create independent or connected nodes without overwriting orthogonal knowledge.
-- **Storage Scaling**: All 30 facts across 3 complex taxonomies were persisted into a SQLite memory database of only **{results['db_file_size_bytes'] / 1024:.1f} KB** with zero background replay needed.
+- **Storage Scaling**: All 30 facts across 3 complex taxonomies were persisted into a SQLite memory database of only **{results["db_file_size_bytes"] / 1024:.1f} KB** with zero background replay needed.
 """
     (RESULTS_DIR / "analysis.md").write_text(report)
     return results

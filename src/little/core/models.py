@@ -305,3 +305,50 @@ class DynamicState:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+
+@dataclass
+class Construction:
+    """A Construction Grammar pairing of form (token pattern) and meaning (semantic frame).
+
+    Grammar rules are stored in memory, not hardcoded into engine source code.
+    """
+
+    id: str
+    name: str
+    pattern_tokens: list[str]  # e.g. ["{X}", "is", "a", "{Y}"]
+    slot_roles: dict[str, str]  # e.g. {"X": "subject", "Y": "object"}
+    predicate_template: str  # e.g. "is_a", "disjoint_with", "part_of"
+    construction_type: str = "statement"  # "statement", "question", "action"
+    is_negative: bool = False
+    is_property: bool = False
+    confidence: float = 1.0
+    evidence_positive: int = 1
+    evidence_negative: int = 0
+    created_at: str = field(default_factory=current_iso_timestamp)
+
+    @classmethod
+    def create(
+        cls,
+        name: str,
+        pattern_tokens: list[str],
+        slot_roles: dict[str, str],
+        predicate_template: str,
+        construction_type: str = "statement",
+        is_negative: bool = False,
+        is_property: bool = False,
+        confidence: float = 1.0,
+    ) -> Construction:
+        return cls(
+            id=generate_id("cxn"),
+            name=name.strip().lower(),
+            pattern_tokens=[t.strip().lower() for t in pattern_tokens],
+            slot_roles={k.strip(): v.strip().lower() for k, v in slot_roles.items()},
+            predicate_template=predicate_template.strip().lower(),
+            construction_type=construction_type.strip().lower(),
+            is_negative=is_negative,
+            is_property=is_property,
+            confidence=confidence,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)

@@ -52,9 +52,7 @@ class ContinuousDynamicsEngine:
         return base_tau / thermal_rate_factor
 
     @classmethod
-    def evolve_state(
-        cls, state: PhysicalState, delta_seconds: float
-    ) -> PhysicalState:
+    def evolve_state(cls, state: PhysicalState, delta_seconds: float) -> PhysicalState:
         """Evolve the physical state across delta_seconds using Closed-Form Continuous (CfC) ODE."""
         if delta_seconds <= 0:
             return state

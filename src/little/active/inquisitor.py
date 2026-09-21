@@ -141,6 +141,7 @@ class ActiveInquisitor:
         Under complete ignorance/UNKNOWN, prior is equiprobable (p = 0.5, H = 1.0 bit).
         Confidence c shifts posterior probability towards certainty: p = 0.5 + 0.5 * c.
         """
+
         def binary_entropy(p: float) -> float:
             p = max(1e-6, min(1.0 - 1e-6, p))
             return -p * math.log2(p) - (1.0 - p) * math.log2(1.0 - p)
@@ -151,4 +152,3 @@ class ActiveInquisitor:
         h_prior = binary_entropy(p_prior)
         h_post = binary_entropy(p_post)
         return max(0.0, round(h_prior - h_post, 4))
-

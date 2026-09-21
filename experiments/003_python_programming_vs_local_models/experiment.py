@@ -26,8 +26,12 @@ RESULTS_DIR = Path(__file__).parent
 def query_ollama(model: str, prompt: str, timeout: float = 10.0) -> tuple[str, float]:
     """Query local Ollama instance and return (response_text, latency_ms)."""
     url = "http://localhost:11434/api/generate"
-    payload = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+    payload = json.dumps({"model": model, "prompt": prompt, "stream": False}).encode(
+        "utf-8"
+    )
+    req = urllib.request.Request(
+        url, data=payload, headers={"Content-Type": "application/json"}
+    )
     t0 = time.perf_counter()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -180,8 +184,14 @@ def run_experiment() -> dict[str, Any]:
     t0 = time.perf_counter()
     for q, expected, _ in taxonomy_suite:
         res = engine.ask(q)
-        if (expected is True and res.status == BeliefStatus.SUPPORTED and res.answer is True) or (
-            expected is False and res.status == BeliefStatus.REFUTED and res.answer is False
+        if (
+            expected is True
+            and res.status == BeliefStatus.SUPPORTED
+            and res.answer is True
+        ) or (
+            expected is False
+            and res.status == BeliefStatus.REFUTED
+            and res.answer is False
         ):
             little_tax_correct += 1
 
@@ -198,7 +208,11 @@ def run_experiment() -> dict[str, Any]:
             little_unknown_correct += 1
 
     little_total_eval_ms = (time.perf_counter() - t0) * 1000.0
-    little_avg_latency_ms = round(little_total_eval_ms / (len(taxonomy_suite) + len(algo_suite) + len(fictitious_suite)), 3)
+    little_avg_latency_ms = round(
+        little_total_eval_ms
+        / (len(taxonomy_suite) + len(algo_suite) + len(fictitious_suite)),
+        3,
+    )
 
     # -------------------------------------------------------------------------
     # 4. Evaluate Local SLMs: qwen2.5-coder:0.5b and qwen2.5:0.5b
@@ -210,8 +224,12 @@ def run_experiment() -> dict[str, Any]:
             resp, lat = query_ollama(model_name, prompt)
             latencies.append(lat)
             clean_resp = resp.lower()
-            if (expected is True and ("true" in clean_resp and "false" not in clean_resp)) or (
-                expected is False and ("false" in clean_resp and "true" not in clean_resp)
+            if (
+                expected is True
+                and ("true" in clean_resp and "false" not in clean_resp)
+            ) or (
+                expected is False
+                and ("false" in clean_resp and "true" not in clean_resp)
             ):
                 tax_correct += 1
 
@@ -224,8 +242,12 @@ def run_experiment() -> dict[str, Any]:
                 if str(expected) in clean_resp:
                     algo_correct += 1
             elif eval_type == "bool":
-                if (expected is True and ("true" in clean_resp and "false" not in clean_resp)) or (
-                    expected is False and ("false" in clean_resp and "true" not in clean_resp)
+                if (
+                    expected is True
+                    and ("true" in clean_resp and "false" not in clean_resp)
+                ) or (
+                    expected is False
+                    and ("false" in clean_resp and "true" not in clean_resp)
                 ):
                     algo_correct += 1
             elif eval_type == "str" and str(expected).lower() in clean_resp:
@@ -245,8 +267,14 @@ def run_experiment() -> dict[str, Any]:
             "model": model_name,
             "taxonomy_accuracy": round((tax_correct / len(taxonomy_suite)) * 100, 2),
             "algo_execution_accuracy": round((algo_correct / len(algo_suite)) * 100, 2),
-            "fictitious_detection_rate": round((fictitious_passed / len(fictitious_suite)) * 100, 2),
-            "hallucination_rate": round(((len(fictitious_suite) - fictitious_passed) / len(fictitious_suite)) * 100, 2),
+            "fictitious_detection_rate": round(
+                (fictitious_passed / len(fictitious_suite)) * 100, 2
+            ),
+            "hallucination_rate": round(
+                ((len(fictitious_suite) - fictitious_passed) / len(fictitious_suite))
+                * 100,
+                2,
+            ),
             "avg_latency_ms": avg_lat,
         }
 
@@ -259,9 +287,15 @@ def run_experiment() -> dict[str, Any]:
     results = {
         "little": {
             "model": "LITTLE (Our Model)",
-            "taxonomy_accuracy": round((little_tax_correct / len(taxonomy_suite)) * 100, 2),
-            "algo_execution_accuracy": round((little_algo_correct / len(algo_suite)) * 100, 2),
-            "fictitious_detection_rate": round((little_unknown_correct / len(fictitious_suite)) * 100, 2),
+            "taxonomy_accuracy": round(
+                (little_tax_correct / len(taxonomy_suite)) * 100, 2
+            ),
+            "algo_execution_accuracy": round(
+                (little_algo_correct / len(algo_suite)) * 100, 2
+            ),
+            "fictitious_detection_rate": round(
+                (little_unknown_correct / len(fictitious_suite)) * 100, 2
+            ),
             "hallucination_rate": 0.0,
             "avg_latency_ms": little_avg_latency_ms,
             "storage_size_kb": round(db_size / 1024, 2),
@@ -281,13 +315,13 @@ def run_experiment() -> dict[str, Any]:
 
 | Metric | LITTLE (Our Model) | Qwen2.5-Coder (0.5B SLM) | Qwen2.5 (0.5B General SLM) |
 |---|---|---|---|
-| **Python Conceptual / Taxonomy Reasoning** | **{results['little']['taxonomy_accuracy']}%** | {results['qwen2.5_coder']['taxonomy_accuracy']}% | {results['qwen2.5_base']['taxonomy_accuracy']}% |
-| **Algorithmic Code Execution** | **{results['little']['algo_execution_accuracy']}%** | {results['qwen2.5_coder']['algo_execution_accuracy']}% | {results['qwen2.5_base']['algo_execution_accuracy']}% |
-| **Fictitious / Hallucination Detection** | **{results['little']['fictitious_detection_rate']}%** | {results['qwen2.5_coder']['fictitious_detection_rate']}% | {results['qwen2.5_base']['fictitious_detection_rate']}% |
-| **Hallucination Rate** | **0.0%** (Open-World UNKNOWN) | {results['qwen2.5_coder']['hallucination_rate']}% | {results['qwen2.5_base']['hallucination_rate']}% |
-| **Average Query Latency** | **{results['little']['avg_latency_ms']} ms** (CPU) | {results['qwen2.5_coder']['avg_latency_ms']} ms | {results['qwen2.5_base']['avg_latency_ms']} ms |
-| **Storage / Memory Footprint** | **{results['little']['storage_size_kb']} KB** (SQLite) | ~397 MB (Weights in RAM) | ~397 MB (Weights in RAM) |
-| **Training Time for Domain** | **{results['little']['training_time_s']} s** (1-shot) | Pre-trained over days | Pre-trained over days |
+| **Python Conceptual / Taxonomy Reasoning** | **{results["little"]["taxonomy_accuracy"]}%** | {results["qwen2.5_coder"]["taxonomy_accuracy"]}% | {results["qwen2.5_base"]["taxonomy_accuracy"]}% |
+| **Algorithmic Code Execution** | **{results["little"]["algo_execution_accuracy"]}%** | {results["qwen2.5_coder"]["algo_execution_accuracy"]}% | {results["qwen2.5_base"]["algo_execution_accuracy"]}% |
+| **Fictitious / Hallucination Detection** | **{results["little"]["fictitious_detection_rate"]}%** | {results["qwen2.5_coder"]["fictitious_detection_rate"]}% | {results["qwen2.5_base"]["fictitious_detection_rate"]}% |
+| **Hallucination Rate** | **0.0%** (Open-World UNKNOWN) | {results["qwen2.5_coder"]["hallucination_rate"]}% | {results["qwen2.5_base"]["hallucination_rate"]}% |
+| **Average Query Latency** | **{results["little"]["avg_latency_ms"]} ms** (CPU) | {results["qwen2.5_coder"]["avg_latency_ms"]} ms | {results["qwen2.5_base"]["avg_latency_ms"]} ms |
+| **Storage / Memory Footprint** | **{results["little"]["storage_size_kb"]} KB** (SQLite) | ~397 MB (Weights in RAM) | ~397 MB (Weights in RAM) |
+| **Training Time for Domain** | **{results["little"]["training_time_s"]} s** (1-shot) | Pre-trained over days | Pre-trained over days |
 
 ## 2. Key Findings & Why LITTLE Outperformed Local SLMs
 1. **Algorithmic Failure of Next-Token Prediction**:
@@ -296,7 +330,7 @@ def run_experiment() -> dict[str, Any]:
 2. **Taxonomic & Invariant Logic**:
    - Both models correctly identify that `tuple` is immutable, but `LITTLE` enforces strict symmetric disjoint constraints (`tuple cannot_be mutable_object`), rejecting illegal mutations structurally.
 3. **Speed & Efficiency**:
-   - `LITTLE` operates at **sub-millisecond latency ({results['little']['avg_latency_ms']} ms)** on standard AMD Ryzen 7 CPU, over **1000x faster** than local neural SLM autoregressive generation (~200–500 ms).
+   - `LITTLE` operates at **sub-millisecond latency ({results["little"]["avg_latency_ms"]} ms)** on standard AMD Ryzen 7 CPU, over **1000x faster** than local neural SLM autoregressive generation (~200–500 ms).
 """
     (RESULTS_DIR / "analysis.md").write_text(report)
     return results

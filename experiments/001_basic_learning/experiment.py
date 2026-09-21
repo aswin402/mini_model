@@ -200,13 +200,13 @@ def run_experiment() -> dict[str, float | int | str]:
 
 | Metric | Measured Value | Theoretical Target | Status |
 |---|---|---|---|
-| **Direct Fact Accuracy** | **{results['direct_accuracy']}%** | 100.0% | PASS |
-| **Multi-Hop Transitive Accuracy** | **{results['transitive_accuracy']}%** | 100.0% | PASS |
-| **Disjoint Refutation Accuracy** | **{results['disjoint_refutation_accuracy']}%** | 100.0% | PASS |
-| **Open-World Unknown Detection** | **{results['unknown_detection_rate']}%** | 100.0% | PASS |
-| **Hallucination Rate** | **{results['hallucination_rate']}%** | 0.0% | PASS (Zero Hallucination) |
-| **Average Query Latency** | **{results['avg_query_latency_ms']} ms** | < 10.0 ms | PASS (<1ms CPU) |
-| **Database Storage Footprint** | **{results['database_size_bytes'] / 1024:.1f} KB** | < 1.0 MB | PASS |
+| **Direct Fact Accuracy** | **{results["direct_accuracy"]}%** | 100.0% | PASS |
+| **Multi-Hop Transitive Accuracy** | **{results["transitive_accuracy"]}%** | 100.0% | PASS |
+| **Disjoint Refutation Accuracy** | **{results["disjoint_refutation_accuracy"]}%** | 100.0% | PASS |
+| **Open-World Unknown Detection** | **{results["unknown_detection_rate"]}%** | 100.0% | PASS |
+| **Hallucination Rate** | **{results["hallucination_rate"]}%** | 0.0% | PASS (Zero Hallucination) |
+| **Average Query Latency** | **{results["avg_query_latency_ms"]} ms** | < 10.0 ms | PASS (<1ms CPU) |
+| **Database Storage Footprint** | **{results["database_size_bytes"] / 1024:.1f} KB** | < 1.0 MB | PASS |
 
 ## 2. Methodology & Findings
 - **Zero Hallucination Guarantee**: Standard LLMs forced to answer questions about novel entities generate ungrounded fabrications or probabilistic hallucinations. LITTLE strictly adheres to the Open-World Assumption: whenever knowledge graph traversal yields neither supporting paths nor refuting constraints, the epistemic state is returned as `UNKNOWN` (100% precision).
