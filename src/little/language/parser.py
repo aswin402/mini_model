@@ -64,6 +64,9 @@ class SimpleParser:
     @classmethod
     def clean_noun(cls, text: str) -> str:
         s = cls.LEADING_ARTICLE.sub("", text.strip().lower()).strip()
+        # Exceptions that end with 's' but are singular
+        if s in {"mars", "paris", "lens", "series", "species", "physics", "mathematics", "news", "status", "canvas", "atlantis"}:
+            return s
         # Handle plural to singular basic normalization
         if s.endswith("ies") and len(s) > 4:
             s = s[:-3] + "y"
