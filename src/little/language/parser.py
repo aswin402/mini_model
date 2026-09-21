@@ -217,6 +217,34 @@ class SimpleParser:
             n = int(m_fact.group(1))
             return ("FACTORIAL", "__math__", {"n": n})
 
+        m_fib = re.match(
+            r"^(?:what is|calculate)\s+(?:the\s+)?fibonacci\s+(?:number\s+)?(?:of\s+|for\s+)?(\d+)$",
+            q,
+            re.IGNORECASE,
+        )
+        if m_fib:
+            return ("FIBONACCI", "__math__", {"n": int(m_fib.group(1))})
+
+        m_prime = re.match(r"^is\s+(\d+)\s+prime$", q, re.IGNORECASE)
+        if m_prime:
+            return ("IS_PRIME", "__math__", {"n": int(m_prime.group(1))})
+
+        m_rev = re.match(
+            r"^(?:what is|calculate)\s+(?:the\s+)?reverse\s+of\s+['\"]?([^'\"]+)['\"]?$",
+            q,
+            re.IGNORECASE,
+        )
+        if m_rev:
+            return ("REVERSE_STRING", "__math__", {"text": m_rev.group(1).strip()})
+
+        m_pal = re.match(
+            r"^is\s+['\"]?([^'\"]+)['\"]?\s+a\s+palindrome$",
+            q,
+            re.IGNORECASE,
+        )
+        if m_pal:
+            return ("PALINDROME", "__math__", {"text": m_pal.group(1).strip()})
+
         # 2. Temporal Continuous-Time queries: "What color is the apple slice after 2 hours?"
         m_temp_color = re.match(
             r"^what color is\s+(?:an?|the)?\s*(.*?)\s+after\s+(\d+(?:\.\d+)?)\s+(seconds?|minutes?|hours?|days?)$",

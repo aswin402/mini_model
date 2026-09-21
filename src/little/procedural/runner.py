@@ -41,8 +41,15 @@ class SkillRunner:
         "tuple": tuple,
         "range": range,
         "enumerate": enumerate,
-        "zip": zip,
         "math": math,
+        "all": all,
+        "any": any,
+        "sorted": sorted,
+        "reversed": reversed,
+        "chr": chr,
+        "ord": ord,
+        "isinstance": isinstance,
+        "type": type,
     }
 
     @classmethod

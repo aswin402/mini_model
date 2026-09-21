@@ -1,0 +1,28 @@
+{
+  "little": {
+    "model": "LITTLE (Our Model)",
+    "taxonomy_accuracy": 100.0,
+    "algo_execution_accuracy": 100.0,
+    "fictitious_detection_rate": 100.0,
+    "hallucination_rate": 0.0,
+    "avg_latency_ms": 0.454,
+    "storage_size_kb": 4.0,
+    "training_time_s": 0.316
+  },
+  "qwen2.5_coder": {
+    "model": "qwen2.5-coder:0.5b",
+    "taxonomy_accuracy": 33.33,
+    "algo_execution_accuracy": 20.0,
+    "fictitious_detection_rate": 33.33,
+    "hallucination_rate": 66.67,
+    "avg_latency_ms": 381.98
+  },
+  "qwen2.5_base": {
+    "model": "qwen2.5:0.5b",
+    "taxonomy_accuracy": 33.33,
+    "algo_execution_accuracy": 20.0,
+    "fictitious_detection_rate": 100.0,
+    "hallucination_rate": 0.0,
+    "avg_latency_ms": 359.0
+  }
+}

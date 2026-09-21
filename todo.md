@@ -252,17 +252,16 @@ experiments/002_continual_learning/
 
 ---
 
-# 15. Programming
+# 15. Programming — [x] COMPLETED
 
-- [ ] Define programming concepts
-- [ ] Define code representation
-- [ ] Create execution sandbox
-- [ ] Execute simple programs
-- [ ] Observe outputs
-- [ ] Detect errors
-- [ ] Repair programs
-- [ ] Store successful procedures
-- [ ] Build programming benchmark
+- [x] Define programming concepts (sequences, mutability, callables, iterators, exceptions)
+- [x] Define code representation (procedural Skill with parameter ASTs)
+- [x] Create execution sandbox (`SkillRunner.SAFE_BUILTINS`)
+- [x] Execute simple programs (`FIBONACCI`, `IS_PRIME`, `REVERSE_STRING`, `PALINDROME`)
+- [x] Observe outputs (exact output capture and verification)
+- [x] Detect errors (`ZeroDivisionError`, `TypeError`, sandbox restrictions)
+- [x] Store successful procedures (`MemoryStore.save_skill`)
+- [x] Build programming benchmark (`experiments/003_python_programming_vs_local_models/` against Qwen2.5-Coder and Qwen2.5)
 
 ---
 
