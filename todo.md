@@ -388,3 +388,54 @@ ask("What color is the apple?")    -> "red, green" (multi-valued property learni
 ```
 
 12 unit & integration tests passing (`uv run pytest -v`). LITTLE v0.1 foundation is live!
+
+---
+
+# 23. MIVI Spider-Web Thinking Architecture (v0.2)
+
+Specification: `research/07_mivi_spiderweb_thinking_architecture.md`  
+Implementation Plan: `docs/superpowers/plans/2026-09-22-mivi-spiderweb-thinking-model.md`
+
+- [x] **Phase 1: Non-Autoregressive System 1 Gatekeeper (Laya / ModernBERT)**
+  - [x] Implement `src/little/language/laya_gatekeeper.py`
+  - [x] Add `QueryIntent` enum (`STATEMENT`, `QUESTION`, `ACTION`, `MATH`, `CURIOSITY`)
+  - [x] Add `CalibratedDecision` with proper score confidence
+  - [x] Implement Normalized Shannon Entropy calculation: $\tilde{H} = H / \ln K$
+  - [x] Enforce epistemic ignorance threshold: $\tilde{H} \ge 0.35 \implies \mathbf{UNKNOWN}$
+  - [x] Add `tests/unit/test_laya_gatekeeper.py` (verify sub-10ms intent & gating)
+
+- [x] **Phase 2: DeepSeek-R1 Invariant Verification Gates**
+  - [x] Implement `src/little/inference/invariant_gates.py`
+  - [x] Gate 1: $\mathcal{I}_{\text{DAG}}$ (Acyclicity verification via Kahn's algorithm)
+  - [x] Gate 2: $\mathcal{I}_{\text{mutex}}$ (Disjoint refutation against ontological axioms)
+  - [x] Gate 3: $\mathcal{I}_{\text{sort}}$ (Domain / range type signature soundness)
+  - [x] Gate 4: $\mathcal{I}_{\text{ground}}$ (NARS evidence confidence calibration)
+  - [x] Add `tests/unit/test_invariant_gates.py`
+
+- [x] **Phase 3: GLM Dual-Speed Bidirectional Frontier Infilling**
+  - [x] Implement `src/little/inference/dual_speed.py`
+  - [x] Fast Mode: Single-hop B-tree index lookup ($<0.2$ms)
+  - [x] Thinking Mode: Bidirectional frontier collision search ($O(2 \cdot b^{d/2})$)
+  - [x] Generate inspectable `<think>` proof traces
+  - [x] Add `tests/unit/test_dual_speed.py` (verify 500× search speedup)
+
+- [x] **Phase 4: 360° Concept Knot & CfC Neural ODE Dynamics**
+  - [x] Implement `src/little/core/concept_knot.py` (6-axis radial manifold)
+  - [x] Implement 90° Taxonomic, 135° Mereological, 180° Invariant, 225° Procedural, 0° Episodic axes
+  - [x] Implement `src/little/dynamics/cfc_ode.py` (Closed-Form Continuous ODE solver)
+  - [x] Model Arrhenius continuous decay & enzymatic oxidation
+  - [x] Implement Hybrid Automaton action jumps (`slice`, `peel`, `juice`)
+  - [x] Add `tests/unit/test_concept_knot_and_cfc.py`
+
+- [x] **Phase 5: Autonomous 360° Growth & Active Curiosity Engine**
+  - [x] Implement `src/little/active/spiderweb_growth.py`
+  - [x] Cobweb Category Utility clustering for upward hypernym induction
+  - [x] Variance-driven downward specialization (phenotype splits)
+  - [x] Active curiosity targeting maximal axis entropy: $\max_j H(\text{Axis}_j)$
+  - [x] Add `tests/unit/test_spiderweb_growth.py`
+
+- [x] **Phase 6: Interactive Integration & Full Verification**
+  - [x] Wire System 1 gatekeeper, dual-speed infilling, and concept knots into `src/little/main.py`
+  - [x] Expose `--thinking` in `little chat` REPL
+  - [x] Add `tests/integration/test_spiderweb_chat_integration.py`
+  - [x] Verify 100% test pass across full regression suite (`uv run pytest`)
