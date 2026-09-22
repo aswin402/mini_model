@@ -1918,6 +1918,21 @@ class LearningEngine:
 
     def ask(self, question: str) -> InferenceResult:
         """Answer questions by querying the knowledge graph via InferenceEngine."""
+        # 0a. Check for multi-step math word problems
+        from little.procedural.math_story import MathStorySolver
+        story_solver = MathStorySolver()
+        if story_solver.is_math_story(question):
+            sol = story_solver.solve_story(question)
+            if sol and sol.status == "SOLVED":
+                return InferenceResult(
+                    query=question,
+                    status=BeliefStatus.SUPPORTED,
+                    answer=sol.result,
+                    confidence=1.0,
+                    evidence=[f"<math_trace>\n{sol.verbalize()}\n</math_trace>"],
+                    trace=sol.steps,
+                )
+
         # 0. Check for compound / conjoined questions: e.g. "Can an eagle fly and does it have wings?"
         q_clean = question.strip()
         sub_questions: list[str] = []
