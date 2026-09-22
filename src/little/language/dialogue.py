@@ -158,17 +158,25 @@ class DialogueContext:
         # 3. Person-specific pronouns: 'he', 'him', 'his', 'she', 'her'
         if p_clean in ("he", "him", "his", "she", "her", "hers"):
             for e in reversed(self.entity_stack):
+                if e.role == "subject" and (e.is_person or e.category in ("person", "human", "character")):
+                    return e.name
+            for e in reversed(self.entity_stack):
                 if e.is_person or e.category in ("person", "human", "character"):
                     return e.name
             return None
 
         # 4. Singular non-human pronouns: 'it', 'its', 'that', 'this'
         if p_clean in ("it", "its", "that", "this"):
+            # Centering Theory: Prioritize subject role (topic) of the most recent turns
             for e in reversed(self.entity_stack):
-                if not e.is_plural and not e.is_person:
+                if e.role == "subject" and not e.is_plural and not e.is_person:
                     return e.name
             if self.active_subject:
                 return self.active_subject
+            # Fallback to non-subject entity if no subject is found
+            for e in reversed(self.entity_stack):
+                if not e.is_plural and not e.is_person:
+                    return e.name
             if self.active_object:
                 return self.active_object
 
@@ -176,6 +184,10 @@ class DialogueContext:
 
     def resolve_anaphora_in_text(self, text: str) -> str:
         """Replace referring pronouns in text with resolved antecedent nouns."""
+        s = text.strip()
+        if re.match(r"^if\s+", s, re.IGNORECASE):
+            return text
+
         words = text.split()
         resolved_words: List[str] = []
 
@@ -195,6 +207,30 @@ class DialogueContext:
         def replace_token(match: re.Match) -> str:
             token = match.group(0)
             t_lower = token.lower()
+            start = match.start()
+            end = match.end()
+
+            # Guard: Do not replace 'that', 'these', 'those' when acting as relative pronouns or determiners
+            if t_lower in ("that", "these", "those"):
+                prefix = t_mod[:start].strip()
+                if prefix:
+                    last_word = prefix.split()[-1].lower()
+                    if last_word not in (
+                        "is", "are", "was", "were", "do", "does", "did",
+                        "if", "and", "or", "but", "so", "than", "as", "like",
+                    ):
+                        # Preceded by a content noun -> relative clause (e.g. "mammals that live")
+                        return token
+                suffix = t_mod[end:].strip()
+                if suffix:
+                    first_word = suffix.split()[0].lower()
+                    if first_word not in (
+                        "is", "are", "was", "were", "has", "have", "can",
+                        "will", "would", "do", "does", "did", "in", "on", "at", "?", ".",
+                    ):
+                        # Followed by a noun -> determiner (e.g. "that animal")
+                        return token
+
             if t_lower in ("it", "they", "them", "that", "these", "those"):
                 res = self.resolve_pronoun(t_lower)
                 if res:
