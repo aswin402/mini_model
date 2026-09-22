@@ -215,6 +215,14 @@ def cmd_import(args: argparse.Namespace) -> None:
         if dataset in ("commonsense", "world"):
             print("📦 Loading curated commonsense world-knowledge bundle...")
             stats = importer.import_commonsense_bundle(progress_cb=progress)
+        elif dataset in ("large", "world100k", "extended"):
+            target_n = limit or 100_000
+            print(
+                f"📦 Streaming {target_n:,} curated large-scale commonsense ontology triples..."
+            )
+            stats = importer.import_large_scale_ontology(
+                target_count=target_n, progress_cb=progress
+            )
         elif file_arg:
             path = Path(file_arg)
             print(
@@ -726,9 +734,9 @@ def main() -> None:
     )
     p_import.add_argument(
         "--dataset",
-        choices=["commonsense", "world"],
+        choices=["commonsense", "world", "large", "world100k", "extended"],
         default=None,
-        help="Built-in curated knowledge dataset",
+        help="Built-in curated knowledge dataset (commonsense, world, large, world100k)",
     )
     p_import.add_argument(
         "--format",
