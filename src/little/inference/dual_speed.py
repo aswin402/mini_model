@@ -31,6 +31,36 @@ class DualSpeedInfillingEngine:
         self.memory = memory
         self.verifier = verifier
 
+    def _resolve_variants(self, node: str) -> Set[str]:
+        variants = {node, node.lower(), node.upper(), node.capitalize()}
+        c = self.memory.get_concept(node)
+        if c:
+            variants.add(c.id)
+            variants.add(c.name)
+            variants.add(c.name.upper())
+        return variants
+
+    def _to_name(self, id_or_name: str) -> str:
+        if id_or_name.startswith("concept_"):
+            c = self.memory.get_concept(id_or_name)
+            if c:
+                return c.name.strip().upper().replace(" ", "_")
+        return id_or_name.strip().upper().replace(" ", "_")
+
+    def _get_outgoing(self, node: str, predicate: str) -> List[str]:
+        objs: Set[str] = set()
+        for variant in self._resolve_variants(node):
+            for r in self.memory.get_relations(subject_id=variant, predicate=predicate):
+                objs.add(self._to_name(r.object_id))
+        return list(objs)
+
+    def _get_incoming(self, node: str, predicate: str) -> List[str]:
+        subjs: Set[str] = set()
+        for variant in self._resolve_variants(node):
+            for r in self.memory.get_relations(object_id=variant, predicate=predicate):
+                subjs.add(self._to_name(r.subject_id))
+        return list(subjs)
+
     def query(
         self, subject: str, target: str, predicate: str = "is_a"
     ) -> InfillingResult:
@@ -40,28 +70,24 @@ class DualSpeedInfillingEngine:
         pred_clean = predicate.strip().lower()
 
         # 1. FAST MODE: Single-hop direct index / cache hit (<0.2ms)
-        direct_rels = self.memory.get_relations(
-            subject_id=subj_clean, predicate=pred_clean
-        )
-        for r in direct_rels:
-            if r.object_id.strip().upper().replace(" ", "_") == target_clean:
-                lat = (time.perf_counter() - t0) * 1000.0
-                return InfillingResult(
-                    mode="FAST",
-                    path=[subj_clean, target_clean],
-                    confidence=0.95,
-                    inspectable_trace=f"Direct reflex hit: ({subj_clean}, {pred_clean}, {target_clean})",
-                    latency_ms=lat,
-                )
+        direct_objs = self._get_outgoing(subj_clean, pred_clean)
+        if target_clean in direct_objs:
+            lat = (time.perf_counter() - t0) * 1000.0
+            return InfillingResult(
+                mode="FAST",
+                path=[subj_clean, target_clean],
+                confidence=0.95,
+                inspectable_trace=f"Direct reflex hit: ({subj_clean}, {pred_clean}, {target_clean})",
+                latency_ms=lat,
+            )
 
         # 2. THINKING MODE: Bidirectional Frontier Collision Search (Meeting-in-the-Middle)
-        # Forward frontier from subject along outgoing edges
-        fwd_frontier: Dict[str, List[str]] = {subj_clean: [subj_clean]}
-        # Backward frontier from target along incoming edges
-        bwd_frontier: Dict[str, List[str]] = {target_clean: [target_clean]}
+        # All discovered paths from subject and target
+        fwd_paths: Dict[str, List[str]] = {subj_clean: [subj_clean]}
+        bwd_paths: Dict[str, List[str]] = {target_clean: [target_clean]}
 
-        visited_fwd: Set[str] = {subj_clean}
-        visited_bwd: Set[str] = {target_clean}
+        fwd_frontier: Set[str] = {subj_clean}
+        bwd_frontier: Set[str] = {target_clean}
 
         collision_node: Optional[str] = None
         max_depth = 8
@@ -77,20 +103,16 @@ class DualSpeedInfillingEngine:
             depth += 1
 
             # Expand Forward Frontier
-            next_fwd: Dict[str, List[str]] = {}
-            for node, path in fwd_frontier.items():
-                for rel in self.memory.get_relations(
-                    subject_id=node, predicate=pred_clean
-                ):
-                    obj_c = rel.object_id.strip().upper().replace(" ", "_")
-                    if obj_c not in visited_fwd:
-                        new_path = path + [obj_c]
-                        if obj_c in visited_bwd:
+            next_fwd: Set[str] = set()
+            for node in fwd_frontier:
+                curr_path = fwd_paths[node]
+                for obj_c in self._get_outgoing(node, pred_clean):
+                    if obj_c not in fwd_paths:
+                        fwd_paths[obj_c] = curr_path + [obj_c]
+                        next_fwd.add(obj_c)
+                        if obj_c in bwd_paths:
                             collision_node = obj_c
-                            fwd_frontier[obj_c] = new_path
                             break
-                        next_fwd[obj_c] = new_path
-                        visited_fwd.add(obj_c)
                 if collision_node:
                     break
             if collision_node:
@@ -98,20 +120,16 @@ class DualSpeedInfillingEngine:
             fwd_frontier = next_fwd
 
             # Expand Backward Frontier
-            next_bwd: Dict[str, List[str]] = {}
-            for node, path in bwd_frontier.items():
-                for rel in self.memory.get_relations(
-                    object_id=node, predicate=pred_clean
-                ):
-                    sub_c = rel.subject_id.strip().upper().replace(" ", "_")
-                    if sub_c not in visited_bwd:
-                        new_path = [sub_c] + path
-                        if sub_c in visited_fwd:
+            next_bwd: Set[str] = set()
+            for node in bwd_frontier:
+                curr_path = bwd_paths[node]
+                for sub_c in self._get_incoming(node, pred_clean):
+                    if sub_c not in bwd_paths:
+                        bwd_paths[sub_c] = [sub_c] + curr_path
+                        next_bwd.add(sub_c)
+                        if sub_c in fwd_paths:
                             collision_node = sub_c
-                            bwd_frontier[sub_c] = new_path
                             break
-                        next_bwd[sub_c] = new_path
-                        visited_bwd.add(sub_c)
                 if collision_node:
                     break
             if collision_node:
@@ -124,8 +142,8 @@ class DualSpeedInfillingEngine:
         lat = (time.perf_counter() - t0) * 1000.0
 
         if collision_node:
-            fwd_part = fwd_frontier[collision_node]
-            bwd_part = bwd_frontier[collision_node]
+            fwd_part = fwd_paths[collision_node]
+            bwd_part = bwd_paths[collision_node]
             full_path = fwd_part[:-1] + bwd_part
 
             # Verify through DeepSeek-R1 Invariant Gates
