@@ -439,3 +439,11 @@ Implementation Plan: `docs/superpowers/plans/2026-09-22-mivi-spiderweb-thinking-
   - [x] Expose `--thinking` in `little chat` REPL
   - [x] Add `tests/integration/test_spiderweb_chat_integration.py`
   - [x] Verify 100% test pass across full regression suite (`uv run pytest`)
+
+- [x] **Phase 7: Curated 100k+ Large-Scale Ontology Ingestion & Dynamic Concept Knot Hydration**
+  - [x] Implement `ConceptKnot.from_memory(store, concept_name)` for on-demand 360° spoke hydration
+  - [x] Implement `src/little/knowledge/curated_ontology.py` streaming 100,000+ commonsense triples
+  - [x] Implement high-speed batch streaming in `KnowledgeImporter.import_large_scale_ontology` (~40,000 triples/sec)
+  - [x] Add `--dataset world100k` / `--dataset large` CLI support in `little import`
+  - [x] Add `tests/unit/test_concept_knot_dynamic_hydration.py`
+  - [x] Add 100k ingestion tests to `tests/unit/test_knowledge_importer.py`
