@@ -13,19 +13,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
 from little.active.inquisitor import ActiveInquisitor
+from little.active.spiderweb_growth import AutonomousSpiderWebEngine
+from little.core.concept_knot import ConceptKnot
 from little.core.models import UpdateType
+from little.dynamics.cfc_ode import CfCContinuousODE, apply_action_jump
+from little.inference.dual_speed import DualSpeedInfillingEngine
+from little.inference.invariant_gates import DeepSeekInvariantVerifier
+from little.language.laya_gatekeeper import LayaSystem1Gatekeeper, QueryIntent
 from little.language.parser import LearningEngine, SimpleParser
 from little.memory.store import MemoryStore
 
 DEFAULT_DB_PATH = Path("data/little.db")
 
 
-def get_engine(db_path: Path = DEFAULT_DB_PATH) -> tuple[MemoryStore, LearningEngine]:
-    store = MemoryStore(db_path)
+def get_engine(
+    db_path: Path = DEFAULT_DB_PATH, seed_ontology: bool = True
+) -> tuple[MemoryStore, LearningEngine]:
+    store = MemoryStore(db_path, seed_ontology=seed_ontology)
     engine = LearningEngine(store)
     return store, engine
 
@@ -33,7 +42,7 @@ def get_engine(db_path: Path = DEFAULT_DB_PATH) -> tuple[MemoryStore, LearningEn
 def cmd_init(args: argparse.Namespace) -> None:
     db_path = Path(args.db)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    with MemoryStore(db_path):
+    with MemoryStore(db_path, seed_ontology=True):
         pass
     print(f"✓ Initialized LITTLE persistent memory store at: {db_path}")
 
@@ -58,9 +67,20 @@ def cmd_ask(args: argparse.Namespace) -> None:
     store, engine = get_engine(Path(args.db))
     try:
         question = " ".join(args.question)
+        if getattr(args, "thinking", False):
+            verifier = DeepSeekInvariantVerifier(store)
+            dual_speed = DualSpeedInfillingEngine(store, verifier)
+            parsed_q = SimpleParser.parse_question(question)
+            if parsed_q:
+                s, p, o = parsed_q
+                infill_res = dual_speed.query(s, o, predicate=p)
+                if infill_res.inspectable_trace:
+                    print(f"\n{infill_res.inspectable_trace}")
+
         res = engine.ask(question)
         print(f"\n[Inference Result: {res.status.value}]")
         print(f'Question:    "{question}"')
+        print(f"Response:    {res.verbalize()}")
         print(f"Answer:      {res.answer}")
         print(f"Confidence:  {res.confidence * 100:.1f}%")
         if res.evidence:
@@ -170,6 +190,71 @@ def cmd_export(args: argparse.Namespace) -> None:
         store.close()
 
 
+def cmd_import(args: argparse.Namespace) -> None:
+    store = MemoryStore(Path(args.db), seed_ontology=True)
+    try:
+        from little.knowledge.importer import KnowledgeImporter
+
+        importer = KnowledgeImporter(store)
+        print("\n🚀 LITTLE Knowledge Ingestion Pipeline")
+        print("---------------------------------------")
+
+        def progress(parsed: int, stored: int) -> None:
+            print(
+                f"  ↳ Processed {stored:,} relations ({parsed:,} triples parsed)...",
+                end="\r",
+                flush=True,
+            )
+
+        dataset = getattr(args, "dataset", None)
+        file_arg = getattr(args, "file", None)
+        min_w = getattr(args, "min_weight", 1.0)
+        limit = getattr(args, "limit", None)
+        fmt = getattr(args, "format", None)
+
+        if dataset in ("commonsense", "world"):
+            print("📦 Loading curated commonsense world-knowledge bundle...")
+            stats = importer.import_commonsense_bundle(progress_cb=progress)
+        elif file_arg:
+            path = Path(file_arg)
+            print(
+                f"📂 Ingesting knowledge assertions from: {path} (min_weight: {min_w})..."
+            )
+            if fmt == "conceptnet" or (
+                not fmt and path.suffix.lower() in (".csv", ".tsv")
+            ):
+                stats = importer.import_conceptnet_file(
+                    path,
+                    min_weight=min_w,
+                    max_triples=limit,
+                    progress_cb=progress,
+                )
+            elif fmt in ("json", "jsonl") or (
+                not fmt and path.suffix.lower() in (".json", ".jsonl")
+            ):
+                stats = importer.import_json_file(
+                    path,
+                    min_weight=min_w,
+                    max_triples=limit,
+                    progress_cb=progress,
+                )
+            else:
+                stats = importer.import_tsv_file(
+                    path,
+                    min_weight=min_w,
+                    max_triples=limit,
+                    progress_cb=progress,
+                )
+        else:
+            print("❌ Error: Specify either --dataset commonsense or --file <path>")
+            return
+
+        print()
+        print(f"\n✓ Ingestion complete! {stats.summary()}\n")
+    finally:
+        store.close()
+
+
 def cmd_skills_list(args: argparse.Namespace) -> None:
     store, _ = get_engine(Path(args.db))
     try:
@@ -223,7 +308,11 @@ def cmd_interact(args: argparse.Namespace) -> None:
         "what is little?",
         "what can you do",
         "what can you do?",
+        "what can u do",
+        "what are the things you can do",
+        "what are the things u can do",
         "capabilities",
+        "skills",
     }
     question_starters = (
         "what",
@@ -385,22 +474,32 @@ def cmd_interact(args: argparse.Namespace) -> None:
 
             # Determine whether input is question or statement/action
             known = {c.name.lower() for c in store.list_concepts()}
+            norm_text = SimpleParser.normalize_text(user_input)
+            norm_lower = norm_text.lower().strip()
             parsed_q = SimpleParser.parse_question(user_input, known_concepts=known)
 
             is_question = (
                 parsed_q is not None
                 or user_input.endswith("?")
+                or norm_lower.startswith(question_starters)
                 or clean_lower.startswith(question_starters)
+                or norm_lower in identity_cmds
                 or clean_lower in identity_cmds
+                or bool(re.search(r"\d+\s*[\+\-\*\/\^]\s*\d+", norm_lower))
+                or any(
+                    w in norm_lower.split()
+                    for w in ("what", "who", "where", "how", "why", "which")
+                )
             )
 
             if is_question:
                 res = engine.ask(user_input)
+                print(f"\n💬 LITTLE: {res.verbalize()}")
                 print(
-                    f"\n[{res.status.value}] Answer: {res.answer} (Confidence: {res.confidence * 100:.1f}%)"
+                    f"   ↳ [Status: {res.status.value} | Confidence: {res.confidence * 100:.1f}%]"
                 )
                 if res.evidence:
-                    print(f"Evidence: {', '.join(res.evidence)}")
+                    print(f"   ↳ Evidence: {', '.join(res.evidence)}")
 
                 # Check if unknown and prompt active clarification
                 if res.is_unknown:
@@ -411,23 +510,90 @@ def cmd_interact(args: argparse.Namespace) -> None:
                         s, p, o = parsed
                         prompt = inquisitor.inspect_uncertainty(res, s, p, o)
                         if prompt:
-                            print(
-                                f"\n🤔 [Curiosity Question] {prompt.question_for_user}"
-                            )
+                            print(f"\n🤔 LITTLE: {prompt.question_for_user}")
                             try:
                                 resp = input("Your Answer> ").strip()
                                 if resp:
+                                    resp_lower = resp.lower().strip()
+                                    if resp_lower in (
+                                        "skip",
+                                        "pass",
+                                        "cancel",
+                                        "idk",
+                                        "i don't know",
+                                        "nevermind",
+                                        "none",
+                                        "nothing",
+                                    ):
+                                        print("💬 LITTLE: Understood, skipped.\n")
+                                        continue
+
+                                    # Check if user asked a question or gave compound input instead of single answer
+                                    norm_resp = SimpleParser.normalize_text(resp)
+                                    parsed_resp_q = SimpleParser.parse_question(
+                                        norm_resp, known_concepts=known
+                                    )
+                                    stripped_resp = re.sub(
+                                        r"^(?:(?:hi|hii|hello|hey|ok|okay|so|well|please)\s+)+",
+                                        "",
+                                        norm_resp,
+                                        flags=re.IGNORECASE,
+                                    ).strip()
+                                    if (
+                                        parsed_resp_q is not None
+                                        or "?" in resp
+                                        or norm_resp.lower().startswith(
+                                            question_starters
+                                        )
+                                        or stripped_resp.lower().startswith(
+                                            question_starters
+                                        )
+                                        or any(
+                                            w in stripped_resp.lower().split()
+                                            for w in (
+                                                "what",
+                                                "who",
+                                                "where",
+                                                "how",
+                                                "why",
+                                                "which",
+                                            )
+                                        )
+                                        or bool(
+                                            re.search(
+                                                r"\d+\s*[\+\-\*\/\^]\s*\d+",
+                                                norm_resp,
+                                            )
+                                        )
+                                    ):
+                                        re_q = engine.ask(resp)
+                                        print(f"\n💬 LITTLE: {re_q.verbalize()}")
+                                        print(
+                                            f"   ↳ [Status: {re_q.status.value} | Confidence: {re_q.confidence * 100:.1f}%]"
+                                        )
+                                        if re_q.evidence:
+                                            print(
+                                                f"   ↳ Evidence: {', '.join(re_q.evidence)}"
+                                            )
+                                        print()
+                                        continue
+
                                     learn_res = inquisitor.resolve_response(
                                         prompt, resp
                                     )
-                                    re_res = engine.ask(user_input)
-                                    gain = inquisitor.calculate_information_gain(
-                                        res.confidence, re_res.confidence
-                                    )
-                                    print(f"✓ Learned: {learn_res.message}")
-                                    print(
-                                        f"  New belief: {re_res.status.value} (Conf: {re_res.confidence * 100:.1f}%, Info Gain: {gain:.2f} bits)\n"
-                                    )
+                                    if learn_res.update_type != UpdateType.NO_OP:
+                                        re_res = engine.ask(user_input)
+                                        gain = inquisitor.calculate_information_gain(
+                                            res.confidence, re_res.confidence
+                                        )
+                                        print(
+                                            f"💬 LITTLE: Thank you! {learn_res.message}"
+                                        )
+                                        print(
+                                            f"   ↳ New belief: {re_res.status.value} (Conf: {re_res.confidence * 100:.1f}%, Info Gain: {gain:.2f} bits)\n"
+                                        )
+                                    else:
+                                        print(f"💬 LITTLE: {learn_res.message}\n")
                             except (EOFError, KeyboardInterrupt):
                                 break
                 print()
@@ -436,13 +602,14 @@ def cmd_interact(args: argparse.Namespace) -> None:
                 res = engine.learn(user_input)
                 if res.update_type == UpdateType.NO_OP:
                     print(
-                        f"\n[Learned: NO_OP] Could not extract structured relations from: '{user_input}'"
+                        f"\n💬 LITTLE: I could not extract structured relations from: '{user_input}'"
                     )
                     print(
-                        "💡 Tip: Try phrasing as a fact (e.g. 'A dog is an animal', 'An apple is red') or action ('Slice apple into 4 pieces'). Type 'help' for examples.\n"
+                        "   💡 Tip: Try phrasing as a fact (e.g. 'A dog is an animal', 'An apple is red') or action ('Slice apple into 4 pieces'). Type 'help' for examples.\n"
                     )
                 else:
-                    print(f"\n[Learned: {res.update_type.value}] {res.message}\n")
+                    print(f"\n💬 LITTLE: Understood! {res.message}")
+                    print(f"   ↳ [Update: {res.update_type.value}]\n")
     finally:
         store.close()
 
@@ -483,6 +650,11 @@ def main() -> None:
     p_ask.add_argument(
         "-v", "--verbose", action="store_true", help="Display reasoning trace"
     )
+    p_ask.add_argument(
+        "--thinking",
+        action="store_true",
+        help="Display GLM bidirectional frontier collision trace",
+    )
     p_ask.set_defaults(func=cmd_ask)
 
     # inspect
@@ -517,9 +689,19 @@ def main() -> None:
     p_chat = subparsers.add_parser(
         "chat", parents=[db_parent], help="Interactive learning REPL"
     )
+    p_chat.add_argument(
+        "--thinking",
+        action="store_true",
+        help="Enable Thinking Mode inspectable traces",
+    )
     p_chat.set_defaults(func=cmd_interact)
     p_interact = subparsers.add_parser(
         "interact", parents=[db_parent], help="Interactive learning REPL"
+    )
+    p_interact.add_argument(
+        "--thinking",
+        action="store_true",
+        help="Enable Thinking Mode inspectable traces",
     )
     p_interact.set_defaults(func=cmd_interact)
 
@@ -529,6 +711,44 @@ def main() -> None:
     )
     p_export.add_argument("-o", "--output", help="Destination JSON file path")
     p_export.set_defaults(func=cmd_export)
+
+    # import
+    p_import = subparsers.add_parser(
+        "import",
+        parents=[db_parent],
+        help="Import world-knowledge triples into memory",
+    )
+    p_import.add_argument(
+        "--file",
+        "-f",
+        default=None,
+        help="Path to knowledge dataset file (CSV/TSV/JSON)",
+    )
+    p_import.add_argument(
+        "--dataset",
+        choices=["commonsense", "world"],
+        default=None,
+        help="Built-in curated knowledge dataset",
+    )
+    p_import.add_argument(
+        "--format",
+        choices=["conceptnet", "tsv", "json", "jsonl"],
+        default=None,
+        help="File format override",
+    )
+    p_import.add_argument(
+        "--min-weight",
+        type=float,
+        default=1.0,
+        help="Minimum assertion confidence weight (default: 1.0)",
+    )
+    p_import.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Maximum triples to import",
+    )
+    p_import.set_defaults(func=cmd_import)
 
     args = parser.parse_args()
     if not hasattr(args, "func"):
