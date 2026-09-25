@@ -386,6 +386,36 @@ def test_parser_does_not_use_hardcoded_capability_fallback(tmp_path: Path, monke
     assert does_question is None or does_question[1] != policy.semantic.capability
 
 
+def test_parser_does_not_use_hardcoded_learned_why_fallback(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_semantic_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_semantic_policy.v1",
+                "patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+    monkeypatch.setattr(SimpleParser, "CONSTRUCTIONS", [])
+
+    parsed = SimpleParser.parse_question(
+        "Why is a golden retriever an animal?",
+        known_concepts={"golden retriever", "animal"},
+    )
+
+    assert parsed is None or parsed[1] != "__why_is_a__"
+
+
 def test_statement_parser_uses_an_injected_construction_catalog(monkeypatch):
     custom = Construction.create(
         name="custom_gliding_relation",

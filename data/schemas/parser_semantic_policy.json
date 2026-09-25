@@ -124,6 +124,14 @@
       "target_groups": [2]
     },
     {
+      "name": "why_is_a_boundary",
+      "pattern": "^why\\s+(?:is|are)\\s+(.+)$",
+      "predicate": "__why_is_a__",
+      "split_strategy": "known_concepts_or_valid_last_token",
+      "body_group": 1,
+      "phase": "why"
+    },
+    {
       "name": "taxonomy_article",
       "pattern": "^(?:is|are)\\s+(?:(?:a|an|the)\\s+)?(.+?)\\s+(?:a|an|the)\\s+(.+)$",
       "predicate_role": "taxonomy",

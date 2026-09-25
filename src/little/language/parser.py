@@ -604,6 +604,20 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
                 if action is not None and cls.is_valid_concept(subject):
                     split = (subject, action)
 
+        elif pattern.split_strategy == "known_concepts_or_valid_last_token":
+            if known_concepts:
+                for index in range(len(tokens) - 1, 0, -1):
+                    subject = cls.clean_noun(" ".join(tokens[:index]))
+                    target = cls.clean_noun(" ".join(tokens[index:]))
+                    if subject in known_concepts and target in known_concepts:
+                        split = (subject, target)
+                        break
+            if split is None and len(tokens) >= 2:
+                subject = cls.clean_noun(" ".join(tokens[:-1]))
+                target = cls.clean_noun(tokens[-1])
+                if cls.is_valid_concept(subject) and cls.is_valid_concept(target):
+                    split = (subject, target)
+
         if split is None or not split[0] or not split[1]:
             return None
         predicate = pattern.predicate
@@ -731,29 +745,15 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
 
         # Comparative and negative why routes are defined by the semantic catalog.
 
-        # 3. Why is X a Y? "Why is an eagle an animal?"
-        m_why_is = re.match(r"^why\s+(?:is|are)\s+(.+)$", q, re.IGNORECASE)
-        if m_why_is:
-            body = m_why_is.group(1).strip()
-
-            if known_concepts:
-                tokens = body.split()
-                best_split = None
-                for i in range(len(tokens) - 1, 0, -1):
-                    cand_s = cls.clean_noun(" ".join(tokens[:i]))
-                    cand_o = cls.clean_noun(" ".join(tokens[i:]))
-                    if cand_s in known_concepts and cand_o in known_concepts:
-                        best_split = (cand_s, cand_o)
-                        break
-                if best_split:
-                    return (best_split[0], "__why_is_a__", best_split[1])
-
-            tokens = body.split()
-            if len(tokens) >= 2:
-                s = cls.clean_noun(" ".join(tokens[:-1]))
-                target = cls.clean_noun(tokens[-1])
-                if cls.is_valid_concept(s) and cls.is_valid_concept(target):
-                    return (s, "__why_is_a__", target)
+        # Learned-concept why boundaries are selected by the semantic catalog.
+        for pattern in cls._semantic_patterns().patterns:
+            if pattern.phase != "why":
+                continue
+            parsed = cls._parse_split_semantic_pattern(
+                pattern, q, known_concepts
+            )
+            if parsed is not None:
+                return parsed
 
         # Capability split strategies are selected by the semantic catalog.
         for pattern in cls._semantic_patterns().patterns:

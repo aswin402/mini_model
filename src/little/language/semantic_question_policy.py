@@ -110,6 +110,7 @@ class SemanticQuestionPolicy:
                     if split_strategy not in {
                         "known_subject_or_tail",
                         "action_verb_tail",
+                        "known_concepts_or_valid_last_token",
                     }:
                         raise ValueError(
                             f"{path} patterns[{index}] has an unsupported split_strategy"
