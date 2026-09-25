@@ -69,6 +69,8 @@ class _ParserPolicyCompatibilityMeta(type):
             return ParserPolicy.default().math_patterns
         if name == "TEMPORAL_PATTERNS":
             return ParserPolicy.default().temporal_patterns
+        if name == "SEMANTIC_PATTERNS":
+            return ParserPolicy.default().semantic_patterns
         raise AttributeError(name)
 
 
@@ -105,6 +107,16 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             configured
             if configured is not None
             else cls._policy().temporal_patterns
+        )
+
+    @classmethod
+    def _semantic_patterns(cls):
+        """Resolve direct semantic-question patterns from the active policy."""
+        configured = cls.__dict__.get("SEMANTIC_PATTERNS")
+        return (
+            configured
+            if configured is not None
+            else cls._policy().semantic_patterns
         )
 
     @classmethod
@@ -591,11 +603,49 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
                 )
                 return (subject, pattern.predicate, duration)
 
-        # 3. "What color is the apple?" / "What is the color of the apple?"
-        m_color = re.match(r"^what color is\s+(.*?)$", q, re.IGNORECASE)
-        if m_color:
-            s = cls.clean_noun(m_color.group(1))
-            return (s, cls._policy().semantic.color, "?")
+        # 3. Direct semantic question routes are defined by the versioned catalog.
+        for pattern in cls._semantic_patterns().patterns:
+            match = re.match(pattern.pattern, q, re.IGNORECASE)
+            if match is None:
+                continue
+
+            def captured(group: int) -> str:
+                return match.group(group) or ""
+
+            subject = (
+                pattern.subject_literal
+                if pattern.subject_literal is not None
+                else next(
+                    (
+                        cls.clean_noun(captured(group))
+                        for group in pattern.subject_groups
+                        if captured(group).strip()
+                    ),
+                    "",
+                )
+            )
+            target = (
+                pattern.target_literal
+                if pattern.target_literal is not None
+                else next(
+                    (
+                        cls.clean_noun(captured(group))
+                        for group in pattern.target_groups
+                        if captured(group).strip()
+                    ),
+                    "",
+                )
+            )
+            if pattern.validate_subject and not cls.is_valid_concept(subject):
+                continue
+            if pattern.validate_target and not cls.is_valid_concept(target):
+                continue
+
+            predicate = pattern.predicate
+            if predicate is None and pattern.predicate_role is not None:
+                predicate = getattr(cls._policy().semantic, pattern.predicate_role)
+            if predicate is not None:
+                return (subject, predicate, target)
 
         # Comparatives: "Is an elephant bigger than a mouse?", "Is the sun larger than the earth?"
         m_comp = re.match(
@@ -608,88 +658,6 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             o = cls.clean_noun(m_comp.group(2))
             if cls.is_valid_concept(s) and cls.is_valid_concept(o):
                 return (s, "larger_than", o)
-
-        # Habitat: "Where does a salmon live?", "Where do fish live?", "Where a salmon lives"
-        m_wh_live = re.match(
-            r"^where\s+(?:(?:does|do)\s+(.+?)\s+live|(.+?)\s+lives?)$", q, re.IGNORECASE
-        )
-        if not m_wh_live:
-            m_wh_live = re.match(
-                r"^where\s+can\s+(?:i|we|one)?\s*(?:find|see)\s+(.+)$",
-                q,
-                re.IGNORECASE,
-            )
-        if m_wh_live:
-            raw_s = m_wh_live.group(1) or m_wh_live.group(2)
-            s = cls.clean_noun(raw_s)
-            if cls.is_valid_concept(s):
-                return (s, cls._policy().semantic.habitat, "?")
-
-        # Diet: "What does a lion eat?", "What do carnivores eat?"
-        m_wh_eat = re.match(r"^what\s+(?:does|do)\s+(.+?)\s+eat$", q, re.IGNORECASE)
-        if m_wh_eat:
-            s = cls.clean_noun(m_wh_eat.group(1))
-            if cls.is_valid_concept(s):
-                return (s, cls._policy().semantic.diet, "?")
-
-        # Capability: "What can an eagle do?", "What can birds do?"
-        m_wh_can = re.match(r"^what\s+can\s+(.+?)\s+do$", q, re.IGNORECASE)
-        if m_wh_can:
-            s = cls.clean_noun(m_wh_can.group(1))
-            if cls.is_valid_concept(s):
-                return (s, cls._policy().semantic.capability, "?")
-
-        # Material: "What is ice made of?", "What is steam made of?"
-        m_wh_mat = re.match(
-            r"^what\s+(?:is|are)\s+(.+?)\s+made\s+of$", q, re.IGNORECASE
-        )
-        if m_wh_mat:
-            s = cls.clean_noun(m_wh_mat.group(1))
-            if cls.is_valid_concept(s):
-                return (s, cls._policy().semantic.composition, "?")
-
-        # Parts / Features: "What parts does a car have?", "What does a bird have?"
-        m_wh_has = re.match(
-            r"^what\s+(?:parts?\s+)?(?:does|do)\s+(.+?)\s+have$", q, re.IGNORECASE
-        )
-        if m_wh_has:
-            s = cls.clean_noun(m_wh_has.group(1))
-            if cls.is_valid_concept(s):
-                return (s, cls._policy().semantic.whole, "?")
-
-        # Purpose / Usage: "What is a hammer used for?", "What is a knife used for?"
-        m_wh_used = re.match(
-            r"^what\s+(?:is|are)\s+(.+?)\s+used\s+for$", q, re.IGNORECASE
-        )
-        if m_wh_used:
-            s = cls.clean_noun(m_wh_used.group(1))
-            if cls.is_valid_concept(s):
-                return (s, cls._policy().semantic.purpose, "?")
-
-        # Cause / Effect: "What does fire cause?", "What does exercise cause?"
-        m_wh_causes = re.match(
-            r"^what\s+(?:does|do)\s+(.+?)\s+cause$", q, re.IGNORECASE
-        )
-        if m_wh_causes:
-            s = cls.clean_noun(m_wh_causes.group(1))
-            if cls.is_valid_concept(s):
-                return (s, cls._policy().semantic.causality, "?")
-
-        # Reverse Cause: "What causes rain?", "What causes cancer?"
-        m_wh_caused_by = re.match(r"^what\s+causes\s+(.+)$", q, re.IGNORECASE)
-        if m_wh_caused_by:
-            o = cls.clean_noun(m_wh_caused_by.group(1))
-            if cls.is_valid_concept(o):
-                return ("?", cls._policy().semantic.causality, o)
-
-        # Properties: "What properties does glass have?"
-        m_wh_prop = re.match(
-            r"^what\s+properties\s+(?:does|do)\s+(.+?)\s+have$", q, re.IGNORECASE
-        )
-        if m_wh_prop:
-            s = cls.clean_noun(m_wh_prop.group(1))
-            if cls.is_valid_concept(s):
-                return (s, cls._policy().semantic.property, "?")
 
         # Why-Questions:
         # 1. Why is X not a Y? "Why is water not a solid?", "Why can't an animal be a vehicle?"
@@ -1001,6 +969,7 @@ def configured_parser(
             "QUESTION_PATTERNS": active_policy.question_patterns,
             "MATH_PATTERNS": active_policy.math_patterns,
             "TEMPORAL_PATTERNS": active_policy.temporal_patterns,
+            "SEMANTIC_PATTERNS": active_policy.semantic_patterns,
         },
     )
 

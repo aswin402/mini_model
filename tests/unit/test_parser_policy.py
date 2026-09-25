@@ -236,6 +236,41 @@ def test_parser_uses_injected_temporal_question_catalog(tmp_path: Path, monkeypa
     )
 
 
+def test_parser_uses_injected_semantic_question_catalog(tmp_path: Path, monkeypatch):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_semantic_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_semantic_policy.v1",
+                "patterns": [
+                    {
+                        "name": "custom_shade_question",
+                        "pattern": r"^what shade is\s+(.+)$",
+                        "predicate": "__custom_color__",
+                        "subject_groups": [1],
+                        "target_literal": "?",
+                        "validate_subject": False,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    assert SimpleParser.parse_question("What shade is moon?") == (
+        "moon",
+        "__custom_color__",
+        "?",
+    )
+
+
 def test_statement_parser_uses_an_injected_construction_catalog(monkeypatch):
     custom = Construction.create(
         name="custom_gliding_relation",

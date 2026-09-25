@@ -1,0 +1,83 @@
+{
+  "format": "little.parser_semantic_policy.v1",
+  "patterns": [
+    {
+      "name": "color",
+      "pattern": "^what color is\\s+(.*?)$",
+      "predicate_role": "color",
+      "subject_groups": [1],
+      "target_literal": "?",
+      "validate_subject": false
+    },
+    {
+      "name": "habitat",
+      "pattern": "^where\\s+(?:(?:does|do)\\s+(.+?)\\s+live|(.+?)\\s+lives?)$",
+      "predicate_role": "habitat",
+      "subject_groups": [1, 2],
+      "target_literal": "?"
+    },
+    {
+      "name": "habitat_location",
+      "pattern": "^where\\s+can\\s+(?:i|we|one)?\\s*(?:find|see)\\s+(.+)$",
+      "predicate_role": "habitat",
+      "subject_groups": [1],
+      "target_literal": "?"
+    },
+    {
+      "name": "diet",
+      "pattern": "^what\\s+(?:does|do)\\s+(.+?)\\s+eat$",
+      "predicate_role": "diet",
+      "subject_groups": [1],
+      "target_literal": "?"
+    },
+    {
+      "name": "capability",
+      "pattern": "^what\\s+can\\s+(.+?)\\s+do$",
+      "predicate_role": "capability",
+      "subject_groups": [1],
+      "target_literal": "?"
+    },
+    {
+      "name": "composition",
+      "pattern": "^what\\s+(?:is|are)\\s+(.+?)\\s+made\\s+of$",
+      "predicate_role": "composition",
+      "subject_groups": [1],
+      "target_literal": "?"
+    },
+    {
+      "name": "whole",
+      "pattern": "^what\\s+(?:parts?\\s+)?(?:does|do)\\s+(.+?)\\s+have$",
+      "predicate_role": "whole",
+      "subject_groups": [1],
+      "target_literal": "?"
+    },
+    {
+      "name": "purpose",
+      "pattern": "^what\\s+(?:is|are)\\s+(.+?)\\s+used\\s+for$",
+      "predicate_role": "purpose",
+      "subject_groups": [1],
+      "target_literal": "?"
+    },
+    {
+      "name": "causality_forward",
+      "pattern": "^what\\s+(?:does|do)\\s+(.+?)\\s+cause$",
+      "predicate_role": "causality",
+      "subject_groups": [1],
+      "target_literal": "?"
+    },
+    {
+      "name": "causality_reverse",
+      "pattern": "^what\\s+causes\\s+(.+)$",
+      "predicate_role": "causality",
+      "subject_literal": "?",
+      "target_groups": [1]
+    },
+    {
+      "name": "properties",
+      "pattern": "^what\\s+properties\\s+(?:does|do)\\s+(.+?)\\s+have$",
+      "predicate_role": "property",
+      "subject_groups": [1],
+      "target_literal": "?"
+    }
+  ]
+}
