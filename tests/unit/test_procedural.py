@@ -120,3 +120,23 @@ def test_builtin_skill_catalog_can_be_restricted_by_policy(tmp_path: Path):
     skills = get_builtin_skills(policy)
 
     assert [skill.name for skill in skills] == ["ADD"]
+
+
+def test_skill_execution_uses_a_fresh_builtin_namespace_per_run():
+    mutating_skill = Skill.create(
+        name="MUTATE_BUILTINS",
+        parameters=[],
+        code_body='__builtins__["leaked_name"] = "should not persist"\nreturn None',
+    )
+    probe_skill = Skill.create(
+        name="PROBE_BUILTINS",
+        parameters=[],
+        code_body="leaked_name",
+    )
+
+    mutation = SkillRunner.execute(mutating_skill)
+    probe = SkillRunner.execute(probe_skill)
+
+    assert mutation.success is True
+    assert probe.success is False
+    assert "NameError" in probe.error

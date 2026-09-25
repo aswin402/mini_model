@@ -6,7 +6,7 @@ import ast
 import math
 import operator
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any
 
 import sympy
 from sympy.parsing.sympy_parser import (
@@ -35,11 +35,9 @@ class ExecutionResult:
     trace: list[str] | None = None
 
 
-class SkillRunner:
-    """Safely executes procedural algorithms with parameter verification and sandboxing."""
-
-    # Whitelist of safe math and utility builtins
-    SAFE_BUILTINS: ClassVar[dict[str, Any]] = {
+def _safe_builtins() -> dict[str, Any]:
+    """Return an isolated namespace for one procedural execution."""
+    return {
         "abs": abs,
         "round": round,
         "min": min,
@@ -76,6 +74,10 @@ class SkillRunner:
         "sympy_transformations": SYMPY_TRANSFORMATIONS,
     }
 
+
+class SkillRunner:
+    """Safely executes procedural algorithms with parameter verification and sandboxing."""
+
     @classmethod
     def execute(cls, skill: Skill, **kwargs: Any) -> ExecutionResult:
         """Execute a skill with keyword arguments."""
@@ -97,7 +99,7 @@ class SkillRunner:
 
         # 2. Execution environment
         local_scope = dict(kwargs)
-        global_scope = {"__builtins__": cls.SAFE_BUILTINS}
+        global_scope = {"__builtins__": _safe_builtins()}
 
         # 3. Execution
         try:
