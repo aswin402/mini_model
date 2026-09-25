@@ -1,0 +1,21 @@
+{
+  "format": "little.parser_temporal_policy.v1",
+  "patterns": [
+    {
+      "name": "temporal_color",
+      "pattern": "^what color is\\s+(?:(?:a|an|the)\\s+)?(.*?)\\s+after\\s+(\\d+(?:\\.\\d+)?)\\s+(seconds?|minutes?|hours?|days?)$",
+      "predicate": "__temporal_color__",
+      "subject_group": 1,
+      "value_group": 2,
+      "unit_group": 3
+    },
+    {
+      "name": "temporal_freshness",
+      "pattern": "^is\\s+(?:(?:a|an|the)\\s+)?(.*?)\\s+fresh\\s+after\\s+(\\d+(?:\\.\\d+)?)\\s+(seconds?|minutes?|hours?|days?)$",
+      "predicate": "__temporal_condition__",
+      "subject_group": 1,
+      "value_group": 2,
+      "unit_group": 3
+    }
+  ]
+}

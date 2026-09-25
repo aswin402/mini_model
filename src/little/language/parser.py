@@ -67,6 +67,8 @@ class _ParserPolicyCompatibilityMeta(type):
             return ParserPolicy.default().question_patterns
         if name == "MATH_PATTERNS":
             return ParserPolicy.default().math_patterns
+        if name == "TEMPORAL_PATTERNS":
+            return ParserPolicy.default().temporal_patterns
         raise AttributeError(name)
 
 
@@ -94,6 +96,16 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         """Resolve explicitly bound or policy-owned arithmetic patterns."""
         configured = cls.__dict__.get("MATH_PATTERNS")
         return configured if configured is not None else cls._policy().math_patterns
+
+    @classmethod
+    def _temporal_patterns(cls):
+        """Resolve duration-question patterns from the active policy."""
+        configured = cls.__dict__.get("TEMPORAL_PATTERNS")
+        return (
+            configured
+            if configured is not None
+            else cls._policy().temporal_patterns
+        )
 
     @classmethod
     def normalize_text(cls, text: str) -> str:
@@ -568,28 +580,16 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
 
         # 1. Arithmetic and text calculations are defined by the versioned math catalog.
 
-        # 2. Temporal Continuous-Time queries: "What color is the apple slice after 2 hours?"
-        m_temp_color = re.match(
-            r"^what color is\s+(?:(?:a|an|the)\s+)?(.*?)\s+after\s+(\d+(?:\.\d+)?)\s+(seconds?|minutes?|hours?|days?)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_temp_color:
-            s = cls.clean_noun(m_temp_color.group(1))
-            val = float(m_temp_color.group(2))
-            unit = m_temp_color.group(3).lower()
-            return (s, "__temporal_color__", (val, unit))
-
-        m_temp_fresh = re.match(
-            r"^is\s+(?:(?:a|an|the)\s+)?(.*?)\s+fresh\s+after\s+(\d+(?:\.\d+)?)\s+(seconds?|minutes?|hours?|days?)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_temp_fresh:
-            s = cls.clean_noun(m_temp_fresh.group(1))
-            val = float(m_temp_fresh.group(2))
-            unit = m_temp_fresh.group(3).lower()
-            return (s, "__temporal_condition__", (val, unit))
+        # 2. Temporal continuous-time routes are defined by the versioned catalog.
+        for pattern in cls._temporal_patterns().patterns:
+            match = re.match(pattern.pattern, q, re.IGNORECASE)
+            if match:
+                subject = cls.clean_noun(match.group(pattern.subject_group))
+                duration = (
+                    float(match.group(pattern.value_group)),
+                    match.group(pattern.unit_group).lower(),
+                )
+                return (subject, pattern.predicate, duration)
 
         # 3. "What color is the apple?" / "What is the color of the apple?"
         m_color = re.match(r"^what color is\s+(.*?)$", q, re.IGNORECASE)
@@ -1000,6 +1000,7 @@ def configured_parser(
             "CONSTRUCTION_ENGINE": construction_engine,
             "QUESTION_PATTERNS": active_policy.question_patterns,
             "MATH_PATTERNS": active_policy.math_patterns,
+            "TEMPORAL_PATTERNS": active_policy.temporal_patterns,
         },
     )
 

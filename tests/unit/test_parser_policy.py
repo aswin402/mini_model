@@ -201,6 +201,41 @@ def test_linear_math_capture_uses_sign_as_metadata_only():
     )
 
 
+def test_parser_uses_injected_temporal_question_catalog(tmp_path: Path, monkeypatch):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_temporal_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_temporal_policy.v1",
+                "patterns": [
+                    {
+                        "name": "custom_shade_after_duration",
+                        "pattern": r"^what shade is\s+(.*?)\s+after\s+(\d+)\s+(hours?)$",
+                        "predicate": "__custom_temporal__",
+                        "subject_group": 1,
+                        "value_group": 2,
+                        "unit_group": 3,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    assert SimpleParser.parse_question("What shade is an apple slice after 2 hours?") == (
+        "apple slice",
+        "__custom_temporal__",
+        (2.0, "hours"),
+    )
+
+
 def test_statement_parser_uses_an_injected_construction_catalog(monkeypatch):
     custom = Construction.create(
         name="custom_gliding_relation",
