@@ -1,0 +1,70 @@
+{
+  "format": "little.parser_math_policy.v1",
+  "patterns": [
+    {
+      "name": "symbolic_binary",
+      "pattern": "^(?:(?:what\\s+is|calculate|solve|eval|evaluate)\\s+)?(\\d+(?:\\.\\d+)?)\\s*([\\+\\-\\*\\/\\^]|\\*\\*)\\s*(\\d+(?:\\.\\d+)?)$",
+      "operator_group": 2,
+      "skill_by_operator": {
+        "+": "ADD",
+        "-": "SUBTRACT",
+        "*": "MULTIPLY",
+        "/": "DIVIDE",
+        "^": "POWER",
+        "**": "POWER"
+      },
+      "argument_groups": [1, 3]
+    },
+    {
+      "name": "word_binary",
+      "pattern": "^(?:(?:what\\s+is|calculate|solve|eval|evaluate)\\s+)?(\\d+(?:\\.\\d+)?)\\s+(plus|minus|times|multiplied by|divided by|to the power of)\\s+(\\d+(?:\\.\\d+)?)$",
+      "operator_group": 2,
+      "skill_by_operator": {
+        "plus": "ADD",
+        "minus": "SUBTRACT",
+        "times": "MULTIPLY",
+        "multiplied by": "MULTIPLY",
+        "divided by": "DIVIDE",
+        "to the power of": "POWER"
+      },
+      "argument_groups": [1, 3]
+    },
+    {
+      "name": "add",
+      "pattern": "^(?:(?:what\\s+is|calculate)\\s+)?add\\s+(\\d+(?:\\.\\d+)?)\\s+(?:and|to)\\s+(\\d+(?:\\.\\d+)?)$",
+      "skill": "ADD",
+      "argument_groups": [1, 2]
+    },
+    {
+      "name": "sum",
+      "pattern": "^(?:(?:what\\s+is|calculate)\\s+)?(?:the\\s+)?(?:sum|total)\\s+of\\s+(\\d+(?:\\.\\d+)?)\\s+and\\s+(\\d+(?:\\.\\d+)?)$",
+      "skill": "ADD",
+      "argument_groups": [1, 2]
+    },
+    {
+      "name": "multiply",
+      "pattern": "^(?:(?:what\\s+is|calculate)\\s+)?multiply\\s+(\\d+(?:\\.\\d+)?)\\s+(?:by|and)\\s+(\\d+(?:\\.\\d+)?)$",
+      "skill": "MULTIPLY",
+      "argument_groups": [1, 2]
+    },
+    {
+      "name": "product",
+      "pattern": "^(?:(?:what\\s+is|calculate)\\s+)?(?:the\\s+)?product\\s+of\\s+(\\d+(?:\\.\\d+)?)\\s+and\\s+(\\d+(?:\\.\\d+)?)$",
+      "skill": "MULTIPLY",
+      "argument_groups": [1, 2]
+    },
+    {
+      "name": "divide",
+      "pattern": "^(?:(?:what\\s+is|calculate)\\s+)?divide\\s+(\\d+(?:\\.\\d+)?)\\s+by\\s+(\\d+(?:\\.\\d+)?)$",
+      "skill": "DIVIDE",
+      "argument_groups": [1, 2]
+    },
+    {
+      "name": "subtract",
+      "pattern": "^(?:(?:what\\s+is|calculate)\\s+)?subtract\\s+(\\d+(?:\\.\\d+)?)\\s+from\\s+(\\d+(?:\\.\\d+)?)$",
+      "skill": "SUBTRACT",
+      "argument_groups": [1, 2],
+      "reverse_arguments": true
+    }
+  ]
+}

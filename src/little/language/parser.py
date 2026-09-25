@@ -64,6 +64,8 @@ class _ParserPolicyCompatibilityMeta(type):
             return ConstructionEngine
         if name == "QUESTION_PATTERNS":
             return ParserPolicy.default().question_patterns
+        if name == "MATH_PATTERNS":
+            return ParserPolicy.default().math_patterns
         raise AttributeError(name)
 
 
@@ -85,6 +87,12 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             if configured is not None
             else cls._policy().question_patterns
         )
+
+    @classmethod
+    def _math_patterns(cls):
+        """Resolve explicitly bound or policy-owned arithmetic patterns."""
+        configured = cls.__dict__.get("MATH_PATTERNS")
+        return configured if configured is not None else cls._policy().math_patterns
 
     @classmethod
     def normalize_text(cls, text: str) -> str:
@@ -416,6 +424,37 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             return ("SLICE", {"object": obj, "count": count})
         return None
 
+    @staticmethod
+    def _parse_math_number(value: str) -> int | float:
+        return float(value) if "." in value else int(value)
+
+    @classmethod
+    def _parse_configured_math(
+        cls, text: str
+    ) -> tuple[str, str, dict[str, int | float]] | None:
+        """Apply the configured binary arithmetic pattern catalog."""
+        for pattern in cls._math_patterns().patterns:
+            match = re.match(pattern.pattern, text, re.IGNORECASE)
+            if match is None:
+                continue
+            try:
+                first = cls._parse_math_number(match.group(pattern.argument_groups[0]))
+                second = cls._parse_math_number(match.group(pattern.argument_groups[1]))
+            except (IndexError, ValueError):
+                continue
+
+            skill = pattern.skill
+            if pattern.operator_group is not None:
+                operator = match.group(pattern.operator_group).lower()
+                skill = pattern.skill_by_operator.get(operator)
+            if skill is None:
+                continue
+
+            if pattern.reverse_arguments:
+                first, second = second, first
+            return (skill, "__math__", {"a": first, "b": second})
+        return None
+
     @classmethod
     def parse_question(
         cls, text: str, known_concepts: set[str] | None = None
@@ -462,6 +501,10 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             if re.match(pattern.pattern, q, re.IGNORECASE):
                 return (pattern.subject, pattern.predicate, pattern.target)
 
+        configured_math = cls._parse_configured_math(q)
+        if configured_math is not None:
+            return configured_math
+
         procedural = cls.CONSTRUCTION_ENGINE.parse_procedural_from_catalog(
             q, cls.CONSTRUCTIONS
         )
@@ -470,128 +513,8 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             return (skill_name, "__math__", args)
 
         # 1. Arithmetic calculations: "4+4", "4 + 4", "What is 123 + 456?", "whats 4+4", "50 * 25"
-        m_calc_sym = re.match(
-            r"^(?:(?:what\s+is|calculate|solve|eval|evaluate)\s+)?(\d+(?:\.\d+)?)\s*([\+\-\*\/\^]|\*\*)\s*(\d+(?:\.\d+)?)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_calc_sym:
-            num1 = (
-                float(m_calc_sym.group(1))
-                if "." in m_calc_sym.group(1)
-                else int(m_calc_sym.group(1))
-            )
-            op_sym = m_calc_sym.group(2)
-            num2 = (
-                float(m_calc_sym.group(3))
-                if "." in m_calc_sym.group(3)
-                else int(m_calc_sym.group(3))
-            )
-            sym_map = {
-                "+": "ADD",
-                "-": "SUBTRACT",
-                "*": "MULTIPLY",
-                "/": "DIVIDE",
-                "^": "POWER",
-                "**": "POWER",
-            }
-            return (sym_map[op_sym], "__math__", {"a": num1, "b": num2})
-
-        m_calc_word = re.match(
-            r"^(?:(?:what\s+is|calculate|solve|eval|evaluate)\s+)?(\d+(?:\.\d+)?)\s+(plus|minus|times|multiplied by|divided by|to the power of)\s+(\d+(?:\.\d+)?)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_calc_word:
-            num1 = (
-                float(m_calc_word.group(1))
-                if "." in m_calc_word.group(1)
-                else int(m_calc_word.group(1))
-            )
-            op_word = m_calc_word.group(2).lower()
-            num2 = (
-                float(m_calc_word.group(3))
-                if "." in m_calc_word.group(3)
-                else int(m_calc_word.group(3))
-            )
-            word_map = {
-                "plus": "ADD",
-                "minus": "SUBTRACT",
-                "times": "MULTIPLY",
-                "multiplied by": "MULTIPLY",
-                "divided by": "DIVIDE",
-                "to the power of": "POWER",
-            }
-            return (word_map[op_word], "__math__", {"a": num1, "b": num2})
 
         # Natural language arithmetic word forms:
-        m_add = re.match(
-            r"^(?:(?:what\s+is|calculate)\s+)?add\s+(\d+(?:\.\d+)?)\s+(?:and|to)\s+(\d+(?:\.\d+)?)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_add:
-            n1 = float(m_add.group(1)) if "." in m_add.group(1) else int(m_add.group(1))
-            n2 = float(m_add.group(2)) if "." in m_add.group(2) else int(m_add.group(2))
-            return ("ADD", "__math__", {"a": n1, "b": n2})
-
-        m_sum = re.match(
-            r"^(?:(?:what\s+is|calculate)\s+)?(?:the\s+)?(?:sum|total)\s+of\s+(\d+(?:\.\d+)?)\s+and\s+(\d+(?:\.\d+)?)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_sum:
-            n1 = float(m_sum.group(1)) if "." in m_sum.group(1) else int(m_sum.group(1))
-            n2 = float(m_sum.group(2)) if "." in m_sum.group(2) else int(m_sum.group(2))
-            return ("ADD", "__math__", {"a": n1, "b": n2})
-
-        m_mul = re.match(
-            r"^(?:(?:what\s+is|calculate)\s+)?multiply\s+(\d+(?:\.\d+)?)\s+(?:by|and)\s+(\d+(?:\.\d+)?)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_mul:
-            n1 = float(m_mul.group(1)) if "." in m_mul.group(1) else int(m_mul.group(1))
-            n2 = float(m_mul.group(2)) if "." in m_mul.group(2) else int(m_mul.group(2))
-            return ("MULTIPLY", "__math__", {"a": n1, "b": n2})
-
-        m_prod = re.match(
-            r"^(?:(?:what\s+is|calculate)\s+)?(?:the\s+)?product\s+of\s+(\d+(?:\.\d+)?)\s+and\s+(\d+(?:\.\d+)?)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_prod:
-            n1 = (
-                float(m_prod.group(1))
-                if "." in m_prod.group(1)
-                else int(m_prod.group(1))
-            )
-            n2 = (
-                float(m_prod.group(2))
-                if "." in m_prod.group(2)
-                else int(m_prod.group(2))
-            )
-            return ("MULTIPLY", "__math__", {"a": n1, "b": n2})
-
-        m_div = re.match(
-            r"^(?:(?:what\s+is|calculate)\s+)?divide\s+(\d+(?:\.\d+)?)\s+by\s+(\d+(?:\.\d+)?)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_div:
-            n1 = float(m_div.group(1)) if "." in m_div.group(1) else int(m_div.group(1))
-            n2 = float(m_div.group(2)) if "." in m_div.group(2) else int(m_div.group(2))
-            return ("DIVIDE", "__math__", {"a": n1, "b": n2})
-
-        m_sub = re.match(
-            r"^(?:(?:what\s+is|calculate)\s+)?subtract\s+(\d+(?:\.\d+)?)\s+from\s+(\d+(?:\.\d+)?)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_sub:
-            n1 = float(m_sub.group(1)) if "." in m_sub.group(1) else int(m_sub.group(1))
-            n2 = float(m_sub.group(2)) if "." in m_sub.group(2) else int(m_sub.group(2))
-            return ("SUBTRACT", "__math__", {"a": n2, "b": n1})
 
         m_fact = re.match(
             r"^(?:(?:what\s+is|calculate)\s+)?(?:the\s+)?factorial\s+(?:of\s+)?(\d+)$",
@@ -1194,6 +1117,7 @@ def configured_parser(
             "UNIT_CONVERSIONS": unit_conversions or UnitConversionGraph(),
             "CONSTRUCTION_ENGINE": construction_engine,
             "QUESTION_PATTERNS": active_policy.question_patterns,
+            "MATH_PATTERNS": active_policy.math_patterns,
         },
     )
 

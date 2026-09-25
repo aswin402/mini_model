@@ -85,6 +85,39 @@ def test_parser_uses_injected_special_question_catalog(tmp_path: Path, monkeypat
     )
 
 
+def test_parser_uses_injected_math_pattern_catalog(tmp_path: Path, monkeypatch):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_math_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_math_policy.v1",
+                "patterns": [
+                    {
+                        "name": "custom_addition",
+                        "pattern": "^(\\d+)\\s*\\+\\s*(\\d+)$",
+                        "skill": "SUBTRACT",
+                        "argument_groups": [1, 2],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    assert SimpleParser.parse_question("7 + 5?") == (
+        "SUBTRACT",
+        "__math__",
+        {"a": 7, "b": 5},
+    )
+
+
 def test_statement_parser_uses_an_injected_construction_catalog(monkeypatch):
     custom = Construction.create(
         name="custom_gliding_relation",
