@@ -320,11 +320,8 @@ def run_benchmark() -> dict:
         if triples:
             t = triples[0]
             # Must cleanly isolate subject without clause pollution
-            if (
-                (t.subject == expected_subj or expected_subj in t.subject)
-                and not any(
-                    w in t.subject for w in ["where", "unlike", "until", "origin"]
-                )
+            if (t.subject == expected_subj or expected_subj in t.subject) and not any(
+                w in t.subject for w in ["where", "unlike", "until", "origin"]
             ):
                 semantically_valid = True
 

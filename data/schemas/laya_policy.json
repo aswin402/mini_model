@@ -1,0 +1,33 @@
+{
+  "laya_policy": {
+    "entropy_unknown_threshold": 0.35,
+    "entropy_probability_floor": 1e-12,
+    "choice": {
+      "baseline_prior": 0.1,
+      "minimum_token_length": 2,
+      "state_token_match_weight": 4.0,
+      "question_token_match_weight": 0.5,
+      "association_overlap_weight": 2.5,
+      "supported_probability_threshold": 0.7,
+      "temperature_buckets": {
+        "choice:2": 1.12,
+        "choice:3-5": 1.28,
+        "choice:6-10": 1.45,
+        "noul": 1.08,
+        "score": 1.2
+      },
+      "default_temperature_bucket": "choice:3-5"
+    },
+    "proposition": {
+      "neutral_probability": 0.5,
+      "minimum_token_length": 2,
+      "minimum_probability": 0.01,
+      "maximum_probability": 0.99,
+      "prior_true": 0.1,
+      "match_weight": 0.88,
+      "confidence_scale": 2.0,
+      "supported_probability_threshold": 0.8,
+      "contradicted_probability_threshold": 0.2
+    }
+  }
+}

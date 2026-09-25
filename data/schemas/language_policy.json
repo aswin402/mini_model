@@ -1,0 +1,57 @@
+{
+  "language_policy": {
+    "math_markers": [
+      "+", "-", "*", "/", "%", "square of", "cube of",
+      "calculate", "factorial", "solve"
+    ],
+    "curiosity_markers": [
+      "uncertain", "curiosity", "what don't you know",
+      "what do you wonder", "self-reflect"
+    ],
+    "action_prefixes": [
+      "slice", "peel", "juice", "dehydrate", "cut", "transform",
+      "heat", "cool", "execute"
+    ],
+    "question_prefixes": [
+      "is ", "are ", "what ", "where ", "who ", "which ", "why ",
+      "how ", "can ", "does ", "do ", "could ", "did ", "has ",
+      "have ", "when ", "tell me ", "describe ", "calculate "
+    ],
+    "greetings": [
+      "hi", "hii", "hiii", "hello", "hey", "heyy", "howdy",
+      "greetings", "good morning", "good afternoon", "good evening",
+      "yo", "sup", "hola"
+    ],
+    "help_commands": ["help", "?", "commands", "menu"],
+    "identity_commands": [
+      "who are you", "who are you?", "what are you", "what are you?",
+      "who r u", "what r u", "what is little", "what is little?",
+      "what can you do", "what can you do?", "what can u do",
+      "what are the things you can do", "what are the things u can do",
+      "capabilities", "skills"
+    ],
+    "exit_commands": ["exit", "quit", ":q"],
+    "clear_commands": ["clear"],
+    "memory_commands": ["memory", "concepts", "list concepts"],
+    "skills_commands": ["skills"],
+    "cancel_words": [
+      "skip", "pass", "cancel", "idk", "i don't know", "nevermind",
+      "none", "nothing", "quit", "exit"
+    ],
+    "positive_affirmations": [
+      "yes", "true", "correct", "indeed", "yep", "sure", "y"
+    ],
+    "negative_denials": [
+      "no", "false", "incorrect", "nope", "never", "not", "n"
+    ],
+    "discourse_prefixes": [
+      "hi", "hii", "hello", "hey", "ok", "okay", "so", "well", "please"
+    ],
+    "concept_associations": {
+      "apple": ["fruit", "red", "gala", "tree", "sweet", "crisp", "pome"],
+      "dog": ["animal", "bark", "pet", "puppy", "canine"],
+      "bicycle": ["wheels", "ride", "pedal", "cycle", "bike"],
+      "galaxy": ["stars", "space", "milky", "universe", "nebula", "cosmos"]
+    }
+  }
+}

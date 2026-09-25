@@ -1,0 +1,10 @@
+{
+  "perception_policy": {
+    "version": "1",
+    "deterministic_claim_probability": 0.99,
+    "deterministic_frame_uncertainty": 0.01,
+    "question_frame_uncertainty": 0.25,
+    "unknown_frame_uncertainty": 1.0,
+    "action_probability": 0.95
+  }
+}

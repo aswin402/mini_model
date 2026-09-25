@@ -1,0 +1,46 @@
+{
+  "unit_conversion_policy": {
+    "version": "1",
+    "aliases": {
+      "celsius": "celsius", "c": "celsius", "fahrenheit": "fahrenheit", "f": "fahrenheit",
+      "kelvin": "kelvin", "k": "kelvin", "kilometer": "km", "kilometers": "km", "km": "km",
+      "mile": "mile", "miles": "mile", "mi": "mile", "meter": "m", "meters": "m", "m": "m",
+      "foot": "ft", "feet": "ft", "ft": "ft", "inch": "in", "inches": "in", "in": "in",
+      "centimeter": "cm", "centimeters": "cm", "cm": "cm", "millimeter": "mm", "millimeters": "mm", "mm": "mm",
+      "yard": "yard", "yards": "yard", "kilogram": "kg", "kilograms": "kg", "kg": "kg", "kgs": "kg",
+      "gram": "g", "grams": "g", "g": "g", "milligram": "mg", "milligrams": "mg", "mg": "mg",
+      "pound": "lb", "pounds": "lb", "lb": "lb", "ounce": "oz", "ounces": "oz", "oz": "oz",
+      "ton": "ton", "tons": "ton", "hour": "hr", "hours": "hr", "hr": "hr", "hrs": "hr",
+      "minute": "min", "minutes": "min", "min": "min", "mins": "min", "second": "s", "seconds": "s", "sec": "s", "secs": "s",
+      "day": "day", "days": "day", "week": "week", "weeks": "week", "year": "year", "years": "year",
+      "km/h": "km/h", "kph": "kph", "m/s": "m/s", "mph": "mph"
+    },
+    "edges": [
+      {"source": "km", "target": "m", "scale": 1000.0},
+      {"source": "cm", "target": "m", "scale": 0.01},
+      {"source": "mm", "target": "m", "scale": 0.001},
+      {"source": "in", "target": "cm", "scale": 2.54},
+      {"source": "inch", "target": "cm", "scale": 2.54},
+      {"source": "ft", "target": "in", "scale": 12.0},
+      {"source": "foot", "target": "in", "scale": 12.0},
+      {"source": "yard", "target": "ft", "scale": 3.0},
+      {"source": "mile", "target": "km", "scale": 1.609344},
+      {"source": "kg", "target": "g", "scale": 1000.0},
+      {"source": "mg", "target": "g", "scale": 0.001},
+      {"source": "lb", "target": "g", "scale": 453.59237},
+      {"source": "oz", "target": "g", "scale": 28.349523125},
+      {"source": "ton", "target": "kg", "scale": 1000.0},
+      {"source": "min", "target": "s", "scale": 60.0},
+      {"source": "hr", "target": "min", "scale": 60.0},
+      {"source": "hour", "target": "min", "scale": 60.0},
+      {"source": "day", "target": "hr", "scale": 24.0},
+      {"source": "week", "target": "day", "scale": 7.0},
+      {"source": "year", "target": "day", "scale": 365.25},
+      {"source": "km/h", "target": "m/s", "scale": 0.2777777777777778},
+      {"source": "kph", "target": "m/s", "scale": 0.2777777777777778},
+      {"source": "mph", "target": "m/s", "scale": 0.44704},
+      {"source": "celsius", "target": "kelvin", "scale": 1.0, "offset": 273.15},
+      {"source": "fahrenheit", "target": "kelvin", "scale": 0.5555555555555556, "offset": 255.3722222222222}
+    ]
+  }
+}

@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import List, Optional, Set, Tuple
+
+from little.core.contracts import VerificationResult, VerificationStatus
+from little.knowledge.registry import SchemaRegistry
 from little.memory.store import MemoryStore
 
 
@@ -21,14 +24,36 @@ class InvariantGateResult:
     error_message: str = ""
     proof_trace: List[str] = field(default_factory=list)
 
+    def to_verification_result(self) -> VerificationResult:
+        checks = {
+            gate.split(":", 1)[0]: True
+            for gate in self.proof_trace
+            if ":" in gate and gate.split(":", 1)[0].startswith("I_")
+        }
+        if self.violated_gate:
+            checks[self.violated_gate] = False
+        return VerificationResult(
+            status=(
+                VerificationStatus.PASSED
+                if self.passed
+                else VerificationStatus.FAILED
+            ),
+            checks=checks,
+            reasons=[self.error_message] if self.error_message else list(self.proof_trace),
+        )
+
 
 class DeepSeekInvariantVerifier:
-    """Deterministic rule-based verifier guaranteeing 100% deductive precision."""
+    """Deterministic rule-based verifier for schema and graph invariants."""
 
-    HIERARCHICAL_PREDICATES = {"is_a", "subclass_of", "part_of"}
-
-    def __init__(self, memory: MemoryStore) -> None:
+    def __init__(
+        self, memory: MemoryStore, registry: SchemaRegistry | None = None
+    ) -> None:
         self.memory = memory
+        self.registry = registry or SchemaRegistry.default()
+        self.acyclic_predicates = self.registry.predicates(acyclic=True)
+        self.disjoint_predicates = self.registry.predicates(disjoint=True)
+        self.taxonomy_predicate = self.registry.primary_predicate("taxonomy")
 
     def _clean_id(self, name: str) -> str:
         return name.strip().upper().replace(" ", "_")
@@ -63,7 +88,7 @@ class DeepSeekInvariantVerifier:
         stack = [clean]
         while stack:
             curr = stack.pop()
-            for pred in self.HIERARCHICAL_PREDICATES:
+            for pred in self.acyclic_predicates:
                 for rel in self.memory.get_relations(
                     subject_id=curr, predicate=pred
                 ):
@@ -77,14 +102,11 @@ class DeepSeekInvariantVerifier:
         """Collects all concepts mutually exclusive with node."""
         clean = self._clean_id(node)
         disjoints: Set[str] = set()
-        for rel in self.memory.get_relations(
-            subject_id=clean, predicate="disjoint_with"
-        ):
-            disjoints.add(self._clean_id(rel.object_id))
-        for rel in self.memory.get_relations(
-            object_id=clean, predicate="disjoint_with"
-        ):
-            disjoints.add(self._clean_id(rel.subject_id))
+        for predicate in self.disjoint_predicates:
+            for rel in self.memory.get_relations(subject_id=clean, predicate=predicate):
+                disjoints.add(self._clean_id(rel.object_id))
+            for rel in self.memory.get_relations(object_id=clean, predicate=predicate):
+                disjoints.add(self._clean_id(rel.subject_id))
         return disjoints
 
     def verify_relation(
@@ -96,8 +118,15 @@ class DeepSeekInvariantVerifier:
         o_clean = self._clean_id(obj)
         p_clean = predicate.strip().lower()
 
+        if self.registry.relation(p_clean) is None:
+            return InvariantGateResult(
+                passed=False,
+                violated_gate="I_SORT",
+                error_message=f"Unregistered predicate: {predicate}",
+            )
+
         # Gate 1: I_DAG (Acyclicity)
-        if p_clean in self.HIERARCHICAL_PREDICATES:
+        if p_clean in self.acyclic_predicates:
             if s_clean == o_clean:
                 return InvariantGateResult(
                     passed=False,
@@ -113,7 +142,7 @@ class DeepSeekInvariantVerifier:
         trace.append("I_DAG: Acyclicity check passed")
 
         # Gate 2: I_MUTEX (Mutual Exclusivity)
-        if p_clean == "is_a":
+        if p_clean == self.taxonomy_predicate:
             subj_ancestors = self._get_ancestors(s_clean)
             obj_ancestors = self._get_ancestors(o_clean)
             for sa in subj_ancestors:
@@ -157,4 +186,5 @@ class DeepSeekInvariantVerifier:
                     error_message=f"Step {i+1} ({s} {p} {o}) failed: {step_res.error_message}",
                 )
             trace.append(f"Step {i+1}: ({s}, {p}, {o}) verified")
+            trace.extend(step_res.proof_trace)
         return InvariantGateResult(passed=True, proof_trace=trace)

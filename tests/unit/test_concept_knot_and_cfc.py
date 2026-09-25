@@ -1,7 +1,7 @@
-import pytest
+from pathlib import Path
+
 from little.core.concept_knot import (
     ConceptKnot,
-    ContinuousPhysicalState,
 )
 from little.dynamics.cfc_ode import (
     CfCContinuousODE,
@@ -29,6 +29,16 @@ def test_concept_knot_initialization():
 
     # 225° Procedural Skills
     assert "slice" in apple.procedural_skills
+
+
+def test_concept_knot_loads_data_fixture_without_object_specific_constructor():
+    apple = ConceptKnot.load_fixture(
+        "apple", Path("data/fixtures/concept_knots")
+    )
+
+    assert apple.concept_id == "APPLE"
+    assert apple.dynamics_state.moisture == 0.86
+    assert apple.invariant_mass == 180.0
 
 
 def test_cfc_continuous_ode_evolution():
@@ -61,3 +71,23 @@ def test_hybrid_automaton_action_jump_slice():
         pieces[0].dynamics_state, delta_t_hours=2.0, skin_intact=False
     )
     assert p0_evolved.oxidation > 0.20  # Rapid enzymatic browning!
+
+
+def test_action_jump_uses_knot_parts_and_skills_for_arbitrary_material():
+    metal = ConceptKnot(
+        concept_id="METAL_BLOCK",
+        taxonomy_hypernyms=["Material"],
+        mereology_parts={"shell": "external_boundary", "core": "interior"},
+        invariant_mass=10.0,
+        procedural_skills=["polish"],
+    )
+
+    pieces = apply_action_jump(metal, "slice", num_pieces=2)
+
+    assert len(pieces) == 2
+    assert pieces[0].invariant_mass == 5.0
+    assert pieces[0].mereology_parts == {
+        "shell": "partial_boundary",
+        "core": "exposed",
+    }
+    assert pieces[0].procedural_skills == ["polish"]

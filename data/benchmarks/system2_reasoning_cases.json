@@ -1,0 +1,41 @@
+{
+  "system2_benchmark": {
+    "version": "1",
+    "cases": [
+      {
+        "id": "direct",
+        "subject": "APPLE",
+        "predicate": "is_a",
+        "target": "FRUIT",
+        "edges": [["APPLE", "is_a", "FRUIT"]],
+        "expected_mode": "FAST",
+        "expect_proof": false,
+        "expect_unknown": false
+      },
+      {
+        "id": "multihop",
+        "subject": "GALA_APPLE",
+        "predicate": "is_a",
+        "target": "PLANT",
+        "edges": [
+          ["GALA_APPLE", "is_a", "APPLE"],
+          ["APPLE", "is_a", "FRUIT"],
+          ["FRUIT", "is_a", "PLANT"]
+        ],
+        "expected_mode": "THINKING",
+        "expect_proof": true,
+        "expect_unknown": false
+      },
+      {
+        "id": "unknown",
+        "subject": "APPLE",
+        "predicate": "is_a",
+        "target": "SPACESHIP",
+        "edges": [["APPLE", "is_a", "FRUIT"]],
+        "expected_mode": "THINKING",
+        "expect_proof": false,
+        "expect_unknown": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "concept_knot": {
+    "concept_id": "APPLE",
+    "taxonomy_hypernyms": ["PomeFruit", "Fruit", "PlantEntity", "PhysicalObject"],
+    "taxonomy_hyponyms": ["GalaApple", "GrannySmith", "Honeycrisp"],
+    "mereology_parts": {
+      "skin": "external_boundary",
+      "pulp": "non_tangential_proper_part",
+      "core": "tangential_proper_part",
+      "seeds": "interior_proper_part"
+    },
+    "dynamics_state": {
+      "freshness": 1.0,
+      "oxidation": 0.0,
+      "moisture": 0.86,
+      "temperature": 20.0
+    },
+    "invariant_disjoints": ["Animal", "Vehicle", "Mineral"],
+    "invariant_mass": 180.0,
+    "procedural_skills": ["slice", "peel", "juice", "dehydrate"],
+    "episodic_instances": [
+      {"obs_id": "OBS_001", "color": "red", "confidence": 0.95}
+    ]
+  }
+}

@@ -19,11 +19,13 @@ def test_concept_knot_dynamic_hydration_from_memory():
 
     # Invariants (Mutex)
     memory.add_relation("mammal", "disjoint_with", "reptile")
+    memory.add_relation("cat", "cannot_be", "amphibian")
     memory.add_relation("cat", "disjoint_with", "dog")
 
     # Skills / Procedural actions
     memory.add_relation("cat", "can", "purr")
     memory.add_relation("cat", "can", "climb")
+    memory.add_relation("cat", "used_for", "companionship")
 
     # Attributes
     cat_concept = memory.get_or_create_concept("cat")
@@ -47,10 +49,12 @@ def test_concept_knot_dynamic_hydration_from_memory():
 
     # Verify 180° Invariant Axis
     assert "dog" in cat_knot.invariant_disjoints
+    assert "amphibian" in cat_knot.invariant_disjoints
 
     # Verify 225° Procedural Skills Axis
     assert "purr" in cat_knot.procedural_skills
     assert "climb" in cat_knot.procedural_skills
+    assert "companionship" in cat_knot.procedural_skills
 
     # Verify 45° Continuous Dynamics Axis
     assert cat_knot.invariant_mass == 4.5

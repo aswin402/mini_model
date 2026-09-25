@@ -3,6 +3,8 @@
 from pathlib import Path
 
 from little.memory.store import MemoryStore
+from little.memory.export_policy import MemoryExportPolicy
+from little.memory.memory_policy import MemoryPolicy
 
 
 def test_memory_store_in_memory() -> None:
@@ -60,3 +62,32 @@ def test_memory_store_file_persistence(tmp_path: Path) -> None:
         exps = store2.list_experiences()
         assert len(exps) == 1
         assert exps[0].input_text == "The apple is red."
+
+
+def test_memory_export_uses_configurable_experience_limit():
+    store = MemoryStore(":memory:")
+    for index in range(3):
+        store.add_experience(f"event {index}", [])
+
+    policy = MemoryExportPolicy(version="test", experience_limit=1)
+    store.export_policy = policy
+    exported = store.export_state()
+
+    assert len(exported["experiences"]) == 1
+
+
+def test_memory_policy_controls_concept_and_query_defaults():
+    policy = MemoryPolicy(
+        version="test",
+        concept_confidence=0.7,
+        experience_query_limit=1,
+        bulk_import_batch_size=2,
+    )
+    store = MemoryStore(":memory:", memory_policy=policy)
+
+    concept = store.create_concept("policy-concept")
+    for index in range(3):
+        store.add_experience(f"event {index}", [])
+
+    assert concept.confidence == 0.7
+    assert len(store.list_experiences()) == 1

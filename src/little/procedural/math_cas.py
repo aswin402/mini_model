@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from little.procedural.unit_conversion_policy import UnitConversionPolicy
+
 
 @dataclass
 class MathSolution:
@@ -36,9 +38,10 @@ class UnitConversionGraph:
     Supports linear scales (length, mass, time, speed) and affine transformations (temperature).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, policy: UnitConversionPolicy | None = None) -> None:
         # Adjacency list: unit -> list of (target_unit, forward_fn, inverse_fn, scale_desc)
         self.adj: Dict[str, List[Tuple[str, Callable[[float], float], str]]] = {}
+        self.policy = policy or UnitConversionPolicy.default()
         self._build_standard_units()
 
     def add_edge(
@@ -64,89 +67,30 @@ class UnitConversionGraph:
         self.add_edge(u_sub, u_base, fwd, inv, f_desc, i_desc)
 
     def _build_standard_units(self) -> None:
-        # Length (base: m)
-        self._add_linear_ratio("km", "m", 1000.0, "1 km = 1,000 m")
-        self._add_linear_ratio("cm", "m", 0.01, "1 cm = 0.01 m")
-        self._add_linear_ratio("mm", "m", 0.001, "1 mm = 0.001 m")
-        self._add_linear_ratio("in", "cm", 2.54, "1 in = 2.54 cm")
-        self._add_linear_ratio("inch", "cm", 2.54, "1 inch = 2.54 cm")
-        self._add_linear_ratio("inches", "cm", 2.54, "1 inch = 2.54 cm")
-        self._add_linear_ratio("ft", "in", 12.0, "1 ft = 12 in")
-        self._add_linear_ratio("foot", "in", 12.0, "1 foot = 12 in")
-        self._add_linear_ratio("feet", "in", 12.0, "1 foot = 12 in")
-        self._add_linear_ratio("yard", "ft", 3.0, "1 yard = 3 ft")
-        self._add_linear_ratio("mile", "km", 1.609344, "1 mile = 1.609344 km")
-        self._add_linear_ratio("miles", "km", 1.609344, "1 mile = 1.609344 km")
-
-        # Mass (base: g)
-        self._add_linear_ratio("kg", "g", 1000.0, "1 kg = 1,000 g")
-        self._add_linear_ratio("mg", "g", 0.001, "1 mg = 0.001 g")
-        self._add_linear_ratio("lb", "g", 453.59237, "1 lb = 453.59237 g")
-        self._add_linear_ratio("pound", "g", 453.59237, "1 pound = 453.59237 g")
-        self._add_linear_ratio("pounds", "g", 453.59237, "1 pound = 453.59237 g")
-        self._add_linear_ratio("oz", "g", 28.349523125, "1 oz = 28.3495 g")
-        self._add_linear_ratio("ounce", "g", 28.349523125, "1 ounce = 28.3495 g")
-        self._add_linear_ratio("ton", "kg", 1000.0, "1 metric ton = 1,000 kg")
-
-        # Time (base: s)
-        self._add_linear_ratio("min", "s", 60.0, "1 min = 60 s")
-        self._add_linear_ratio("minute", "s", 60.0, "1 min = 60 s")
-        self._add_linear_ratio("minutes", "s", 60.0, "1 min = 60 s")
-        self._add_linear_ratio("hr", "min", 60.0, "1 hr = 60 min")
-        self._add_linear_ratio("hour", "min", 60.0, "1 hour = 60 min")
-        self._add_linear_ratio("hours", "min", 60.0, "1 hour = 60 min")
-        self._add_linear_ratio("day", "hr", 24.0, "1 day = 24 hr")
-        self._add_linear_ratio("days", "hr", 24.0, "1 day = 24 hr")
-        self._add_linear_ratio("week", "day", 7.0, "1 week = 7 days")
-        self._add_linear_ratio("weeks", "day", 7.0, "1 week = 7 days")
-        self._add_linear_ratio("year", "day", 365.25, "1 year = 365.25 days")
-        self._add_linear_ratio("years", "day", 365.25, "1 year = 365.25 days")
-
-        # Speed (base: m/s)
-        self._add_linear_ratio("km/h", "m/s", 1.0 / 3.6, "1 km/h = (1/3.6) m/s")
-        self._add_linear_ratio("kph", "m/s", 1.0 / 3.6, "1 kph = (1/3.6) m/s")
-        self._add_linear_ratio("mph", "m/s", 0.44704, "1 mph = 0.44704 m/s")
-
-        # Temperature (affine, base: kelvin)
-        # Celsius <-> Kelvin: K = C + 273.15, C = K - 273.15
-        self.add_edge(
-            "celsius",
-            "kelvin",
-            lambda c: c + 273.15,
-            lambda k: k - 273.15,
-            "K = °C + 273.15",
-            "°C = K - 273.15",
-        )
-        self.add_edge(
-            "c",
-            "kelvin",
-            lambda c: c + 273.15,
-            lambda k: k - 273.15,
-            "K = °C + 273.15",
-            "°C = K - 273.15",
-        )
-        # Fahrenheit <-> Kelvin: K = (F - 32) * 5/9 + 273.15, F = (K - 273.15) * 9/5 + 32
-        self.add_edge(
-            "fahrenheit",
-            "kelvin",
-            lambda f: (f - 32.0) * (5.0 / 9.0) + 273.15,
-            lambda k: (k - 273.15) * (9.0 / 5.0) + 32.0,
-            "K = (°F - 32) * 5/9 + 273.15",
-            "°F = (K - 273.15) * 9/5 + 32",
-        )
-        self.add_edge(
-            "f",
-            "kelvin",
-            lambda f: (f - 32.0) * (5.0 / 9.0) + 273.15,
-            lambda k: (k - 273.15) * (9.0 / 5.0) + 32.0,
-            "K = (°F - 32) * 5/9 + 273.15",
-            "°F = (K - 273.15) * 9/5 + 32",
-        )
+        for edge in self.policy.edges:
+            forward = lambda value, scale=edge.scale, offset=edge.offset: (
+                value * scale + offset
+            )
+            inverse = lambda value, scale=edge.scale, offset=edge.offset: (
+                (value - offset) / scale
+            )
+            forward_desc = f"Apply scale={edge.scale} and offset={edge.offset}"
+            inverse_desc = f"Apply inverse scale=1/{edge.scale} and offset={-edge.offset / edge.scale}"
+            self.add_edge(
+                edge.source,
+                edge.target,
+                forward,
+                inverse,
+                forward_desc,
+                inverse_desc,
+            )
 
     def convert(self, value: float, from_unit: str, to_unit: str) -> MathSolution:
         """Find the shortest conversion path via BFS and evaluate the transformation."""
-        start = from_unit.strip().lower()
-        goal = to_unit.strip().lower()
+        start_raw = from_unit.strip().lower()
+        goal_raw = to_unit.strip().lower()
+        start = self.policy.aliases.get(start_raw, start_raw)
+        goal = self.policy.aliases.get(goal_raw, goal_raw)
 
         if start == goal:
             return MathSolution(

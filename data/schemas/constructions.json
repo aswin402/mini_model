@@ -1,0 +1,2440 @@
+{
+  "format": "little.constructions.v1",
+  "constructions": [
+    {
+      "name": "act_cut_into_pieces",
+      "pattern_tokens": [
+        "cut",
+        "{x}",
+        "into",
+        "{count}",
+        "pieces"
+      ],
+      "slot_roles": {
+        "X": "object",
+        "count": "count"
+      },
+      "predicate_template": "slice",
+      "construction_type": "action",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "act_slice_into_pieces",
+      "pattern_tokens": [
+        "slice",
+        "{x}",
+        "into",
+        "{count}",
+        "pieces"
+      ],
+      "slot_roles": {
+        "X": "object",
+        "count": "count"
+      },
+      "predicate_template": "slice",
+      "construction_type": "action",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_are_bare",
+      "pattern_tokens": [
+        "{x}",
+        "are",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "is_a",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_are_not",
+      "pattern_tokens": [
+        "{x}",
+        "are",
+        "not",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "disjoint_with",
+      "construction_type": "statement",
+      "is_negative": true,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_are_part_of",
+      "pattern_tokens": [
+        "{x}",
+        "are",
+        "part",
+        "of",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "part_of",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_are_parts_of",
+      "pattern_tokens": [
+        "{x}",
+        "are",
+        "parts",
+        "of",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "part_of",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_belong_to",
+      "pattern_tokens": [
+        "{x}",
+        "belong",
+        "to",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "is_a",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_belongs_to",
+      "pattern_tokens": [
+        "{x}",
+        "belongs",
+        "to",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "is_a",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_call_me",
+      "pattern_tokens": [
+        "call",
+        "me",
+        "{name}"
+      ],
+      "slot_roles": {
+        "name": "name"
+      },
+      "predicate_template": "__user_name__",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_can_action",
+      "pattern_tokens": [
+        "{x}",
+        "can",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "can",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_can_be",
+      "pattern_tokens": [
+        "{x}",
+        "can",
+        "be",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "can_be",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_cannot_be",
+      "pattern_tokens": [
+        "{x}",
+        "cannot",
+        "be",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "disjoint_with",
+      "construction_type": "statement",
+      "is_negative": true,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_eat",
+      "pattern_tokens": [
+        "{x}",
+        "eat",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "eats",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_eats",
+      "pattern_tokens": [
+        "{x}",
+        "eats",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "eats",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_has_a",
+      "pattern_tokens": [
+        "{x}",
+        "has",
+        "a",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "has",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_has_an",
+      "pattern_tokens": [
+        "{x}",
+        "has",
+        "an",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "has",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_has_bare",
+      "pattern_tokens": [
+        "{x}",
+        "has",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "has",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_have_bare",
+      "pattern_tokens": [
+        "{x}",
+        "have",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "has",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_is_a",
+      "pattern_tokens": [
+        "{x}",
+        "is",
+        "a",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "is_a",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_is_a_kind_of",
+      "pattern_tokens": [
+        "{x}",
+        "is",
+        "a",
+        "kind",
+        "of",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "is_a",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_is_a_type_of",
+      "pattern_tokens": [
+        "{x}",
+        "is",
+        "a",
+        "type",
+        "of",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "is_a",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_is_an",
+      "pattern_tokens": [
+        "{x}",
+        "is",
+        "an",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "is_a",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_is_bare",
+      "pattern_tokens": [
+        "{x}",
+        "is",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "is_a",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_is_in_statement",
+      "pattern_tokens": [
+        "{x}",
+        "is",
+        "in",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "located_in",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_is_different_from",
+      "pattern_tokens": [
+        "{x}",
+        "is",
+        "different",
+        "from",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "disjoint_with",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_is_disjoint_with",
+      "pattern_tokens": [
+        "{x}",
+        "is",
+        "disjoint",
+        "with",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "disjoint_with",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_is_not",
+      "pattern_tokens": [
+        "{x}",
+        "is",
+        "not",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "disjoint_with",
+      "construction_type": "statement",
+      "is_negative": true,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_is_not_a",
+      "pattern_tokens": [
+        "{x}",
+        "is",
+        "not",
+        "a",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "disjoint_with",
+      "construction_type": "statement",
+      "is_negative": true,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_is_not_an",
+      "pattern_tokens": [
+        "{x}",
+        "is",
+        "not",
+        "an",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "disjoint_with",
+      "construction_type": "statement",
+      "is_negative": true,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_live_in",
+      "pattern_tokens": [
+        "{x}",
+        "live",
+        "in",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "lives_in",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_lives_in",
+      "pattern_tokens": [
+        "{x}",
+        "lives",
+        "in",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "lives_in",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_located_in",
+      "pattern_tokens": [
+        "{x}",
+        "is",
+        "located",
+        "in",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "located_in",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_made_of",
+      "pattern_tokens": [
+        "{x}",
+        "is",
+        "made",
+        "of",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "made_of",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_my_name_is",
+      "pattern_tokens": [
+        "my",
+        "name",
+        "is",
+        "{name}"
+      ],
+      "slot_roles": {
+        "name": "name"
+      },
+      "predicate_template": "__user_name__",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_owns_a",
+      "pattern_tokens": [
+        "{x}",
+        "owns",
+        "a",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "owns",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_part_of",
+      "pattern_tokens": [
+        "{x}",
+        "is",
+        "part",
+        "of",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "part_of",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_part_of_a",
+      "pattern_tokens": [
+        "{x}",
+        "is",
+        "a",
+        "part",
+        "of",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "part_of",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_a_minus_b",
+      "pattern_tokens": [
+        "{a}",
+        "minus",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "subtract",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_a_plus_b",
+      "pattern_tokens": [
+        "{a}",
+        "plus",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "add",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_a_times_b",
+      "pattern_tokens": [
+        "{a}",
+        "times",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "multiply",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_add_and",
+      "pattern_tokens": [
+        "add",
+        "{a}",
+        "and",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "add",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_add_plus",
+      "pattern_tokens": [
+        "{a}",
+        "+",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "add",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_div_by",
+      "pattern_tokens": [
+        "{a}",
+        "/",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "divide",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_divide_by",
+      "pattern_tokens": [
+        "divide",
+        "{a}",
+        "by",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "divide",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_factorial_of",
+      "pattern_tokens": [
+        "factorial",
+        "of",
+        "{n}"
+      ],
+      "slot_roles": {
+        "n": "n"
+      },
+      "predicate_template": "factorial",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_fibonacci_of",
+      "pattern_tokens": [
+        "fibonacci",
+        "of",
+        "{n}"
+      ],
+      "slot_roles": {
+        "n": "n"
+      },
+      "predicate_template": "fibonacci",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_is_a_palindrome",
+      "pattern_tokens": [
+        "is",
+        "{word}",
+        "a",
+        "palindrome"
+      ],
+      "slot_roles": {
+        "word": "text"
+      },
+      "predicate_template": "palindrome",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_is_palindrome",
+      "pattern_tokens": [
+        "is",
+        "{word}",
+        "palindrome"
+      ],
+      "slot_roles": {
+        "word": "text"
+      },
+      "predicate_template": "palindrome",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_is_prime",
+      "pattern_tokens": [
+        "is",
+        "{n}",
+        "prime"
+      ],
+      "slot_roles": {
+        "n": "n"
+      },
+      "predicate_template": "is_prime",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_mul_times",
+      "pattern_tokens": [
+        "{a}",
+        "*",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "multiply",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_multiply_and",
+      "pattern_tokens": [
+        "multiply",
+        "{a}",
+        "and",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "multiply",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_percentage_of",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "{pct}",
+        "percent",
+        "of",
+        "{val}"
+      ],
+      "slot_roles": {
+        "pct": "percent",
+        "val": "total"
+      },
+      "predicate_template": "percent",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_reverse_of",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "the",
+        "reverse",
+        "of",
+        "{text}"
+      ],
+      "slot_roles": {
+        "text": "text"
+      },
+      "predicate_template": "reverse_string",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_sqrt_of",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "the",
+        "square",
+        "root",
+        "of",
+        "{n}"
+      ],
+      "slot_roles": {
+        "n": "n"
+      },
+      "predicate_template": "sqrt",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_sub_minus",
+      "pattern_tokens": [
+        "{a}",
+        "-",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "subtract",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_sum_of_and",
+      "pattern_tokens": [
+        "sum",
+        "of",
+        "{a}",
+        "and",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "add",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_what_is_a_plus_b",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "{a}",
+        "plus",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "add",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_what_is_factorial_of",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "factorial",
+        "of",
+        "{n}"
+      ],
+      "slot_roles": {
+        "n": "n"
+      },
+      "predicate_template": "factorial",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_what_is_fibonacci_of",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "fibonacci",
+        "of",
+        "{n}"
+      ],
+      "slot_roles": {
+        "n": "n"
+      },
+      "predicate_template": "fibonacci",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_what_is_minus",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "{a}",
+        "-",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "subtract",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_what_is_plus",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "{a}",
+        "+",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "add",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_what_is_the_factorial_of",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "the",
+        "factorial",
+        "of",
+        "{n}"
+      ],
+      "slot_roles": {
+        "n": "n"
+      },
+      "predicate_template": "factorial",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_what_is_the_fibonacci_of",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "the",
+        "fibonacci",
+        "of",
+        "{n}"
+      ],
+      "slot_roles": {
+        "n": "n"
+      },
+      "predicate_template": "fibonacci",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_what_is_the_sum_of_and",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "the",
+        "sum",
+        "of",
+        "{a}",
+        "and",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "add",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_what_is_n_factorial",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "{n}",
+        "factorial"
+      ],
+      "slot_roles": {
+        "n": "n"
+      },
+      "predicate_template": "factorial",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_prime_n",
+      "pattern_tokens": [
+        "prime",
+        "{n}"
+      ],
+      "slot_roles": {
+        "n": "n"
+      },
+      "predicate_template": "is_prime",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_gcd_of",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "the",
+        "gcd",
+        "of",
+        "{a}",
+        "and",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "gcd",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_lcm_of",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "the",
+        "lcm",
+        "of",
+        "{a}",
+        "and",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "lcm",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_square_root_of",
+      "pattern_tokens": [
+        "square",
+        "root",
+        "of",
+        "{n}"
+      ],
+      "slot_roles": {
+        "n": "n"
+      },
+      "predicate_template": "sqrt",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_sqrt_number",
+      "pattern_tokens": [
+        "sqrt",
+        "{n}"
+      ],
+      "slot_roles": {
+        "n": "n"
+      },
+      "predicate_template": "sqrt",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_calculate_square_root_of",
+      "pattern_tokens": [
+        "calculate",
+        "the",
+        "square",
+        "root",
+        "of",
+        "{n}"
+      ],
+      "slot_roles": {
+        "n": "n"
+      },
+      "predicate_template": "sqrt",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_gcd_of_bare",
+      "pattern_tokens": [
+        "gcd",
+        "of",
+        "{a}",
+        "and",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "gcd",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_calculate_gcd_of",
+      "pattern_tokens": [
+        "calculate",
+        "the",
+        "gcd",
+        "of",
+        "{a}",
+        "and",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "gcd",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "proc_calculate_lcm_of",
+      "pattern_tokens": [
+        "calculate",
+        "the",
+        "lcm",
+        "of",
+        "{a}",
+        "and",
+        "{b}"
+      ],
+      "slot_roles": {
+        "a": "a",
+        "b": "b"
+      },
+      "predicate_template": "lcm",
+      "construction_type": "procedural",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_are_bare",
+      "pattern_tokens": [
+        "are",
+        "{x}",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "is_a",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_can_action",
+      "pattern_tokens": [
+        "can",
+        "{x}",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "can",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_can_be",
+      "pattern_tokens": [
+        "can",
+        "{x}",
+        "be",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "can_be",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_do_belong_to",
+      "pattern_tokens": [
+        "do",
+        "{x}",
+        "belong",
+        "to",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "is_a",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_do_eat",
+      "pattern_tokens": [
+        "do",
+        "{x}",
+        "eat",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "eats",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_do_live_in",
+      "pattern_tokens": [
+        "do",
+        "{x}",
+        "live",
+        "in",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "lives_in",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_does_belong_to",
+      "pattern_tokens": [
+        "does",
+        "{x}",
+        "belong",
+        "to",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "is_a",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_does_eat",
+      "pattern_tokens": [
+        "does",
+        "{x}",
+        "eat",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "eats",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_does_have",
+      "pattern_tokens": [
+        "does",
+        "{x}",
+        "have",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "has",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_does_live_in",
+      "pattern_tokens": [
+        "does",
+        "{x}",
+        "live",
+        "in",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "lives_in",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_how_can_u_help_me",
+      "pattern_tokens": [
+        "how",
+        "can",
+        "u",
+        "help",
+        "me"
+      ],
+      "slot_roles": {},
+      "predicate_template": "__identity__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_how_can_you_help_me",
+      "pattern_tokens": [
+        "how",
+        "can",
+        "you",
+        "help",
+        "me"
+      ],
+      "slot_roles": {},
+      "predicate_template": "__identity__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_is_a_a",
+      "pattern_tokens": [
+        "is",
+        "{x}",
+        "a",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "is_a",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_is_a_an",
+      "pattern_tokens": [
+        "is",
+        "{x}",
+        "an",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "is_a",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_is_bare",
+      "pattern_tokens": [
+        "is",
+        "{x}",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "is_a",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_is_bigger_than",
+      "pattern_tokens": [
+        "is",
+        "{x}",
+        "bigger",
+        "than",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "larger_than",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_is_greater_than",
+      "pattern_tokens": [
+        "is",
+        "{x}",
+        "greater",
+        "than",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "larger_than",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_is_in",
+      "pattern_tokens": [
+        "is",
+        "{x}",
+        "in",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "located_in",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_is_larger_than",
+      "pattern_tokens": [
+        "is",
+        "{x}",
+        "larger",
+        "than",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "larger_than",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_is_located_in",
+      "pattern_tokens": [
+        "is",
+        "{x}",
+        "located",
+        "in",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "located_in",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_is_made_of",
+      "pattern_tokens": [
+        "is",
+        "{x}",
+        "made",
+        "of",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "made_of",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_is_part_of",
+      "pattern_tokens": [
+        "is",
+        "{x}",
+        "part",
+        "of",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "part_of",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_is_part_of_a",
+      "pattern_tokens": [
+        "is",
+        "{x}",
+        "a",
+        "part",
+        "of",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "part_of",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_is_smaller_than",
+      "pattern_tokens": [
+        "is",
+        "{x}",
+        "smaller",
+        "than",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "smaller_than",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_tell_me_about",
+      "pattern_tokens": [
+        "tell",
+        "me",
+        "about",
+        "{x}"
+      ],
+      "slot_roles": {
+        "X": "subject"
+      },
+      "predicate_template": "__definition__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_things_u_can_do",
+      "pattern_tokens": [
+        "what",
+        "are",
+        "the",
+        "things",
+        "u",
+        "can",
+        "do"
+      ],
+      "slot_roles": {},
+      "predicate_template": "__identity__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_things_you_can_do",
+      "pattern_tokens": [
+        "what",
+        "are",
+        "the",
+        "things",
+        "you",
+        "can",
+        "do"
+      ],
+      "slot_roles": {},
+      "predicate_template": "__identity__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_what_are",
+      "pattern_tokens": [
+        "what",
+        "are",
+        "{x}"
+      ],
+      "slot_roles": {
+        "X": "subject"
+      },
+      "predicate_template": "__definition__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_what_are_ur_capabilities",
+      "pattern_tokens": [
+        "what",
+        "are",
+        "ur",
+        "capabilities"
+      ],
+      "slot_roles": {},
+      "predicate_template": "__identity__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_what_are_used_for",
+      "pattern_tokens": [
+        "what",
+        "are",
+        "{x}",
+        "used",
+        "for"
+      ],
+      "slot_roles": {
+        "X": "subject"
+      },
+      "predicate_template": "used_for",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_what_are_you",
+      "pattern_tokens": [
+        "what",
+        "are",
+        "you"
+      ],
+      "slot_roles": {},
+      "predicate_template": "__identity__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_what_are_your_capabilities",
+      "pattern_tokens": [
+        "what",
+        "are",
+        "your",
+        "capabilities"
+      ],
+      "slot_roles": {},
+      "predicate_template": "__identity__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_what_can_u_do",
+      "pattern_tokens": [
+        "what",
+        "can",
+        "u",
+        "do"
+      ],
+      "slot_roles": {},
+      "predicate_template": "__identity__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_what_can_you_do",
+      "pattern_tokens": [
+        "what",
+        "can",
+        "you",
+        "do"
+      ],
+      "slot_roles": {},
+      "predicate_template": "__identity__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_what_is",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "{x}"
+      ],
+      "slot_roles": {
+        "X": "subject"
+      },
+      "predicate_template": "__definition__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_what_is_a",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "a",
+        "{x}"
+      ],
+      "slot_roles": {
+        "X": "subject"
+      },
+      "predicate_template": "__definition__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_what_is_a_used_for",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "a",
+        "{x}",
+        "used",
+        "for"
+      ],
+      "slot_roles": {
+        "X": "subject"
+      },
+      "predicate_template": "used_for",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_what_is_an",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "an",
+        "{x}"
+      ],
+      "slot_roles": {
+        "X": "subject"
+      },
+      "predicate_template": "__definition__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_what_is_an_used_for",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "an",
+        "{x}",
+        "used",
+        "for"
+      ],
+      "slot_roles": {
+        "X": "subject"
+      },
+      "predicate_template": "used_for",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_what_is_my_name",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "my",
+        "name"
+      ],
+      "slot_roles": {},
+      "predicate_template": "__query_user_name__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_what_is_used_for",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "{x}",
+        "used",
+        "for"
+      ],
+      "slot_roles": {
+        "X": "subject"
+      },
+      "predicate_template": "used_for",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_what_is_your_name",
+      "pattern_tokens": [
+        "what",
+        "is",
+        "your",
+        "name"
+      ],
+      "slot_roles": {},
+      "predicate_template": "__identity__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_who_am_i",
+      "pattern_tokens": [
+        "who",
+        "am",
+        "i"
+      ],
+      "slot_roles": {},
+      "predicate_template": "__query_user_name__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_who_are_you",
+      "pattern_tokens": [
+        "who",
+        "are",
+        "you"
+      ],
+      "slot_roles": {},
+      "predicate_template": "__identity__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_who_is",
+      "pattern_tokens": [
+        "who",
+        "is",
+        "{x}"
+      ],
+      "slot_roles": {
+        "X": "subject"
+      },
+      "predicate_template": "__definition__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_cannot_action",
+      "pattern_tokens": ["{x}", "cannot", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "can",
+      "construction_type": "statement",
+      "is_negative": true,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_causes",
+      "pattern_tokens": ["{x}", "causes", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "causes",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_cause",
+      "pattern_tokens": ["{x}", "cause", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "causes",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_is_used_for",
+      "pattern_tokens": ["{x}", "is", "used", "for", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "used_for",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_are_used_for",
+      "pattern_tokens": ["{x}", "are", "used", "for", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "used_for",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_is_used_to",
+      "pattern_tokens": ["{x}", "is", "used", "to", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "used_for",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_are_used_to",
+      "pattern_tokens": ["{x}", "are", "used", "to", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "used_for",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_are_in_statement",
+      "pattern_tokens": ["{x}", "are", "in", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "located_in",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_are_made_of",
+      "pattern_tokens": ["{x}", "are", "made", "of", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "made_of",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_owns_bare",
+      "pattern_tokens": ["{x}", "owns", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "owns",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_conditional_is_a",
+      "pattern_tokens": ["if", "{x}", "is", "{y}", ",", "then", "it", "is", "{z}"],
+      "slot_roles": {"Y": "subject", "Z": "object"},
+      "predicate_template": "is_a",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_conditional_is_a_no_comma",
+      "pattern_tokens": ["if", "{x}", "is", "{y}", "then", "it", "is", "{z}"],
+      "slot_roles": {"Y": "subject", "Z": "object"},
+      "predicate_template": "is_a",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_conditional_are_a",
+      "pattern_tokens": ["if", "{x}", "are", "{y}", ",", "then", "they", "are", "{z}"],
+      "slot_roles": {"Y": "subject", "Z": "object"},
+      "predicate_template": "is_a",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_conditional_are_a_no_comma",
+      "pattern_tokens": ["if", "{x}", "are", "{y}", "then", "they", "are", "{z}"],
+      "slot_roles": {"Y": "subject", "Z": "object"},
+      "predicate_template": "is_a",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_i_am_name",
+      "pattern_tokens": ["i", "am", "{name}"],
+      "slot_roles": {"name": "name"},
+      "predicate_template": "__user_name__",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_my_name_s",
+      "pattern_tokens": ["my", "name", "s", "{name}"],
+      "slot_roles": {"name": "name"},
+      "predicate_template": "__user_name__",
+      "construction_type": "statement",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_where_is",
+      "pattern_tokens": ["where", "is", "{x}"],
+      "slot_roles": {"X": "subject"},
+      "predicate_template": "located_in",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_where_are",
+      "pattern_tokens": ["where", "are", "{x}"],
+      "slot_roles": {"X": "subject"},
+      "predicate_template": "located_in",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_where_is_located",
+      "pattern_tokens": ["where", "is", "{x}", "located"],
+      "slot_roles": {"X": "subject"},
+      "predicate_template": "located_in",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_where_are_located",
+      "pattern_tokens": ["where", "are", "{x}", "located"],
+      "slot_roles": {"X": "subject"},
+      "predicate_template": "located_in",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_why_is_in",
+      "pattern_tokens": ["why", "is", "{x}", "in", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "__why_located_in__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_why_is_located_in",
+      "pattern_tokens": ["why", "is", "{x}", "located", "in", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "__why_located_in__",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_is_not_a",
+      "pattern_tokens": ["is", "{x}", "not", "a", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "disjoint_with",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_is_not_an",
+      "pattern_tokens": ["is", "{x}", "not", "an", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "disjoint_with",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_is_not",
+      "pattern_tokens": ["is", "{x}", "not", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "disjoint_with",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_is_used_for",
+      "pattern_tokens": ["is", "{x}", "used", "for", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "used_for",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_is_used_to",
+      "pattern_tokens": ["is", "{x}", "used", "to", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "used_for",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_does_cause",
+      "pattern_tokens": ["does", "{x}", "cause", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "causes",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_do_cause",
+      "pattern_tokens": ["do", "{x}", "cause", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "causes",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_does_own",
+      "pattern_tokens": ["does", "{x}", "own", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "owns",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "q_do_own",
+      "pattern_tokens": ["do", "{x}", "own", "{y}"],
+      "slot_roles": {"X": "subject", "Y": "object"},
+      "predicate_template": "owns",
+      "construction_type": "question",
+      "is_negative": false,
+      "is_property": false,
+      "confidence": 1
+    }
+  ]
+}

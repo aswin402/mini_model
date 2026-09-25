@@ -1,0 +1,9 @@
+{
+  "parser_confidence_policy": {
+    "version": "1",
+    "certain": 1.0,
+    "derived": 0.95,
+    "unknown": 0.0,
+    "low": 0.1
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "action_schemas": [
+    {
+      "name": "split",
+      "executor": "slice_object",
+      "argument_types": {"object": "entity", "count": "quantity"},
+      "defaults": {"count": 4},
+      "preconditions": [],
+      "effects": [
+        {"type": "relation", "subject": "{result}", "predicate": "part_of", "object": "{object}"},
+        {"type": "relation", "subject": "{result}", "predicate": "is_a", "object": "{object}"}
+      ],
+      "invariants": ["mass_conservation"]
+    },
+    {
+      "name": "slice",
+      "executor": "slice_object",
+      "argument_types": {"object": "entity", "count": "quantity"},
+      "defaults": {"count": 4},
+      "preconditions": [],
+      "effects": [
+        {"type": "relation", "subject": "{result}", "predicate": "part_of", "object": "{object}"},
+        {"type": "relation", "subject": "{result}", "predicate": "is_a", "object": "{object}"}
+      ],
+      "invariants": ["mass_conservation", "boundary_exposure"]
+    }
+  ]
+}

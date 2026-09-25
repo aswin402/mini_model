@@ -13,30 +13,36 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
 from little.active.inquisitor import ActiveInquisitor
-from little.active.spiderweb_growth import AutonomousSpiderWebEngine
-from little.core.concept_knot import ConceptKnot
+from little.core.kernel import CognitiveKernel
 from little.core.models import UpdateType
-from little.dynamics.cfc_ode import CfCContinuousODE, apply_action_jump
-from little.inference.dual_speed import DualSpeedInfillingEngine
-from little.inference.invariant_gates import DeepSeekInvariantVerifier
-from little.language.laya_gatekeeper import LayaSystem1Gatekeeper, QueryIntent
-from little.language.parser import LearningEngine, SimpleParser
+from little.core.runtime_paths import RuntimePaths
+from little.knowledge.policy import LanguagePolicy
+from little.language.parser import LearningEngine
 from little.memory.store import MemoryStore
 
-DEFAULT_DB_PATH = Path("data/little.db")
+
+def default_db_path() -> Path:
+    """Return the configured persistent-memory path."""
+    return RuntimePaths.default().database
 
 
 def get_engine(
-    db_path: Path = DEFAULT_DB_PATH, seed_ontology: bool = True
+    db_path: Path | None = None, seed_ontology: bool = True
 ) -> tuple[MemoryStore, LearningEngine]:
-    store = MemoryStore(db_path, seed_ontology=seed_ontology)
+    store = MemoryStore(db_path or default_db_path(), seed_ontology=seed_ontology)
     engine = LearningEngine(store)
     return store, engine
+
+
+def get_kernel(
+    db_path: Path | None = None, seed_ontology: bool = True
+) -> tuple[MemoryStore, CognitiveKernel]:
+    store = MemoryStore(db_path or default_db_path(), seed_ontology=seed_ontology)
+    return store, CognitiveKernel(store)
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -48,10 +54,30 @@ def cmd_init(args: argparse.Namespace) -> None:
 
 
 def cmd_learn(args: argparse.Namespace) -> None:
-    store, engine = get_engine(Path(args.db))
+    store, kernel = get_kernel(Path(args.db))
     try:
         statement = " ".join(args.statement)
-        result = engine.learn(statement)
+        outcome = kernel.process(statement)
+        result = outcome.learning
+        if result is None:
+            inference = outcome.inference
+            if outcome.frame.intent == "question":
+                status = "NO_OP"
+                message = (
+                    "Input was recognized as an inquiry or calculation, not a "
+                    f"declarative statement: '{statement}'"
+                )
+            else:
+                status = inference.status.value if inference is not None else "UNKNOWN"
+                message = (
+                    inference.verbalize()
+                    if inference is not None
+                    else "No structured learning result was produced."
+                )
+            print("\n[Learning Event: NO_OP]")
+            print(f'Input:       "{statement}"')
+            print(f"Status:      {status}: {message}\n")
+            return
         print(f"\n[Learning Event: {result.update_type.value}]")
         print(f'Input:       "{statement}"')
         if result.concepts_created:
@@ -64,20 +90,21 @@ def cmd_learn(args: argparse.Namespace) -> None:
 
 
 def cmd_ask(args: argparse.Namespace) -> None:
-    store, engine = get_engine(Path(args.db))
+    store, kernel = get_kernel(Path(args.db))
     try:
         question = " ".join(args.question)
+        outcome = kernel.process(question, allow_learning=False)
+        res = outcome.inference
+        if res is None:
+            print('\n[Inference Result: UNKNOWN]')
+            print(f'Question:    "{question}"')
+            print("Response:    Input was routed to the learning pipeline.")
+            print("Answer:      None")
+            print("Confidence:  0.0%\n")
+            return
         if getattr(args, "thinking", False):
-            verifier = DeepSeekInvariantVerifier(store)
-            dual_speed = DualSpeedInfillingEngine(store, verifier)
-            parsed_q = SimpleParser.parse_question(question)
-            if parsed_q:
-                s, p, o = parsed_q
-                infill_res = dual_speed.query(s, o, predicate=p)
-                if infill_res.inspectable_trace:
-                    print(f"\n{infill_res.inspectable_trace}")
-
-        res = engine.ask(question)
+            for step in res.trace:
+                print(f"\n{step}" if step == res.trace[0] else step)
         print(f"\n[Inference Result: {res.status.value}]")
         print(f'Question:    "{question}"')
         print(f"Response:    {res.verbalize()}")
@@ -280,65 +307,16 @@ def cmd_skills_list(args: argparse.Namespace) -> None:
 
 
 def cmd_interact(args: argparse.Namespace) -> None:
-    store, engine = get_engine(Path(args.db))
-    inquisitor = ActiveInquisitor(store, engine)
+    store, kernel = get_kernel(Path(args.db))
+    policy = LanguagePolicy.default()
+    inquisitor = ActiveInquisitor(store, kernel.learner, policy=policy)
     print("=" * 68)
     print(" LITTLE Cognitive Architecture — Continuous Learning Interactive REPL")
     print(" Commands: 'help' for examples, 'memory' for stored facts, 'quit' to exit.")
     print(" Try: facts, questions, math, slicing, or physical dynamics!")
     print("=" * 68 + "\n")
 
-    greetings = {
-        "hi",
-        "hii",
-        "hiii",
-        "hello",
-        "hey",
-        "heyy",
-        "howdy",
-        "greetings",
-        "good morning",
-        "good afternoon",
-        "good evening",
-        "yo",
-        "sup",
-        "hola",
-    }
-    help_cmds = {"help", "?", "commands", "menu"}
-    identity_cmds = {
-        "who are you",
-        "who are you?",
-        "what are you",
-        "what are you?",
-        "who r u",
-        "what r u",
-        "what is little",
-        "what is little?",
-        "what can you do",
-        "what can you do?",
-        "what can u do",
-        "what are the things you can do",
-        "what are the things u can do",
-        "capabilities",
-        "skills",
-    }
-    question_starters = (
-        "what",
-        "is",
-        "are",
-        "does",
-        "do",
-        "can",
-        "could",
-        "how",
-        "calculate",
-        "who",
-        "which",
-        "why",
-        "where",
-        "tell me",
-        "describe",
-    )
+    help_cmds = set(policy.help_commands)
 
     try:
         while True:
@@ -353,23 +331,14 @@ def cmd_interact(args: argparse.Namespace) -> None:
 
             clean_lower = user_input.lower().strip()
 
-            if clean_lower in ("exit", "quit", ":q"):
+            if clean_lower in policy.exit_commands:
                 print("Goodbye!")
                 break
 
-            if clean_lower == "clear":
+            if clean_lower in policy.clear_commands:
                 import os
 
                 os.system("clear" if os.name != "nt" else "cls")
-                continue
-
-            if clean_lower in greetings:
-                print(
-                    "\n👋 Hello! I am LITTLE (Lightweight In-memory Transitive & Temporal Learning Engine).\n"
-                    "I learn concepts, perform deductive logic, simulate physical decay over continuous time,\n"
-                    "execute Python algorithms with 0% error, and ask questions when uncertain.\n\n"
-                    "💡 Type 'help' to see example queries, or 'memory' to view my knowledge base!\n"
-                )
                 continue
 
             if clean_lower in help_cmds:
@@ -417,7 +386,7 @@ def cmd_interact(args: argparse.Namespace) -> None:
 """)
                 continue
 
-            if clean_lower in ("memory", "concepts", "list concepts"):
+            if clean_lower in policy.memory_commands:
                 concepts = store.list_concepts()
                 relations = store.get_relations()
                 print(
@@ -473,35 +442,24 @@ def cmd_interact(args: argparse.Namespace) -> None:
                 print()
                 continue
 
-            if clean_lower == "skills":
+            if clean_lower in policy.skills_commands:
                 print("\n[Registered Procedural Skills]")
                 for s in store.list_skills():
                     print(f"  • {s.name}({', '.join(s.parameters)}) - {s.description}")
                 print()
                 continue
 
-            # Determine whether input is question or statement/action
-            known = {c.name.lower() for c in store.list_concepts()}
-            norm_text = SimpleParser.normalize_text(user_input)
-            norm_lower = norm_text.lower().strip()
-            parsed_q = SimpleParser.parse_question(user_input, known_concepts=known)
-
-            is_question = (
-                parsed_q is not None
-                or user_input.endswith("?")
-                or norm_lower.startswith(question_starters)
-                or clean_lower.startswith(question_starters)
-                or norm_lower in identity_cmds
-                or clean_lower in identity_cmds
-                or bool(re.search(r"\d+\s*[\+\-\*\/\^]\s*\d+", norm_lower))
-                or any(
-                    w in norm_lower.split()
-                    for w in ("what", "who", "where", "how", "why", "which")
-                )
-            )
-
-            if is_question:
-                res = engine.ask(user_input)
+            # Semantic input always enters through the cognitive kernel.
+            outcome = kernel.process(user_input)
+            if outcome.inference is not None:
+                res = outcome.inference
+                if getattr(args, "thinking", False):
+                    print(
+                        f"\n🧭 Route: {outcome.mode.value} — "
+                        f"{res.trace[1] if len(res.trace) > 1 else ''}"
+                    )
+                    for step in res.trace:
+                        print(f"   ↳ {step}")
                 print(f"\n💬 LITTLE: {res.verbalize()}")
                 print(
                     f"   ↳ [Status: {res.status.value} | Confidence: {res.confidence * 100:.1f}%]"
@@ -511,8 +469,13 @@ def cmd_interact(args: argparse.Namespace) -> None:
 
                 # Check if unknown and prompt active clarification
                 if res.is_unknown:
-                    parsed = parsed_q or SimpleParser.parse_question(
-                        user_input, known_concepts=known
+                    parsed = outcome.frame.parsed_query or next(
+                        (
+                            query
+                            for query in outcome.frame.parsed_queries
+                            if query is not None
+                        ),
+                        None,
                     )
                     if parsed:
                         s, p, o = parsed
@@ -523,58 +486,16 @@ def cmd_interact(args: argparse.Namespace) -> None:
                                 resp = input("Your Answer> ").strip()
                                 if resp:
                                     resp_lower = resp.lower().strip()
-                                    if resp_lower in (
-                                        "skip",
-                                        "pass",
-                                        "cancel",
-                                        "idk",
-                                        "i don't know",
-                                        "nevermind",
-                                        "none",
-                                        "nothing",
-                                    ):
+                                    if resp_lower in policy.cancel_words:
                                         print("💬 LITTLE: Understood, skipped.\n")
                                         continue
-
-                                    # Check if user asked a question or gave compound input instead of single answer
-                                    norm_resp = SimpleParser.normalize_text(resp)
-                                    parsed_resp_q = SimpleParser.parse_question(
-                                        norm_resp, known_concepts=known
+                                    response_outcome = kernel.process(
+                                        resp, allow_learning=False
                                     )
-                                    stripped_resp = re.sub(
-                                        r"^(?:(?:hi|hii|hello|hey|ok|okay|so|well|please)\s+)+",
-                                        "",
-                                        norm_resp,
-                                        flags=re.IGNORECASE,
-                                    ).strip()
-                                    if (
-                                        parsed_resp_q is not None
-                                        or "?" in resp
-                                        or norm_resp.lower().startswith(
-                                            question_starters
-                                        )
-                                        or stripped_resp.lower().startswith(
-                                            question_starters
-                                        )
-                                        or any(
-                                            w in stripped_resp.lower().split()
-                                            for w in (
-                                                "what",
-                                                "who",
-                                                "where",
-                                                "how",
-                                                "why",
-                                                "which",
-                                            )
-                                        )
-                                        or bool(
-                                            re.search(
-                                                r"\d+\s*[\+\-\*\/\^]\s*\d+",
-                                                norm_resp,
-                                            )
-                                        )
-                                    ):
-                                        re_q = engine.ask(resp)
+                                    if response_outcome.frame.intent == "question":
+                                        re_q = response_outcome.inference
+                                        if re_q is None:
+                                            continue
                                         print(f"\n💬 LITTLE: {re_q.verbalize()}")
                                         print(
                                             f"   ↳ [Status: {re_q.status.value} | Confidence: {re_q.confidence * 100:.1f}%]"
@@ -586,11 +507,18 @@ def cmd_interact(args: argparse.Namespace) -> None:
                                         print()
                                         continue
 
-                                    learn_res = inquisitor.resolve_response(
-                                        prompt, resp
-                                    )
-                                    if learn_res.update_type != UpdateType.NO_OP:
-                                        re_res = engine.ask(user_input)
+                                    statement = inquisitor.candidate_statement(prompt, resp)
+                                    if statement is None:
+                                        print("💬 LITTLE: I could not use that response.\n")
+                                        continue
+                                    accepted = kernel.process(statement)
+                                    learn_res = accepted.learning
+
+                                    if learn_res is not None and learn_res.update_type.value != "NO_OP":
+                                        updated = kernel.process(user_input)
+                                        re_res = updated.inference
+                                        if re_res is None:
+                                            re_res = res
                                         gain = inquisitor.calculate_information_gain(
                                             res.confidence, re_res.confidence
                                         )
@@ -601,13 +529,14 @@ def cmd_interact(args: argparse.Namespace) -> None:
                                             f"   ↳ New belief: {re_res.status.value} (Conf: {re_res.confidence * 100:.1f}%, Info Gain: {gain:.2f} bits)\n"
                                         )
                                     else:
-                                        print(f"💬 LITTLE: {learn_res.message}\n")
+                                        print(
+                                            f"💬 LITTLE: {learn_res.message if learn_res else 'I could not use that response.'}\n"
+                                        )
                             except (EOFError, KeyboardInterrupt):
                                 break
                 print()
-            else:
-                # Statement or Action
-                res = engine.learn(user_input)
+            elif outcome.learning is not None:
+                res = outcome.learning
                 if res.update_type == UpdateType.NO_OP:
                     print(
                         f"\n💬 LITTLE: I could not extract structured relations from: '{user_input}'"
@@ -622,18 +551,22 @@ def cmd_interact(args: argparse.Namespace) -> None:
         store.close()
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     db_parent = argparse.ArgumentParser(add_help=False)
     db_parent.add_argument(
         "--db",
-        default=str(DEFAULT_DB_PATH),
+        default=argparse.SUPPRESS,
         help="Path to SQLite persistent database (default: data/little.db)",
     )
 
     parser = argparse.ArgumentParser(
         prog="little",
-        parents=[db_parent],
         description="LITTLE — Continual Concept Learning and Cognitive Architecture CLI",
+    )
+    parser.add_argument(
+        "--db",
+        default=str(default_db_path()),
+        help="Path to SQLite persistent database (default: data/little.db)",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
@@ -758,6 +691,11 @@ def main() -> None:
     )
     p_import.set_defaults(func=cmd_import)
 
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
     args = parser.parse_args()
     if not hasattr(args, "func"):
         parser.print_help()

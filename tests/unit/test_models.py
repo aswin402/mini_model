@@ -9,6 +9,7 @@ from little.core.models import (
     InferenceResult,
     Relation,
 )
+from little.memory.memory_policy import MemoryPolicy
 
 
 def test_concept_creation() -> None:
@@ -36,6 +37,12 @@ def test_relation_evidence_and_confidence() -> None:
     rel.add_evidence(positive=False)
     # w+ = 2, w- = 1, total = 3, conf = 2 / 4 = 0.5
     assert rel.confidence == 0.5
+
+
+def test_concept_factory_uses_versioned_memory_confidence_default() -> None:
+    concept = Concept.create("policy-default")
+
+    assert concept.confidence == MemoryPolicy.default().concept_confidence
 
 
 def test_entity_creation() -> None:

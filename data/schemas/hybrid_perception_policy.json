@@ -1,0 +1,10 @@
+{
+  "hybrid_perception_policy": {
+    "version": "1",
+    "unknown_intent": "unknown",
+    "require_route_match": true,
+    "uncertainty_strategy": "maximum",
+    "model_id_format": "{system1_model_id}+{grounding_model_id}",
+    "model_version_format": "{system1_model_version}+{grounding_model_version}"
+  }
+}

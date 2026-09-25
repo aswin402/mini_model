@@ -5,16 +5,26 @@ Formalizes K = <V_tax, M_mereo, D_dyn, I_ax, P_proc, E_epis> across 6 orthogonal
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from little.core.concept_knot_policy import ConceptKnotPolicy
+from little.core.runtime_paths import RuntimePaths
+from little.knowledge.registry import SchemaRegistry
+
+
+def _knot_default(name: str) -> float:
+    return ConceptKnotPolicy.default().defaults[name]
 
 
 @dataclass
 class ContinuousPhysicalState:
-    freshness: float = 1.0  # [0.0 = rotten, 1.0 = freshly picked]
-    oxidation: float = 0.0  # [0.0 = fresh, 1.0 = fully oxidized / browned]
-    moisture: float = 0.85  # water fraction in [0.0, 1.0]
-    temperature: float = 22.0  # degrees Celsius
+    freshness: float = field(default_factory=lambda: _knot_default("freshness"))
+    oxidation: float = field(default_factory=lambda: _knot_default("oxidation"))
+    moisture: float = field(default_factory=lambda: _knot_default("moisture"))
+    temperature: float = field(default_factory=lambda: _knot_default("temperature"))
 
 
 @dataclass
@@ -37,7 +47,9 @@ class ConceptKnot:
 
     # 180° Invariant Axioms & Mutex (QPT mass conservation & disjoint constraints)
     invariant_disjoints: List[str] = field(default_factory=list)
-    invariant_mass: float = 180.0  # grams
+    invariant_mass: float = field(
+        default_factory=lambda: _knot_default("constructor_mass")
+    )
 
     # 225° Procedural Skills (available discrete action jumps)
     procedural_skills: List[str] = field(default_factory=list)
@@ -47,41 +59,60 @@ class ConceptKnot:
 
     @classmethod
     def create_apple_exemplar(cls) -> ConceptKnot:
-        """Instantiates the canonical Apple Concept Knot from coreidea.md."""
+        """Load the compatibility Apple fixture from the data directory."""
+        return cls.load_fixture("apple", RuntimePaths.default().concept_fixture_directory)
+
+    @classmethod
+    def from_record(
+        cls,
+        record: Dict[str, Any],
+        policy: ConceptKnotPolicy | None = None,
+    ) -> ConceptKnot:
+        """Construct a knot from a schema-compatible data record."""
+        policy = policy or ConceptKnotPolicy.default()
+        state = record.get("dynamics_state", {})
         return cls(
-            concept_id="APPLE",
-            taxonomy_hypernyms=[
-                "PomeFruit",
-                "Fruit",
-                "PlantEntity",
-                "PhysicalObject",
-            ],
-            taxonomy_hyponyms=["GalaApple", "GrannySmith", "Honeycrisp"],
-            mereology_parts={
-                "skin": "external_boundary",
-                "pulp": "non_tangential_proper_part",
-                "core": "tangential_proper_part",
-                "seeds": "interior_proper_part",
-            },
+            concept_id=str(record["concept_id"]),
+            taxonomy_hypernyms=list(record.get("taxonomy_hypernyms", [])),
+            taxonomy_hyponyms=list(record.get("taxonomy_hyponyms", [])),
+            mereology_parts=dict(record.get("mereology_parts", {})),
             dynamics_state=ContinuousPhysicalState(
-                freshness=1.0, oxidation=0.0, moisture=0.86, temperature=20.0
+                freshness=float(state.get("freshness", policy.defaults["freshness"])),
+                oxidation=float(state.get("oxidation", policy.defaults["oxidation"])),
+                moisture=float(state.get("moisture", policy.defaults["moisture"])),
+                temperature=float(state.get("temperature", policy.defaults["temperature"])),
             ),
-            invariant_disjoints=["Animal", "Vehicle", "Mineral"],
-            invariant_mass=180.0,
-            procedural_skills=["slice", "peel", "juice", "dehydrate"],
-            episodic_instances=[
-                {"obs_id": "OBS_001", "color": "red", "confidence": 0.95}
-            ],
+            invariant_disjoints=list(record.get("invariant_disjoints", [])),
+            invariant_mass=float(record.get("invariant_mass", policy.defaults["record_mass"])),
+            procedural_skills=list(record.get("procedural_skills", [])),
+            episodic_instances=list(record.get("episodic_instances", [])),
         )
 
     @classmethod
+    def load_fixture(cls, name: str, directory: Path) -> ConceptKnot:
+        """Load any concept knot fixture without adding a new Python branch."""
+        path = Path(directory) / f"{name.strip().lower()}.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        record = payload.get("concept_knot", payload)
+        if not isinstance(record, dict):
+            raise TypeError(f"{path} must contain an object under 'concept_knot'")
+        return cls.from_record(record)
+
+    @classmethod
     def from_memory(
-        cls, store: Any, concept_id_or_name: str
+        cls,
+        store: Any,
+        concept_id_or_name: str,
+        registry: SchemaRegistry | None = None,
+        policy: ConceptKnotPolicy | None = None,
     ) -> Optional[ConceptKnot]:
         """Dynamically hydrates a 360° Concept Knot directly from the persistent knowledge graph."""
+        store_registry = getattr(getattr(store, "ledger", None), "registry", None)
+        registry = registry or store_registry or SchemaRegistry.default()
+        policy = policy or ConceptKnotPolicy.default()
         c = store.get_concept(concept_id_or_name)
         variants = {
-            concept_id_or_name,
+            concept_id_or_name.strip(),
             concept_id_or_name.lower(),
             concept_id_or_name.upper(),
         }
@@ -103,35 +134,45 @@ class ConceptKnot:
         # 1. 90° Taxonomic Axis (hypernyms and hyponyms)
         hypernyms: List[str] = []
         hyponyms: List[str] = []
-        for v in variants:
-            for r in store.get_relations(subject_id=v, predicate="is_a"):
+        taxonomy_predicates = registry.predicates(axis=policy.taxonomy_axis)
+        for v in sorted(variants):
+            for r in store.get_relations(subject_id=v):
+                if (
+                    r.predicate not in taxonomy_predicates
+                    or r.weight_positive <= r.weight_negative
+                ):
+                    continue
                 name = _resolve_name(r.object_id)
                 if name not in hypernyms:
                     hypernyms.append(name)
-            for r in store.get_relations(object_id=v, predicate="is_a"):
+            for r in store.get_relations(object_id=v):
+                if (
+                    r.predicate not in taxonomy_predicates
+                    or r.weight_positive <= r.weight_negative
+                ):
+                    continue
                 name = _resolve_name(r.subject_id)
                 if name not in hyponyms:
                     hyponyms.append(name)
 
-        # 2. 135° Mereological Axis (part_of, has_part, made_of)
+        # 2. 135° Mereological Axis
         mereology: Dict[str, str] = {}
-        for v in variants:
+        mereology_roles = policy.mereology_roles
+        for v in sorted(variants):
             for r in store.get_relations(subject_id=v):
                 p = r.predicate.lower()
-                if p in ("has_part", "has"):
-                    mereology[_resolve_name(r.object_id)] = "proper_part"
-                elif p == "made_of":
-                    mereology[_resolve_name(r.object_id)] = "material_substance"
+                if p in mereology_roles and r.weight_positive > r.weight_negative:
+                    mereology[_resolve_name(r.object_id)] = mereology_roles[p]
             for r in store.get_relations(object_id=v):
                 p = r.predicate.lower()
-                if p == "part_of":
-                    mereology[_resolve_name(r.subject_id)] = "proper_part"
+                if p in mereology_roles and r.weight_positive > r.weight_negative:
+                    mereology[_resolve_name(r.subject_id)] = mereology_roles[p]
 
         # 3. 45° Continuous Dynamical Axis
-        freshness = float(attrs.get("freshness", 1.0))
-        oxidation = float(attrs.get("oxidation", 0.0))
-        moisture = float(attrs.get("moisture", 0.85))
-        temp = float(attrs.get("temperature", 22.0))
+        freshness = float(attrs.get("freshness", policy.defaults["freshness"]))
+        oxidation = float(attrs.get("oxidation", policy.defaults["oxidation"]))
+        moisture = float(attrs.get("moisture", policy.defaults["moisture"]))
+        temp = float(attrs.get("temperature", policy.defaults["temperature"]))
         dyn_state = ContinuousPhysicalState(
             freshness=freshness,
             oxidation=oxidation,
@@ -141,26 +182,36 @@ class ConceptKnot:
 
         # 4. 180° Invariant Axioms & Mutex
         disjoints: List[str] = []
-        for v in variants:
-            for r in store.get_relations(
-                subject_id=v, predicate="disjoint_with"
-            ):
+        disjoint_predicates = registry.predicates(disjoint=True)
+        for v in sorted(variants):
+            for r in store.get_relations(subject_id=v):
+                if (
+                    r.predicate not in disjoint_predicates
+                    or r.weight_positive <= r.weight_negative
+                ):
+                    continue
                 name = _resolve_name(r.object_id)
                 if name not in disjoints:
                     disjoints.append(name)
-            for r in store.get_relations(
-                object_id=v, predicate="disjoint_with"
-            ):
+            for r in store.get_relations(object_id=v):
+                if (
+                    r.predicate not in disjoint_predicates
+                    or r.weight_positive <= r.weight_negative
+                ):
+                    continue
                 name = _resolve_name(r.subject_id)
                 if name not in disjoints:
                     disjoints.append(name)
 
-        # 5. 225° Procedural Skills (can, capable_of, used_for)
+        # 5. 225° Procedural Skills
         skills: List[str] = []
-        for v in variants:
+        procedural_predicates = registry.predicates(axis=policy.procedural_axis)
+        for v in sorted(variants):
             for r in store.get_relations(subject_id=v):
-                p = r.predicate.lower()
-                if p in ("can", "capable_of", "used_for"):
+                if (
+                    r.predicate in procedural_predicates
+                    and r.weight_positive > r.weight_negative
+                ):
                     name = _resolve_name(r.object_id)
                     if name not in skills:
                         skills.append(name)
@@ -183,7 +234,7 @@ class ConceptKnot:
             mereology_parts=mereology,
             dynamics_state=dyn_state,
             invariant_disjoints=disjoints,
-            invariant_mass=float(attrs.get("mass", 150.0)),
+            invariant_mass=float(attrs.get("mass", policy.defaults["mass"])),
             procedural_skills=skills,
             episodic_instances=[],
         )

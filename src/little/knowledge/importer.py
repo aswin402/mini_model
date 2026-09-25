@@ -14,7 +14,9 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING
+
+from little.knowledge.import_policy import KnowledgeImportPolicy
 
 if TYPE_CHECKING:
     from little.memory.store import MemoryStore
@@ -47,66 +49,19 @@ class ImportStats:
 class ConceptNetNormalizer:
     """Normalizes and sanitizes ConceptNet 5 URIs and relations into LITTLE semantics."""
 
-    RELATION_MAP: ClassVar[dict[str, str]] = {
-        "/r/IsA": "is_a",
-        "/r/PartOf": "part_of",
-        "/r/HasA": "has",
-        "/r/CapableOf": "can",
-        "/r/AtLocation": "located_in",
-        "/r/MadeOf": "made_of",
-        "/r/UsedFor": "used_for",
-        "/r/Causes": "causes",
-        "/r/HasProperty": "has_property",
-        "/r/DistinctFrom": "disjoint_with",
-        "/r/Antonym": "disjoint_with",
-        "/r/Desires": "wants",
-        "/r/ReceivesAction": "receives_action",
-        "/r/HasSubevent": "has_subevent",
-        "/r/MotivatedByGoal": "motivated_by",
-        # Non-prefixed fallbacks
-        "is_a": "is_a",
-        "isa": "is_a",
-        "part_of": "part_of",
-        "has": "has",
-        "has_a": "has",
-        "can": "can",
-        "located_in": "located_in",
-        "at_location": "located_in",
-        "made_of": "made_of",
-        "used_for": "used_for",
-        "causes": "causes",
-        "has_property": "has_property",
-        "disjoint_with": "disjoint_with",
-        "antonym": "disjoint_with",
-        "wants": "wants",
-        "eats": "eats",
-        "lives_in": "lives_in",
-        "larger_than": "larger_than",
-        "smaller_than": "smaller_than",
-    }
-
-    # Low-value or non-informative stop concepts
-    DISCARD_CONCEPTS: ClassVar[set[str]] = {
-        "it",
-        "this",
-        "that",
-        "something",
-        "someone",
-        "anything",
-        "anyone",
-        "thing",
-        "things",
-        "object",
-        "one",
-        "none",
-        "etc",
-        "everything",
-        "somebody",
-        "anybody",
-    }
+    @classmethod
+    def _policy(cls) -> KnowledgeImportPolicy:
+        """Load the versioned default without retaining mutable global state."""
+        configured = getattr(cls, "_POLICY", None)
+        return configured if configured is not None else KnowledgeImportPolicy.default()
 
     @classmethod
-    def clean_concept_uri(cls, uri_or_text: str) -> str | None:
+    def clean_concept_uri(
+        cls,
+        uri_or_text: str,
+        *,
+        policy: KnowledgeImportPolicy | None = None,
+    ) -> str | None:
         """Extract clean English concept name from a ConceptNet URI or string.
 
         Examples:
@@ -115,6 +70,7 @@ class ConceptNetNormalizer:
             '/c/en/apple_juice/n/wn/food' -> 'apple juice'
             '/c/fr/chien' -> None (non-English discarded)
         """
+        active_policy = policy or cls._policy()
         raw = uri_or_text.strip()
         if not raw:
             return None
@@ -143,27 +99,41 @@ class ConceptNetNormalizer:
         term = re.sub(r"\s+", " ", term)
 
         # Filters
-        if not term or term in cls.DISCARD_CONCEPTS:
+        if not term or term in active_policy.discard_concepts:
             return None
         # Discard multi-word sentences (> 4 words or > 35 chars) to prevent graph noise
         words = term.split()
-        if len(words) > 4 or len(term) > 35:
+        if (
+            len(words) > active_policy.max_concept_words
+            or len(term) > active_policy.max_concept_characters
+        ):
             return None
 
         return term
 
     @classmethod
-    def map_relation(cls, rel_str: str) -> str | None:
-        clean = rel_str.strip()
-        return cls.RELATION_MAP.get(clean) or cls.RELATION_MAP.get(clean.lower())
+    def map_relation(
+        cls,
+        rel_str: str,
+        *,
+        policy: KnowledgeImportPolicy | None = None,
+    ) -> str | None:
+        active_policy = policy or cls._policy()
+        return active_policy.relation_aliases.get(rel_str.strip().lower())
 
 
 class KnowledgeImporter:
     """Streamlined engine for loading verified world knowledge into persistent MemoryStore."""
 
-    def __init__(self, memory: MemoryStore, batch_size: int = 5000) -> None:
+    def __init__(
+        self,
+        memory: MemoryStore,
+        batch_size: int | None = None,
+        import_policy: KnowledgeImportPolicy | None = None,
+    ) -> None:
         self.memory = memory
-        self.batch_size = batch_size
+        self.batch_size = batch_size or memory.memory_policy.bulk_import_batch_size
+        self.import_policy = import_policy or KnowledgeImportPolicy.default()
 
     def import_triples(
         self,
@@ -179,9 +149,11 @@ class KnowledgeImporter:
         count = 0
 
         for subj, pred, obj, weight, pos in triples:
-            s = ConceptNetNormalizer.clean_concept_uri(subj)
-            o = ConceptNetNormalizer.clean_concept_uri(obj)
-            p = ConceptNetNormalizer.map_relation(pred)
+            s = ConceptNetNormalizer.clean_concept_uri(
+                subj, policy=self.import_policy
+            )
+            o = ConceptNetNormalizer.clean_concept_uri(obj, policy=self.import_policy)
+            p = ConceptNetNormalizer.map_relation(pred, policy=self.import_policy)
 
             if not s or not o or not p or s == o:
                 continue

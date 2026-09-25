@@ -12,6 +12,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
 
+from little.core.grammar_registry import GrammarRegistry
 from little.core.models import (
     Concept,
     ConceptStatus,
@@ -20,15 +21,34 @@ from little.core.models import (
     Experience,
     Relation,
     Skill,
+    current_iso_timestamp,
+    generate_id,
 )
+from little.memory.evidence import EvidenceStore
+from little.memory.export_policy import MemoryExportPolicy
+from little.memory.ledger import EvidenceLedger
+from little.memory.memory_policy import MemoryPolicy
 from little.memory.schema import SCHEMA_V1
+
+
+_USE_MEMORY_POLICY = object()
 
 
 class MemoryStore:
     """Manages persistent episodic, semantic, and procedural knowledge structures."""
 
-    def __init__(self, db_path: str | Path = ":memory:") -> None:
+    def __init__(
+        self,
+        db_path: str | Path = ":memory:",
+        seed_ontology: bool = False,
+        construction_pack: str | Path | None = None,
+        export_policy: MemoryExportPolicy | None = None,
+        memory_policy: MemoryPolicy | None = None,
+    ) -> None:
         self.db_path = str(db_path)
+        self.construction_pack = construction_pack
+        self.memory_policy = memory_policy or MemoryPolicy.default()
+        self.export_policy = export_policy or MemoryExportPolicy.default()
         if self.db_path != ":memory:":
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -37,12 +57,28 @@ class MemoryStore:
         self._conn.execute("PRAGMA foreign_keys = ON;")
         if self.db_path != ":memory:":
             self._conn.execute("PRAGMA journal_mode = WAL;")
-        self._init_db()
+        self._init_db(
+            seed_ontology=seed_ontology, construction_pack=construction_pack
+        )
+        self.evidence = EvidenceStore(self)
+        self.ledger = EvidenceLedger(self)
 
-    def _init_db(self) -> None:
+    def _init_db(
+        self,
+        seed_ontology: bool = False,
+        construction_pack: str | Path | None = None,
+    ) -> None:
         with self._conn:
             self._conn.executescript(SCHEMA_V1)
-        self.seed_default_constructions()
+        self.seed_default_constructions(construction_pack=construction_pack)
+        if seed_ontology:
+            self.seed_ontology()
+
+    def seed_ontology(self) -> None:
+        """Seed foundational commonsense real-world ontology into persistent memory."""
+        from little.memory.ontology import seed_commonsense_ontology
+
+        seed_commonsense_ontology(self)
 
     def close(self) -> None:
         if self._conn:
@@ -59,6 +95,39 @@ class MemoryStore:
     ) -> None:
         self.close()
 
+    def count_relations(self) -> int:
+        """Return the number of semantic relation rows for inspection and tests."""
+        row = self._conn.execute("SELECT COUNT(*) AS count FROM relations;").fetchone()
+        return int(row["count"])
+
+    def has_evidence_tables(self) -> bool:
+        """Return whether the additive evidence tables are installed."""
+        row = self._conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM sqlite_master
+            WHERE type = 'table' AND name IN (
+                'evidence_records', 'proof_traces', 'commit_decisions'
+            );
+            """
+        ).fetchone()
+        return int(row["count"]) == 3
+
+    def find_relation_by_names(
+        self, subject: str, predicate: str, object_: str
+    ) -> Relation | None:
+        """Resolve concept names and return one matching relation, if present."""
+        subject_concept = self.get_concept(subject)
+        object_concept = self.get_concept(object_)
+        if not subject_concept or not object_concept:
+            return None
+        relations = self.get_relations(
+            subject_id=subject_concept.id,
+            predicate=predicate.strip().lower(),
+            object_id=object_concept.id,
+        )
+        return relations[0] if relations else None
+
     # -------------------------------------------------------------------------
     # Semantic Memory: Concepts
     # -------------------------------------------------------------------------
@@ -69,7 +138,7 @@ class MemoryStore:
         category: str | None = None,
         aliases: list[str] | None = None,
         attributes: dict[str, Any] | None = None,
-        confidence: float = 1.0,
+        confidence: float | None = None,
     ) -> Concept:
         """Create and persist a new concept. Returns existing if name already exists."""
         clean_name = name.strip().lower()
@@ -82,7 +151,11 @@ class MemoryStore:
             category=category,
             aliases=aliases,
             attributes=attributes,
-            confidence=confidence,
+            confidence=(
+                self.memory_policy.concept_confidence
+                if confidence is None
+                else confidence
+            ),
         )
 
         with self._conn:
@@ -306,6 +379,116 @@ class MemoryStore:
             )
         return rel
 
+    def bulk_import_triples(
+        self,
+        triples: list[tuple[str, str, str, float | int, bool]],
+        batch_size: int | None = None,
+    ) -> tuple[int, int]:
+        """High-performance batched ingestion of semantic triples.
+
+        Args:
+            triples: list of (subject_name, predicate, object_name, weight, positive)
+            batch_size: chunk size for SQLite transaction commits
+
+        Returns:
+            tuple[int, int]: (new_concepts_created, relations_processed)
+        """
+        if not triples:
+            return 0, 0
+        batch_size = (
+            self.memory_policy.bulk_import_batch_size
+            if batch_size is None
+            else batch_size
+        )
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
+            raise ValueError("batch_size must be a positive integer")
+
+        clean_triples: list[tuple[str, str, str, int, bool]] = []
+        unique_concept_names: set[str] = set()
+
+        for subj, pred, obj, weight, positive in triples:
+            s = subj.strip().lower()
+            p = pred.strip().lower()
+            o = obj.strip().lower()
+            if not s or not p or not o or s == o:
+                continue
+            w = max(1, round(weight)) if isinstance(weight, (int, float)) else 1
+            clean_triples.append((s, p, o, w, bool(positive)))
+            unique_concept_names.add(s)
+            unique_concept_names.add(o)
+
+        if not clean_triples:
+            return 0, 0
+
+        # 1. Fetch existing concepts into in-memory dictionary
+        concept_map: dict[str, str] = {}
+        cursor = self._conn.execute("SELECT name, id FROM concepts;")
+        for row in cursor.fetchall():
+            concept_map[row["name"]] = row["id"]
+
+        # 2. Insert missing concepts in batch
+        new_concepts: list[tuple[str, str, str, None, str, float, str, str]] = []
+        ts = current_iso_timestamp()
+        for name in unique_concept_names:
+            if name not in concept_map:
+                cid = generate_id("concept")
+                concept_map[name] = cid
+                new_concepts.append((cid, name, "[]", None, "{}", 1.0, "ACTIVE", ts))
+
+        if new_concepts:
+            with self._conn:
+                self._conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO concepts (id, name, aliases_json, category, attributes_json, confidence, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                    """,
+                    new_concepts,
+                )
+
+        # 3. Insert / update relations in batched transactions
+        relations_processed = 0
+        for i in range(0, len(clean_triples), batch_size):
+            chunk = clean_triples[i : i + batch_size]
+            rel_rows: list[tuple[str, str, str, str, int, int, float, None, str]] = []
+            for s, p, o, w, pos in chunk:
+                s_id = concept_map.get(s)
+                o_id = concept_map.get(o)
+                if not s_id or not o_id:
+                    continue
+                w_pos = w if pos else 0
+                w_neg = 0 if pos else w
+                conf = round(w_pos / (w_pos + w_neg + 1.0), 4)
+                rel_rows.append(
+                    (
+                        generate_id("rel"),
+                        s_id,
+                        p,
+                        o_id,
+                        w_pos,
+                        w_neg,
+                        conf,
+                        None,
+                        ts,
+                    )
+                )
+
+            if rel_rows:
+                with self._conn:
+                    self._conn.executemany(
+                        """
+                        INSERT INTO relations (id, subject_id, predicate, object_id, weight_positive, weight_negative, confidence, source_experience_id, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(subject_id, predicate, object_id) DO UPDATE SET
+                            weight_positive = relations.weight_positive + excluded.weight_positive,
+                            weight_negative = relations.weight_negative + excluded.weight_negative,
+                            confidence = round((relations.weight_positive + excluded.weight_positive) / (relations.weight_positive + excluded.weight_positive + relations.weight_negative + excluded.weight_negative + 1.0), 4);
+                        """,
+                        rel_rows,
+                    )
+                relations_processed += len(rel_rows)
+
+        return len(new_concepts), relations_processed
+
     def get_relations(
         self,
         subject_id: str | None = None,
@@ -395,16 +578,23 @@ class MemoryStore:
             timestamp=row["timestamp"],
         )
 
-    def list_experiences(self, limit: int = 50) -> list[Experience]:
-        cursor = self._conn.execute(
-            """
+    def list_experiences(
+        self, limit: int | None | object = _USE_MEMORY_POLICY
+    ) -> list[Experience]:
+        if limit is _USE_MEMORY_POLICY:
+            limit = self.memory_policy.experience_query_limit
+        query = """
             SELECT id, input_text, extracted_triples_json, source, timestamp
             FROM experiences
             ORDER BY timestamp DESC
-            LIMIT ?;
-            """,
-            (limit,),
-        )
+        """
+        parameters: tuple[int, ...] = ()
+        if limit is not None:
+            if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+                raise ValueError("experience limit must be a non-negative integer or None")
+            query += " LIMIT ?"
+            parameters = (limit,)
+        cursor = self._conn.execute(query, parameters)
         return [
             Experience(
                 id=row["id"],
@@ -649,243 +839,21 @@ class MemoryStore:
                     (conf, construction_id),
                 )
 
-    def seed_default_constructions(self) -> None:
-        """Seed core Construction Grammar patterns into SQLite if not already present."""
+    def seed_default_constructions(
+        self, construction_pack: str | Path | None = None
+    ) -> None:
+        """Seed constructions from a versioned grammar pack."""
         cursor = self._conn.execute("SELECT COUNT(*) as cnt FROM constructions;")
         row = cursor.fetchone()
         if row and row["cnt"] > 0:
             return
 
-        defaults = [
-            # Statements: Categorical & Taxonomic
-            Construction.create(
-                "cxn_is_a",
-                ["{X}", "is", "a", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "is_a",
-            ),
-            Construction.create(
-                "cxn_is_an",
-                ["{X}", "is", "an", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "is_a",
-            ),
-            Construction.create(
-                "cxn_is_bare",
-                ["{X}", "is", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "is_a",
-            ),
-            Construction.create(
-                "cxn_are_bare",
-                ["{X}", "are", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "is_a",
-            ),
-            # Statements: Negative & Disjoint
-            Construction.create(
-                "cxn_is_not_a",
-                ["{X}", "is", "not", "a", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "disjoint_with",
-            ),
-            Construction.create(
-                "cxn_is_not_an",
-                ["{X}", "is", "not", "an", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "disjoint_with",
-            ),
-            Construction.create(
-                "cxn_is_not",
-                ["{X}", "is", "not", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "disjoint_with",
-            ),
-            Construction.create(
-                "cxn_are_not",
-                ["{X}", "are", "not", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "disjoint_with",
-            ),
-            Construction.create(
-                "cxn_cannot_be",
-                ["{X}", "cannot", "be", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "disjoint_with",
-            ),
-            Construction.create(
-                "cxn_is_disjoint_with",
-                ["{X}", "is", "disjoint", "with", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "disjoint_with",
-            ),
-            Construction.create(
-                "cxn_is_different_from",
-                ["{X}", "is", "different", "from", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "disjoint_with",
-            ),
-            # Statements: Possession & Capability
-            Construction.create(
-                "cxn_has_a",
-                ["{X}", "has", "a", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "has",
-            ),
-            Construction.create(
-                "cxn_has_an",
-                ["{X}", "has", "an", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "has",
-            ),
-            Construction.create(
-                "cxn_has_bare",
-                ["{X}", "has", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "has",
-            ),
-            Construction.create(
-                "cxn_have_bare",
-                ["{X}", "have", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "has",
-            ),
-            Construction.create(
-                "cxn_owns_a",
-                ["{X}", "owns", "a", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "owns",
-            ),
-            Construction.create(
-                "cxn_can_be",
-                ["{X}", "can", "be", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "can_be",
-            ),
-            # Statements: Mereology / Part-Whole
-            Construction.create(
-                "cxn_part_of",
-                ["{X}", "is", "part", "of", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "part_of",
-            ),
-            Construction.create(
-                "cxn_part_of_a",
-                ["{X}", "is", "a", "part", "of", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "part_of",
-            ),
-            # Questions: Identity & Definition
-            Construction.create(
-                "q_who_are_you",
-                ["who", "are", "you"],
-                {},
-                "__identity__",
-                construction_type="question",
-            ),
-            Construction.create(
-                "q_what_are_you",
-                ["what", "are", "you"],
-                {},
-                "__identity__",
-                construction_type="question",
-            ),
-            Construction.create(
-                "q_what_is",
-                ["what", "is", "{X}"],
-                {"X": "subject"},
-                "__definition__",
-                construction_type="question",
-            ),
-            Construction.create(
-                "q_who_is",
-                ["who", "is", "{X}"],
-                {"X": "subject"},
-                "__definition__",
-                construction_type="question",
-            ),
-            Construction.create(
-                "q_tell_me_about",
-                ["tell", "me", "about", "{X}"],
-                {"X": "subject"},
-                "__definition__",
-                construction_type="question",
-            ),
-            # Questions: Inquiry
-            Construction.create(
-                "q_is_a_a",
-                ["is", "{X}", "a", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "is_a",
-                construction_type="question",
-            ),
-            Construction.create(
-                "q_is_a_an",
-                ["is", "{X}", "an", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "is_a",
-                construction_type="question",
-            ),
-            Construction.create(
-                "q_is_bare",
-                ["is", "{X}", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "is_a",
-                construction_type="question",
-            ),
-            Construction.create(
-                "q_are_bare",
-                ["are", "{X}", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "is_a",
-                construction_type="question",
-            ),
-            Construction.create(
-                "q_is_part_of",
-                ["is", "{X}", "part", "of", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "part_of",
-                construction_type="question",
-            ),
-            Construction.create(
-                "q_is_part_of_a",
-                ["is", "{X}", "a", "part", "of", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "part_of",
-                construction_type="question",
-            ),
-            Construction.create(
-                "q_does_have",
-                ["does", "{X}", "have", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "has",
-                construction_type="question",
-            ),
-            Construction.create(
-                "q_can_be",
-                ["can", "{X}", "be", "{Y}"],
-                {"X": "subject", "Y": "object"},
-                "can_be",
-                construction_type="question",
-            ),
-            # Actions: Physical & Topological
-            Construction.create(
-                "act_slice_into_pieces",
-                ["slice", "{X}", "into", "{count}", "pieces"],
-                {"X": "object", "count": "count"},
-                "SLICE",
-                construction_type="action",
-            ),
-            Construction.create(
-                "act_cut_into_pieces",
-                ["cut", "{X}", "into", "{count}", "pieces"],
-                {"X": "object", "count": "count"},
-                "SLICE",
-                construction_type="action",
-            ),
-        ]
-        for c in defaults:
-            self.save_construction(c)
+        if construction_pack is None:
+            defaults = GrammarRegistry.default()
+        else:
+            defaults = GrammarRegistry.load(construction_pack)
+        for construction in defaults:
+            self.save_construction(construction)
 
     def _row_to_construction(self, row: sqlite3.Row) -> Construction:
         return Construction(
@@ -912,7 +880,12 @@ class MemoryStore:
         return {
             "concepts": [c.to_dict() for c in self.list_concepts()],
             "relations": [r.to_dict() for r in self.get_relations()],
-            "experiences": [e.to_dict() for e in self.list_experiences(limit=500)],
+            "experiences": [
+                e.to_dict()
+                for e in self.list_experiences(
+                    limit=self.export_policy.experience_limit
+                )
+            ],
             "skills": [s.to_dict() for s in self.list_skills()],
             "constructions": [c.to_dict() for c in self.list_constructions()],
         }

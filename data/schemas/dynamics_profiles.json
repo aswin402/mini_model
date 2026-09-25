@@ -1,0 +1,62 @@
+{
+  "dynamics_profiles": [
+    {
+      "name": "perishable",
+      "tau_whole_seconds": 1209600.0,
+      "tau_exposed_seconds": 1800.0,
+      "default_interior_color": "white",
+      "perishable": true,
+      "categories": ["fruit", "vegetable", "food", "plant", "organism", "produce", "bakery", "bread", "cheese", "meat"],
+      "attributes": ["is_organic", "perishable"]
+    },
+    {
+      "name": "inert",
+      "tau_whole_seconds": 3153600000.0,
+      "tau_exposed_seconds": 3153600000.0,
+      "default_interior_color": "gray",
+      "perishable": false,
+      "categories": ["metal", "stone", "glass", "wood", "plastic"],
+      "attributes": []
+    },
+    {
+      "name": "default",
+      "tau_whole_seconds": 1209600.0,
+      "tau_exposed_seconds": 1800.0,
+      "default_interior_color": "white",
+      "perishable": true,
+      "categories": [],
+      "attributes": []
+    }
+  ],
+  "defaults": {
+    "whole": "perishable",
+    "exposed": "perishable",
+    "fallback": "perishable"
+  },
+  "perception": {
+    "color_thresholds": [0.25, 0.6],
+    "condition_thresholds": [0.75, 0.4, 0.15],
+    "color_labels": ["base", "light brown", "brown"],
+    "condition_labels": ["fresh", "stale", "spoiled", "rotten"]
+  },
+  "ode": {
+    "reference_temperature_c": 20.0,
+    "temperature_scale_c": 10.0,
+    "protected_decay_rate_per_hour": 0.002,
+    "protected_oxidation_rate_per_hour": 0.0005,
+    "exposed_decay_rate_per_hour": 0.05,
+    "exposed_enzymatic_rate_per_hour": 0.15,
+    "protected_moisture_loss_per_hour": 0.0005,
+    "exposed_moisture_loss_per_hour": 0.01,
+    "minimum_moisture": 0.05
+  },
+  "continuous": {
+    "q10": 2.0,
+    "min_rate_factor": 0.1,
+    "max_rate_factor": 10.0,
+    "default_temperature_c": 20.0,
+    "initial_freshness": 1.0,
+    "initial_oxidation": 0.0,
+    "protected_color_oxidation_threshold": 0.15
+  }
+}

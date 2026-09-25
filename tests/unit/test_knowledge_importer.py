@@ -5,9 +5,110 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from little.core.models import BeliefStatus
+from little.knowledge.bundle import get_commonsense_triples
+from little.knowledge.curated_ontology import generate_extended_commonsense_triples
 from little.knowledge.importer import ConceptNetNormalizer, KnowledgeImporter
+from little.knowledge.import_policy import KnowledgeImportPolicy
+from little.knowledge.ontology_generation_policy import OntologyGenerationPolicy
 from little.language.parser import LearningEngine
 from little.memory.store import MemoryStore
+
+
+def test_conceptnet_normalizer_has_no_process_global_import_policy():
+    assert "POLICY" not in ConceptNetNormalizer.__dict__
+
+
+def test_commonsense_bundle_reads_an_injected_data_pack(tmp_path: Path):
+    pack_path = tmp_path / "commonsense.json"
+    pack_path.write_text(
+        json.dumps(
+            {
+                "format": "little.knowledge.triples.v1",
+                "triples": [
+                    {
+                        "subject": "quartz",
+                        "predicate": "is_a",
+                        "object": "mineral",
+                        "weight": 3.0,
+                        "positive": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert get_commonsense_triples(pack_path) == [
+        ("quartz", "is_a", "mineral", 3.0, True)
+    ]
+
+
+def test_extended_ontology_reads_seed_and_expansion_config(tmp_path: Path):
+    pack_path = tmp_path / "extended.json"
+    pack_path.write_text(
+        json.dumps(
+            {
+                "format": "little.knowledge.extended.v1",
+                "seed_triples": [["quartz", "is_a", "mineral", 3.0, True]],
+                "expansion": {
+                    "base_entities": ["sample"],
+                    "materials": ["silica"],
+                    "locations": ["lab"],
+                    "compatible_materials": {},
+                    "component": "part",
+                    "item_prefix": "item_",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    triples = list(
+        generate_extended_commonsense_triples(
+            target_count=6, pack_path=pack_path
+        )
+    )
+
+    assert triples[:2] == [
+        ("quartz", "is_a", "mineral", 3.0, True),
+        ("sample", "is_a", "artifact", 2.0, True),
+    ]
+    assert triples[-1][0] == "item_1"
+
+
+def test_extended_ontology_reads_generation_relation_config(tmp_path: Path):
+    pack_path = tmp_path / "extended.json"
+    pack_path.write_text(
+        json.dumps(
+            {
+                "format": "little.knowledge.extended.v1",
+                "seed_triples": [],
+                "generation": {
+                    "root_category": "generated_object",
+                    "taxonomy_predicate": "subclass_of",
+                    "composition_predicate": "composed_of",
+                    "location_predicate": "situated_in",
+                    "component_predicate": "contains_part",
+                },
+                "expansion": {
+                    "base_entities": ["sample"],
+                    "materials": ["silica"],
+                    "locations": ["lab"],
+                    "compatible_materials": {},
+                    "component": "part",
+                    "item_prefix": "item_",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    triples = list(generate_extended_commonsense_triples(target_count=6, pack_path=pack_path))
+
+    assert triples[0:2] == [
+        ("sample", "subclass_of", "generated_object", 2.0, True),
+        ("item_1", "subclass_of", "sample", 2.0, True),
+    ]
 
 
 def test_conceptnet_normalizer_uris():
@@ -56,6 +157,35 @@ def test_conceptnet_normalizer_relations():
     assert ConceptNetNormalizer.map_relation("/r/HasProperty") == "has_property"
     assert ConceptNetNormalizer.map_relation("/r/DistinctFrom") == "disjoint_with"
     assert ConceptNetNormalizer.map_relation("/r/Antonym") == "disjoint_with"
+
+
+def test_knowledge_import_policy_can_override_aliases_and_filters(
+    tmp_path: Path,
+):
+    payload = json.loads(
+        Path("data/schemas/knowledge_import_policy.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    payload["knowledge_import_policy"]["relation_aliases"]["custom_relation"] = "is_a"
+    payload["knowledge_import_policy"]["discard_concepts"].append("blocked")
+    policy_path = tmp_path / "knowledge_import_policy.json"
+    policy_path.write_text(json.dumps(payload), encoding="utf-8")
+    policy = KnowledgeImportPolicy.load(tmp_path)
+
+    assert ConceptNetNormalizer.map_relation("custom_relation", policy=policy) == "is_a"
+    assert ConceptNetNormalizer.clean_concept_uri("blocked", policy=policy) is None
+
+    store = MemoryStore(":memory:", seed_ontology=False)
+    importer = KnowledgeImporter(store, import_policy=policy)
+    stats = importer.import_triples(
+        [
+            ("blocked", "custom_relation", "animal", 1.0, True),
+            ("wolf", "custom_relation", "animal", 1.0, True),
+        ]
+    )
+
+    assert stats.relations_processed == 1
 
 
 def test_conceptnet_tsv_import():

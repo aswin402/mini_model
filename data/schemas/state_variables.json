@@ -1,0 +1,18 @@
+{
+  "state_variables": [
+    {
+      "name": "freshness",
+      "value_type": "float",
+      "unit": "ratio",
+      "valid_range": [0.0, 1.0],
+      "transition_model": "exponential_decay"
+    },
+    {
+      "name": "oxidation",
+      "value_type": "float",
+      "unit": "ratio",
+      "valid_range": [0.0, 1.0],
+      "transition_model": "exponential_growth"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "procedural_skill_policy": {
+    "version": "1",
+    "enabled_skills": [
+      "ADD", "SUBTRACT", "MULTIPLY", "DIVIDE", "POWER", "FACTORIAL", "SLICE",
+      "FIBONACCI", "IS_PRIME", "REVERSE_STRING", "PALINDROME", "NTH_PRIME",
+      "SQRT", "GCD", "LCM", "PERCENT", "AVERAGE", "SOLVE_LINEAR",
+      "EVAL_EXPR", "SOLVE_QUADRATIC", "CALCULUS_DERIVATIVE", "SIMPLIFY_EXPR",
+      "UNIT_CONVERT"
+    ],
+    "slice_output": {
+      "name_suffix": "slice",
+      "part_key": "part_of",
+      "exposed_key": "exposed_flesh",
+      "skin_key": "skin_intact",
+      "exposed_value": true,
+      "skin_value": false
+    }
+  }
+}

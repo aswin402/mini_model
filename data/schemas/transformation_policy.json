@@ -1,0 +1,29 @@
+{
+  "transformation_policy": {
+    "version": "1",
+    "default_piece_count": 4,
+    "predicates": {
+      "taxonomy": "is_a",
+      "part": "part_of",
+      "interior_color_relations": ["interior_color", "has_interior", "color"]
+    },
+    "attributes": {
+      "interior_color": "interior_color",
+      "color": "color",
+      "material": "material",
+      "interior_material": "interior_material",
+      "exposed_interior": "exposed_interior",
+      "exposed_flesh": "exposed_flesh",
+      "mass_fraction": "mass_fraction",
+      "dynamics_profile": "dynamics_profile",
+      "piece_number": "piece_number",
+      "of_total": "of_total",
+      "physical_state": "physical_state"
+    },
+    "defaults": {
+      "category": "partitioned_object",
+      "slice_suffix": "slice",
+      "experience_source": "action_execution"
+    }
+  }
+}

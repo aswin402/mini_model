@@ -1,0 +1,20 @@
+{
+  "spiderweb_growth_policy": {
+    "version": "1",
+    "minimum_cluster_size": 2,
+    "category_utility_threshold": 1.0,
+    "cluster_prefix": "POME",
+    "cluster_suffix": "CLUSTER",
+    "fallback_hypernym": "ENTITY",
+    "minimum_mereology_parts": 2,
+    "uninitialized_freshness": 1.0,
+    "uninitialized_oxidation": 0.0,
+    "require_episodic_state_for_dynamics_gap": true,
+    "gap_templates": {
+      "procedural": "Procedural Axis Gap: What actions or skills can be performed on {concept_id}?",
+      "mereology": "Mereological Axis Gap: What are the internal and boundary parts of {concept_id}?",
+      "invariants": "Invariant Axis Gap: What categories are mutually exclusive with {concept_id}?",
+      "dynamics": "Dynamical Axis Gap: How does {concept_id} transform or decay over time?"
+    }
+  }
+}

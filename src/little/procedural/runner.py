@@ -2,9 +2,24 @@
 
 from __future__ import annotations
 
+import ast
 import math
+import operator
 from dataclasses import dataclass
 from typing import Any, ClassVar
+
+import sympy
+from sympy.parsing.sympy_parser import (
+    convert_xor,
+    implicit_multiplication_application,
+    parse_expr,
+    standard_transformations,
+)
+
+SYMPY_TRANSFORMATIONS = standard_transformations + (
+    implicit_multiplication_application,
+    convert_xor,
+)
 
 from little.core.models import Skill
 
@@ -42,6 +57,8 @@ class SkillRunner:
         "range": range,
         "enumerate": enumerate,
         "math": math,
+        "ast": ast,
+        "operator": operator,
         "all": all,
         "any": any,
         "sorted": sorted,
@@ -50,6 +67,13 @@ class SkillRunner:
         "ord": ord,
         "isinstance": isinstance,
         "type": type,
+        "ValueError": ValueError,
+        "TypeError": TypeError,
+        "KeyError": KeyError,
+        "IndexError": IndexError,
+        "sympy": sympy,
+        "parse_expr": parse_expr,
+        "sympy_transformations": SYMPY_TRANSFORMATIONS,
     }
 
     @classmethod

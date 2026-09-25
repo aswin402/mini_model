@@ -1,0 +1,11 @@
+{
+  "reasoning_policy": {
+    "version": "1",
+    "max_depth": 8,
+    "fast_confidence": 0.95,
+    "verified_confidence": 0.9,
+    "unknown_confidence": 0.0,
+    "inheritance_confidence_factor": 0.95,
+    "inference_unknown_confidence": 0.1
+  }
+}

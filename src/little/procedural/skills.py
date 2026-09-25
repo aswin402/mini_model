@@ -5,14 +5,83 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from little.core.models import Skill
+from little.procedural.skill_policy import ProceduralSkillPolicy
+from little.procedural.unit_conversion_policy import UnitConversionPolicy
 
 if TYPE_CHECKING:
     from little.memory.store import MemoryStore
 
 
-def get_builtin_skills() -> list[Skill]:
+def _unit_conversion_code(policy: UnitConversionPolicy) -> str:
+    """Compile the declarative conversion policy into sandbox-safe skill code."""
+    adjacency: dict[str, list[tuple[str, float, float]]] = {}
+    for edge in policy.edges:
+        adjacency.setdefault(edge.source, []).append(
+            (edge.target, edge.scale, edge.offset)
+        )
+        adjacency.setdefault(edge.target, []).append(
+            (edge.source, 1.0 / edge.scale, -edge.offset / edge.scale)
+        )
+
+    return f"""
+val = float(value)
+aliases = {policy.aliases!r}
+adjacency = {adjacency!r}
+start_raw = str(from_unit).strip().lower()
+goal_raw = str(to_unit).strip().lower()
+start = aliases.get(start_raw, start_raw)
+goal = aliases.get(goal_raw, goal_raw)
+if start == goal:
+    result = val
+else:
+    queue = [(start, val)]
+    visited = {{start}}
+    result = None
+    index = 0
+    while index < len(queue):
+        node, current = queue[index]
+        index += 1
+        for neighbor, scale, offset in adjacency.get(node, []):
+            if neighbor in visited:
+                continue
+            next_value = current * scale + offset
+            if neighbor == goal:
+                result = next_value
+                queue = []
+                break
+            visited.add(neighbor)
+            queue.append((neighbor, next_value))
+        if result is not None:
+            break
+    if result is None:
+        raise ValueError(f"Unsupported unit conversion from {{from_unit}} to {{to_unit}}")
+
+if isinstance(result, float) and result.is_integer():
+    return int(result)
+return round(result, 4)
+"""
+
+
+def get_builtin_skills(
+    policy: ProceduralSkillPolicy | None = None,
+    unit_policy: UnitConversionPolicy | None = None,
+) -> list[Skill]:
     """Return the fundamental procedural skills bootstrap library."""
-    return [
+    active_policy = policy or ProceduralSkillPolicy.default()
+    active_unit_policy = unit_policy or UnitConversionPolicy.default()
+    slice_code = f"""
+pieces = []
+n = int(count)
+for i in range(n):
+    pieces.append({{
+        "name": f"{{item}}_{active_policy.slice_name_suffix}_{{i+1}}",
+        "{active_policy.slice_part_key}": item,
+        "{active_policy.slice_exposed_key}": {active_policy.slice_exposed_value},
+        "{active_policy.slice_skin_key}": {active_policy.slice_skin_value},
+    }})
+return pieces
+"""
+    skills = [
         Skill.create(
             name="ADD",
             parameters=["a", "b"],
@@ -52,18 +121,7 @@ def get_builtin_skills() -> list[Skill]:
         Skill.create(
             name="SLICE",
             parameters=["item", "count"],
-            code_body="""
-pieces = []
-n = int(count)
-for i in range(n):
-    pieces.append({
-        "name": f"{item}_slice_{i+1}",
-        "part_of": item,
-        "exposed_flesh": True,
-        "skin_intact": False,
-    })
-return pieces
-""",
+            code_body=slice_code,
             description="Physical transformation: cuts an entity or object into N discrete slices/parts.",
         ),
         Skill.create(
@@ -117,10 +175,204 @@ return cleaned == cleaned[::-1]
 """,
             description="Verify whether a given string is a palindrome",
         ),
+        Skill.create(
+            name="NTH_PRIME",
+            parameters=["n"],
+            code_body="""
+n_val = int(n)
+if n_val < 1:
+    return 2
+primes = [2]
+cand = 3
+while len(primes) < n_val:
+    is_p = True
+    for p in primes:
+        if p * p > cand:
+            break
+        if cand % p == 0:
+            is_p = False
+            break
+    if is_p:
+        primes.append(cand)
+    cand += 2
+return primes[-1]
+""",
+            description="Exact computation of the n-th prime number (e.g. 1st prime=2, 1000th prime=7919)",
+        ),
+        Skill.create(
+            name="SQRT",
+            parameters=["n"],
+            code_body="""
+n_val = float(n)
+if n_val < 0:
+    return "undefined"
+if n_val.is_integer() and math.isqrt(int(n_val)) ** 2 == int(n_val):
+    return math.isqrt(int(n_val))
+return round(math.sqrt(n_val), 6)
+""",
+            description="Exact computation of the square root of non-negative number n",
+        ),
+        Skill.create(
+            name="GCD",
+            parameters=["a", "b"],
+            code_body="math.gcd(int(a), int(b))",
+            description="Exact computation of the greatest common divisor of a and b: gcd(a, b)",
+        ),
+        Skill.create(
+            name="LCM",
+            parameters=["a", "b"],
+            code_body="math.lcm(int(a), int(b))",
+            description="Exact computation of the least common multiple of a and b: lcm(a, b)",
+        ),
+        Skill.create(
+            name="PERCENT",
+            parameters=["percent", "total"],
+            code_body="""
+p = float(percent)
+t = float(total)
+res = (p / 100.0) * t
+if res.is_integer():
+    return int(res)
+return round(res, 6)
+""",
+            description="Exact computation of percentage: (percent / 100) * total",
+        ),
+        Skill.create(
+            name="AVERAGE",
+            parameters=["numbers"],
+            code_body="""
+if isinstance(numbers, str):
+    nums = [float(x.strip()) for x in numbers.replace(",", " ").split() if x.strip()]
+else:
+    nums = [float(x) for x in numbers]
+if not nums:
+    return 0
+res = sum(nums) / len(nums)
+if res.is_integer():
+    return int(res)
+return round(res, 6)
+""",
+            description="Exact computation of arithmetic mean: sum(numbers) / len(numbers)",
+        ),
+        Skill.create(
+            name="SOLVE_LINEAR",
+            parameters=["a", "b", "c"],
+            code_body="""
+a_val = float(a)
+b_val = float(b)
+c_val = float(c)
+if a_val == 0:
+    return "undefined (division by zero)"
+res = (c_val - b_val) / a_val
+if res.is_integer():
+    return int(res)
+return round(res, 6)
+""",
+            description="Exact linear equation solver for a*x + b = c",
+        ),
+        Skill.create(
+            name="EVAL_EXPR",
+            parameters=["expression"],
+            code_body="""
+operators = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
+}
+
+def eval_node(node):
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return node.value
+    elif isinstance(node, ast.BinOp) and type(node.op) in operators:
+        left = eval_node(node.left)
+        right = eval_node(node.right)
+        return operators[type(node.op)](left, right)
+    elif isinstance(node, ast.UnaryOp) and type(node.op) in operators:
+        operand = eval_node(node.operand)
+        return operators[type(node.op)](operand)
+    else:
+        raise ValueError(f"Unsupported AST node: {type(node).__name__}")
+
+tree = ast.parse(str(expression).strip(), mode="eval")
+res = eval_node(tree.body)
+if isinstance(res, float) and res.is_integer():
+    return int(res)
+return round(res, 6) if isinstance(res, float) else res
+""",
+            description="Safe deterministic arithmetic AST evaluator",
+        ),
+        Skill.create(
+            name="SOLVE_QUADRATIC",
+            parameters=["equation"],
+            code_body="""
+clean = str(equation).strip()
+x = sympy.Symbol("x")
+if "=" in clean:
+    lhs, rhs = clean.split("=", 1)
+    lhs_p = parse_expr(lhs.strip(), transformations=sympy_transformations)
+    rhs_p = parse_expr(rhs.strip(), transformations=sympy_transformations)
+    eq = lhs_p - rhs_p
+else:
+    eq = parse_expr(clean, transformations=sympy_transformations)
+sols = sympy.solve(eq, x)
+formatted = []
+for s in sols:
+    if s.is_real:
+        if s.is_integer:
+            formatted.append(int(s))
+        else:
+            val = float(s)
+            formatted.append(int(val) if val.is_integer() else round(val, 4))
+    else:
+        formatted.append(str(s).replace("**", "^"))
+return formatted
+""",
+            description="Solves quadratic and polynomial equations in x using SymPy",
+        ),
+        Skill.create(
+            name="CALCULUS_DERIVATIVE",
+            parameters=["expression"],
+            code_body="""
+clean = str(expression).strip()
+x = sympy.Symbol("x")
+parsed = parse_expr(clean, transformations=sympy_transformations)
+deriv = sympy.diff(parsed, x)
+return str(deriv).replace("**", "^")
+""",
+            description="Calculates exact symbolic derivative d/dx using SymPy",
+        ),
+        Skill.create(
+            name="SIMPLIFY_EXPR",
+            parameters=["expression"],
+            code_body="""
+clean = str(expression).strip()
+parsed = parse_expr(clean, transformations=sympy_transformations)
+simplified = sympy.simplify(parsed)
+return str(simplified).replace("**", "^")
+""",
+            description="Symbolically simplifies algebraic expressions using SymPy",
+        ),
+        Skill.create(
+            name="UNIT_CONVERT",
+            parameters=["value", "from_unit", "to_unit"],
+            code_body=_unit_conversion_code(active_unit_policy),
+            description="Exact deterministic unit conversion across temperature, distance, mass, and time",
+        ),
     ]
+    return [skill for skill in skills if skill.name in active_policy.enabled_skills]
 
 
-def register_builtin_skills(memory: MemoryStore) -> None:
+def register_builtin_skills(
+    memory: MemoryStore,
+    policy: ProceduralSkillPolicy | None = None,
+    unit_policy: UnitConversionPolicy | None = None,
+) -> None:
     """Bootstrap procedural memory with core deterministic capabilities if not already present."""
-    for skill in get_builtin_skills():
+    for skill in get_builtin_skills(policy, unit_policy=unit_policy):
         memory.save_skill(skill)

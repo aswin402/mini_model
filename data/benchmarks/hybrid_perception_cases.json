@@ -1,0 +1,35 @@
+{
+  "hybrid_perception_benchmark": {
+    "version": "1",
+    "cases": [
+      {
+        "id": "statement",
+        "text": "A falcon is a bird.",
+        "expected_intent": "statement",
+        "expect_payload": true,
+        "expect_unknown": false
+      },
+      {
+        "id": "question",
+        "text": "Is a falcon a bird?",
+        "expected_intent": "question",
+        "expect_payload": true,
+        "expect_unknown": false
+      },
+      {
+        "id": "action",
+        "text": "Slice a melon into 6 pieces.",
+        "expected_intent": "action",
+        "expect_payload": true,
+        "expect_unknown": false
+      },
+      {
+        "id": "unknown",
+        "text": "qwerty zorp",
+        "expected_intent": "unknown",
+        "expect_payload": false,
+        "expect_unknown": true
+      }
+    ]
+  }
+}

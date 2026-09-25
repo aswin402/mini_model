@@ -1,0 +1,22 @@
+{
+  "active_learning_policy": {
+    "version": "1",
+    "meta_words": [
+      "my name", "your name", "name", "me", "you", "user", "little",
+      "this", "that", "it", "my", "your", "i", "we", "they", "them",
+      "what", "who"
+    ],
+    "default_predicate": "is_a",
+    "entropy_probability_floor": 0.000001,
+    "unknown_confidence_threshold": 0.1,
+    "binary_prior": 0.5,
+    "confidence_scale": 0.5,
+    "round_digits": 4,
+    "prompt_templates": {
+      "definition_unknown": "I have no memory of '{subject}'. What category or type of thing is a {subject}?",
+      "subject_unknown": "I do not know what '{subject}' is. Is '{subject}' a '{target}'?",
+      "target_unknown": "I am unfamiliar with '{target}'. Can '{subject}' be considered a '{target}'?",
+      "known_relation": "I know '{subject}' and '{target}', but I don't know if {subject} {predicate} {target}. Is that true?"
+    }
+  }
+}

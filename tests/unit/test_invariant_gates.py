@@ -45,3 +45,36 @@ def test_invariant_gate_sort_and_ground():
     assert res.passed
     assert res.violated_gate is None
     assert len(res.proof_trace) == 4
+
+
+def test_invariant_gate_rejects_unregistered_predicate():
+    memory = MemoryStore(":memory:")
+    verifier = DeepSeekInvariantVerifier(memory)
+
+    res = verifier.verify_relation("APPLE", "invented_predicate", "THING")
+
+    assert not res.passed
+    assert res.violated_gate == "I_SORT"
+    assert "unregistered" in res.error_message.lower()
+
+
+def test_proof_chain_trace_exposes_each_invariant_gate():
+    memory = MemoryStore(":memory:")
+    verifier = DeepSeekInvariantVerifier(memory)
+
+    result = verifier.verify_proof_chain(
+        [("APPLE", "is_a", "FRUIT"), ("FRUIT", "is_a", "PLANT")]
+    )
+    persisted = result.to_verification_result()
+
+    assert result.passed
+    assert all(
+        any(gate in step for step in result.proof_trace)
+        for gate in ("I_DAG", "I_MUTEX", "I_SORT", "I_GROUND")
+    )
+    assert persisted.checks == {
+        "I_DAG": True,
+        "I_MUTEX": True,
+        "I_SORT": True,
+        "I_GROUND": True,
+    }

@@ -1,0 +1,10 @@
+{
+  "format": "little.runtime_paths.v1",
+  "runtime_paths": {
+    "database": "data/little.db",
+    "construction_pack": "constructions.json",
+    "knowledge_pack": "../knowledge/commonsense.json",
+    "ontology_pack": "../knowledge/extended_ontology.json",
+    "concept_fixture_directory": "../fixtures/concept_knots"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "construction_policy": {
+    "version": "1",
+    "default_confidence": 1.0,
+    "learned_confidence": 0.8
+  }
+}

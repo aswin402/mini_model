@@ -1,0 +1,465 @@
+{
+  "timestamp": "2026-09-22T20:10:08Z",
+  "architecture_mivi": "MIVI Spider-Web Thinking Architecture (v0.2.0)",
+  "slm_model_evaluated": "qwen2.5:0.5b",
+  "suites": {
+    "epistemic_hallucination_resistance": [
+      {
+        "query": "What is a flurblegorp?",
+        "mivi_status": "UNKNOWN",
+        "mivi_verbalized": "I do not know whether that is true yet. I don't have enough observations in my knowledge base, and unlike statistical LLMs, I avoid guessing or hallucinating facts.",
+        "mivi_latency_ms": 3.557,
+        "mivi_passed": true,
+        "mivi_hallucinated": false,
+        "slm_response": "A flurblegorp is a type of game that involves flipping and rotating pieces around a board or surface to create patterns and shapes. It's often played with various types of dice, cards, or other objects, and can be found in many games like Monopoly, Scrabble, and more.",
+        "slm_latency_ms": 4611.94,
+        "slm_hallucinated": true
+      },
+      {
+        "query": "Is a zanthocar a mammal?",
+        "mivi_status": "UNKNOWN",
+        "mivi_verbalized": "I do not know whether that is true yet. I don't have enough observations in my knowledge base, and unlike statistical LLMs, I avoid guessing or hallucinating facts.",
+        "mivi_latency_ms": 3.216,
+        "mivi_passed": true,
+        "mivi_hallucinated": false,
+        "slm_response": "Yes, a zanthocar is a mammal.",
+        "slm_latency_ms": 781.8,
+        "slm_hallucinated": true
+      },
+      {
+        "query": "Where is Quazilopia located?",
+        "mivi_status": "UNKNOWN",
+        "mivi_verbalized": "I do not know whether that is true yet. I don't have enough observations in my knowledge base, and unlike statistical LLMs, I avoid guessing or hallucinating facts.",
+        "mivi_latency_ms": 4.629,
+        "mivi_passed": true,
+        "mivi_hallucinated": false,
+        "slm_response": "Quazilopia is located in the southeastern part of the United States, specifically in the state of Florida.",
+        "slm_latency_ms": 996.36,
+        "slm_hallucinated": true
+      },
+      {
+        "query": "Can a vorpalblade fly?",
+        "mivi_status": "UNKNOWN",
+        "mivi_verbalized": "I do not know whether that is true yet. I don't have enough observations in my knowledge base, and unlike statistical LLMs, I avoid guessing or hallucinating facts.",
+        "mivi_latency_ms": 4.442,
+        "mivi_passed": true,
+        "mivi_hallucinated": false,
+        "slm_response": "Yes, a vorpalblade can fly!",
+        "slm_latency_ms": 462.67,
+        "slm_hallucinated": true
+      },
+      {
+        "query": "What color is an eldrithium?",
+        "mivi_status": "UNKNOWN",
+        "mivi_verbalized": "I do not know whether that is true yet. I don't have enough observations in my knowledge base, and unlike statistical LLMs, I avoid guessing or hallucinating facts.",
+        "mivi_latency_ms": 3.474,
+        "mivi_passed": true,
+        "mivi_hallucinated": false,
+        "slm_response": "An eldrithium is typically described as having a deep purple or dark purple color.",
+        "slm_latency_ms": 718.4,
+        "slm_hallucinated": true
+      },
+      {
+        "query": "How many legs does a blithering snoot have?",
+        "mivi_status": "UNKNOWN",
+        "mivi_verbalized": "I do not know whether that is true yet. I don't have enough observations in my knowledge base, and unlike statistical LLMs, I avoid guessing or hallucinating facts.",
+        "mivi_latency_ms": 2.502,
+        "mivi_passed": true,
+        "mivi_hallucinated": false,
+        "slm_response": "A blithering snort has 4 legs.",
+        "slm_latency_ms": 560.12,
+        "slm_hallucinated": true
+      }
+    ],
+    "multi_hop_thinking_reasoning": [
+      {
+        "query": "Is Paris located in Europe?",
+        "subject": "PARIS",
+        "object": "EUROPE",
+        "mivi_mode": "THINKING",
+        "mivi_path": [
+          "PARIS",
+          "FRANCE",
+          "EUROPE"
+        ],
+        "mivi_hops": 2,
+        "mivi_trace": "<think>\nDeliberative Thinking Mode initiated for: (PARIS, located_in, [?], ..., EUROPE)\nInitial frontiers: Fwd={ PARIS }, Bwd={ EUROPE }\nFrontier collision verified at junction node: FRANCE\nFull proof path discovered: PARIS -> FRANCE -> EUROPE\nGate check: Step 1: (PARIS, located_in, FRANCE) verified\nGate check: Step 2: (FRANCE, located_in, EUROPE) verified\n</think>",
+        "mivi_latency_ms": 4.026,
+        "mivi_passed": true,
+        "slm_response": "Yes, Paris is indeed located in Europe.\nDeduction Chain:\n1. Paris is an international city and major European capital.\n2. It's situated on the Mediterranean Sea and borders France to the north.\n3. The French Riviera region around Cannes and Montmartre are famous for their beaches and architecture.\n4. Paris has a rich history, with many historical sites and landmarks in its urban landscape.\n5. Its location as an international city makes it part of Europe's continental heartland.\n6. Therefore, based on these facts, we can conclude that Paris is located in Europe.",
+        "slm_latency_ms": 2502.18,
+        "slm_passed": true
+      },
+      {
+        "query": "Is an eagle a living thing?",
+        "subject": "EAGLE",
+        "object": "LIVING_THING",
+        "mivi_mode": "THINKING",
+        "mivi_path": [
+          "EAGLE",
+          "BIRD",
+          "ANIMAL",
+          "LIVING_THING"
+        ],
+        "mivi_hops": 3,
+        "mivi_trace": "<think>\nDeliberative Thinking Mode initiated for: (EAGLE, is_a, [?], ..., LIVING_THING)\nInitial frontiers: Fwd={ EAGLE }, Bwd={ LIVING_THING }\nFrontier collision verified at junction node: LIVING_THING\nFull proof path discovered: EAGLE -> BIRD -> ANIMAL -> LIVING_THING\nGate check: Step 1: (EAGLE, is_a, BIRD) verified\nGate check: Step 2: (BIRD, is_a, ANIMAL) verified\nGate check: Step 3: (ANIMAL, is_a, LIVING_THING) verified\n</think>",
+        "mivi_latency_ms": 2.823,
+        "mivi_passed": true,
+        "slm_response": "Yes, an eagle is a living thing.\nDeduction Chain:\n1. All living things have biological characteristics and physiological functions.\n2. Eagles are animals that belong to the bird category.\n3. Birds are classified as vertebrates with a backbone.\n4. Vertebrates include all animals that breathe air and have a backbone.\n5. Eagles, being birds, also have a backbone and breathing air.\nTherefore, an eagle is a living thing.",
+        "slm_latency_ms": 1722.6,
+        "slm_passed": true
+      },
+      {
+        "query": "Is a gala apple a living thing?",
+        "subject": "GALA_APPLE",
+        "object": "LIVING_THING",
+        "mivi_mode": "THINKING",
+        "mivi_path": [
+          "GALA_APPLE",
+          "APPLE",
+          "FRUIT",
+          "PLANT",
+          "LIVING_THING"
+        ],
+        "mivi_hops": 4,
+        "mivi_trace": "<think>\nDeliberative Thinking Mode initiated for: (GALA_APPLE, is_a, [?], ..., LIVING_THING)\nInitial frontiers: Fwd={ GALA_APPLE }, Bwd={ LIVING_THING }\nFrontier collision verified at junction node: FRUIT\nFull proof path discovered: GALA_APPLE -> APPLE -> FRUIT -> PLANT -> LIVING_THING\nGate check: Step 1: (GALA_APPLE, is_a, APPLE) verified\nGate check: Step 2: (APPLE, is_a, FRUIT) verified\nGate check: Step 3: (FRUIT, is_a, PLANT) verified\nGate check: Step 4: (PLANT, is_a, LIVING_THING) verified\n</think>",
+        "mivi_latency_ms": 5.0,
+        "mivi_passed": true,
+        "slm_response": "Yes, a gala apple is a living thing.\nGala apples belong to the genus Malus and species Malus x interna (also known as Gala). They are a type of fruit tree that belongs to the Rosaceae family (the rose family) and the\u8537\u8587\u79d1 (Rosaceoideae).\nTo trace its taxonomic biological classification steps, we can follow these steps:\n\n1. **Kingdom**: The apple belongs to the kingdom Animalia (animals).\n\n2. **Phylum**: The apple belongs to the phylum Plantae (plants).\n\n3. **Class**: The apple belongs to the class Magnoliops",
+        "slm_latency_ms": 2384.79,
+        "slm_passed": true
+      },
+      {
+        "query": "Does a dog have a heart?",
+        "subject": "DOG",
+        "object": "HEART",
+        "mivi_mode": "THINKING",
+        "mivi_path": [],
+        "mivi_hops": 0,
+        "mivi_trace": "<think>\nDeliberative Thinking Mode initiated for: (DOG, is_a, [?], ..., HEART)\nInitial frontiers: Fwd={ DOG }, Bwd={ HEART }\nNo collision detected within depth 8. Status: UNKNOWN.\n</think>",
+        "mivi_latency_ms": 2.389,
+        "mivi_passed": true,
+        "slm_response": "Yes, a dog does have a heart.\nInheritance is the process of passing traits from parents to offspring through their genes. Dogs are mammals and share many similarities with humans in terms of their physical structure and behavior. They typically have hearts that pump blood throughout their bodies, which is why they are considered \"heart dogs.\" The presence of a heart in a dog indicates that it has inherited the genetic trait for having one from its parents.\nHowever, it's important to note that not all dogs have hearts or that some may be missing them. In some cases, dogs can develop congenital heart defects or other health issues without their parents inheriting",
+        "slm_latency_ms": 2344.27,
+        "slm_passed": true
+      },
+      {
+        "query": "Is the sun larger than the moon?",
+        "subject": "SUN",
+        "object": "MOON",
+        "mivi_mode": "THINKING",
+        "mivi_path": [
+          "SUN",
+          "EARTH",
+          "MOON"
+        ],
+        "mivi_hops": 2,
+        "mivi_trace": "<think>\nDeliberative Thinking Mode initiated for: (SUN, larger_than, [?], ..., MOON)\nInitial frontiers: Fwd={ SUN }, Bwd={ MOON }\nFrontier collision verified at junction node: EARTH\nFull proof path discovered: SUN -> EARTH -> MOON\nGate check: Step 1: (SUN, larger_than, EARTH) verified\nGate check: Step 2: (EARTH, larger_than, MOON) verified\n</think>",
+        "mivi_latency_ms": 2.279,
+        "mivi_passed": true,
+        "slm_response": "Yes, the sun is indeed larger than the moon. The sun has approximately 93 million times the mass of the Earth and is about 406 billion miles (6 trillion kilometers) away from us. The moon, on the other hand, has a much smaller orbit around the Earth at an average distance of about 225,000 miles (357,000 kilometers).",
+        "slm_latency_ms": 1656.0,
+        "slm_passed": true
+      },
+      {
+        "query": "Is a salmon a living thing?",
+        "subject": "SALMON",
+        "object": "LIVING_THING",
+        "mivi_mode": "THINKING",
+        "mivi_path": [
+          "SALMON",
+          "FISH",
+          "ANIMAL",
+          "LIVING_THING"
+        ],
+        "mivi_hops": 3,
+        "mivi_trace": "<think>\nDeliberative Thinking Mode initiated for: (SALMON, is_a, [?], ..., LIVING_THING)\nInitial frontiers: Fwd={ SALMON }, Bwd={ LIVING_THING }\nFrontier collision verified at junction node: LIVING_THING\nFull proof path discovered: SALMON -> FISH -> ANIMAL -> LIVING_THING\nGate check: Step 1: (SALMON, is_a, FISH) verified\nGate check: Step 2: (FISH, is_a, ANIMAL) verified\nGate check: Step 3: (ANIMAL, is_a, LIVING_THING) verified\n</think>",
+        "mivi_latency_ms": 4.24,
+        "mivi_passed": true,
+        "slm_response": "Yes, a salmon is indeed a living thing. Salmon belong to the family Salmonidae and are known as freshwater fish. They are characterized by their elongated bodies, which can grow up to 1 meter in length. Salmons typically live in rivers, lakes, and oceans, where they feed on small aquatic organisms such as insects, crustaceans, and plankton. They undergo metamorphosis from juvenile forms to adult forms, with the development of fins and gills that allow them to breathe underwater.",
+        "slm_latency_ms": 1873.47,
+        "slm_passed": true
+      }
+    ],
+    "invariant_refutation_and_mutex": [
+      {
+        "query": "Is a car an animal?",
+        "mivi_status": "REFUTED",
+        "mivi_violated_gate": null,
+        "mivi_error": "",
+        "mivi_verbalized": "No, that is impossible. My knowledge base confirms that vehicle is disjoint with animal.",
+        "mivi_latency_ms": 3.599,
+        "mivi_passed": true,
+        "slm_response": "Yes, a car is an animal. Cars are mechanical devices that can move and carry people or goods, which falls under the category of animals. They have bodies, brains, and other features typical of animals.",
+        "slm_latency_ms": 1056.96,
+        "slm_passed": false
+      },
+      {
+        "query": "Is water a solid?",
+        "mivi_status": "REFUTED",
+        "mivi_violated_gate": null,
+        "mivi_error": "",
+        "mivi_verbalized": "No, that is impossible. My knowledge base confirms that liquid is disjoint with solid.",
+        "mivi_latency_ms": 2.656,
+        "mivi_passed": true,
+        "slm_response": "Yes, water is a solid. Water molecules are arranged in a regular three-dimensional lattice structure and have a definite shape, which makes it a crystalline solid.",
+        "slm_latency_ms": 730.26,
+        "slm_passed": false
+      },
+      {
+        "query": "Is the moon larger than the sun?",
+        "mivi_status": "REFUTED",
+        "mivi_violated_gate": null,
+        "mivi_error": "",
+        "mivi_verbalized": "No, that is incorrect. In fact, sun > earth > moon.",
+        "mivi_latency_ms": 2.184,
+        "mivi_passed": true,
+        "slm_response": "Yes, the moon is generally considered to be much smaller and less massive than the Sun. The Moon's diameter is about 3476 kilometers (2150 miles), while the diameter of the Sun is approximately 7959 kilometers (5000 miles). This difference in size makes the Moon appear larger when viewed from Earth, even though it is much closer to us than the Sun.",
+        "slm_latency_ms": 1503.17,
+        "slm_passed": false
+      },
+      {
+        "query": "Can a penguin fly?",
+        "mivi_status": "REFUTED",
+        "mivi_violated_gate": null,
+        "mivi_error": "",
+        "mivi_verbalized": "No, a penguin cannot fly. My knowledge base confirms this explicit negative fact.",
+        "mivi_latency_ms": 2.804,
+        "mivi_passed": true,
+        "slm_response": "Yes, a penguin can fly. Penguins are birds that live in the Antarctic region of Antarctica and have wings adapted for flight. They use their wings to glide through the air or soar high above the water surface. While they may not be able to fly like other birds, they do have adaptations that allow them to move quickly and efficiently over land and sea.",
+        "slm_latency_ms": 1482.16,
+        "slm_passed": false
+      },
+      {
+        "query": "Is a rock a living thing?",
+        "mivi_status": "REFUTED",
+        "mivi_violated_gate": null,
+        "mivi_error": "",
+        "mivi_verbalized": "No, that is impossible. My knowledge base confirms that object is disjoint with living thing.",
+        "mivi_latency_ms": 2.247,
+        "mivi_passed": true,
+        "slm_response": "Yes, a rock is a living thing. Rocks are formed from the remains of ancient plants and animals that were buried underground millions of years ago. They contain minerals and organic matter that can be analyzed to understand their age and composition. Living things have the ability to grow, reproduce, and respond to environmental changes, which makes rocks a living entity.",
+        "slm_latency_ms": 1288.95,
+        "slm_passed": false
+      }
+    ],
+    "deterministic_mathematics": [
+      {
+        "query": "What is 15 percent of 200?",
+        "expected": 30,
+        "mivi_answer": 30,
+        "mivi_latency_ms": 1.912,
+        "mivi_passed": true,
+        "slm_response": "300",
+        "slm_latency_ms": 284.26,
+        "slm_passed": true
+      },
+      {
+        "query": "What is the lcm of 12 and 18?",
+        "expected": 36,
+        "mivi_answer": 36,
+        "mivi_latency_ms": 2.675,
+        "mivi_passed": true,
+        "slm_response": "The least common multiple (LCM) of two numbers is the smallest positive integer that is divisible by both numbers. For the numbers 12 and 18, their LCM can be calculated as follows:\n\n- First, find the prime factorizations:\n  - \\( 12 = 2^2 \\times 3 \\)\n  - \\( 18 = 2 \\times 3^2 \\)\n\n- Next, take the highest power of each prime number that appears in either factorization:\n  - The highest power of 2 is \\( 2^2 \\) (from 12).\n  -",
+        "slm_latency_ms": 2297.84,
+        "slm_passed": false
+      },
+      {
+        "query": "What is the square of 12?",
+        "expected": 144,
+        "mivi_answer": 144,
+        "mivi_latency_ms": 4.211,
+        "mivi_passed": true,
+        "slm_response": "144",
+        "slm_latency_ms": 294.14,
+        "slm_passed": true
+      },
+      {
+        "query": "What is the cube of 5?",
+        "expected": 125,
+        "mivi_answer": 125,
+        "mivi_latency_ms": 2.683,
+        "mivi_passed": true,
+        "slm_response": "25",
+        "slm_latency_ms": 262.9,
+        "slm_passed": false
+      },
+      {
+        "query": "What is the average of 10, 20, 30?",
+        "expected": 20,
+        "mivi_answer": 20,
+        "mivi_latency_ms": 2.906,
+        "mivi_passed": true,
+        "slm_response": "60",
+        "slm_latency_ms": 297.04,
+        "slm_passed": false
+      },
+      {
+        "query": "Solve 2x + 4 = 12",
+        "expected": 4,
+        "mivi_answer": 4,
+        "mivi_latency_ms": 2.666,
+        "mivi_passed": true,
+        "slm_response": "To solve the equation \\(2x + 4 = 12\\), we will follow these steps:\n\n1. **Isolate the term with the variable**: Subtract 4 from both sides of the equation to get rid of the constant on the left side.\n   \\[\n   2x + 4 - 4 = 12 - 4\n   \\]\n   Simplifying this, we get:\n   \\[\n   2x = 8\n   \\]\n\n2. **Solve for \\(x\\)**: Divide both sides of the equation by 2 to isolate \\(x\\).\n   \\[",
+        "slm_latency_ms": 2414.54,
+        "slm_passed": true
+      },
+      {
+        "query": "Calculate (25 * 4) - 10",
+        "expected": 90,
+        "mivi_answer": 90,
+        "mivi_latency_ms": 3.86,
+        "mivi_passed": true,
+        "slm_response": "90",
+        "slm_latency_ms": 290.32,
+        "slm_passed": true
+      },
+      {
+        "query": "Is 97 prime?",
+        "expected": true,
+        "mivi_answer": true,
+        "mivi_latency_ms": 1.587,
+        "mivi_passed": true,
+        "slm_response": "No.",
+        "slm_latency_ms": 280.56,
+        "slm_passed": false
+      },
+      {
+        "query": "Is 104729 prime?",
+        "expected": true,
+        "mivi_answer": true,
+        "mivi_latency_ms": 1.773,
+        "mivi_passed": true,
+        "slm_response": "No.",
+        "slm_latency_ms": 270.89,
+        "slm_passed": false
+      },
+      {
+        "query": "What is the factorial of 10?",
+        "expected": 3628800,
+        "mivi_answer": 3628800,
+        "mivi_latency_ms": 1.67,
+        "mivi_passed": true,
+        "slm_response": "10! = 10 \u00d7 9 \u00d7 8 \u00d7 7 \u00d7 6 \u00d7 5 \u00d7 4 \u00d7 3 \u00d7 2 \u00d7 1 = 3,628,800",
+        "slm_latency_ms": 1201.42,
+        "slm_passed": false
+      }
+    ],
+    "continuous_dynamics_and_jumps": {
+      "case_intact_skin_24h": {
+        "initial_state": [
+          1.0,
+          0.0,
+          0.85,
+          22.0
+        ],
+        "evolved_state": [
+          0.9531,
+          0.012,
+          0.848,
+          20.0
+        ],
+        "latency_ms": 0.0261,
+        "passed": true
+      },
+      "case_action_jump_slice": {
+        "num_pieces": 4,
+        "mass_per_piece_grams": 45.0,
+        "skin_status": "partial_boundary",
+        "pulp_status": "exposed",
+        "latency_ms": 0.0391,
+        "passed": true
+      },
+      "case_sliced_oxidation_2h": {
+        "initial_state": [
+          1.0,
+          0.0,
+          0.85,
+          25.0
+        ],
+        "evolved_state": [
+          0.9048,
+          0.2592,
+          0.84,
+          20.0
+        ],
+        "latency_ms": 0.0067,
+        "passed": true
+      },
+      "slm_comparison": {
+        "prompt": "An apple is cut into 4 slices at 25\u00b0C. What is its exact continuous enzymatic oxidation fraction after 120 minutes? Give a precise number between 0 and 1.",
+        "response": "To determine the exact continuous enzymatic oxidation fraction of an apple that has been cut into 4 slices at 25\u00b0C, we need to understand how enzyme activity changes over time.\n\nThe continuous enzymatic oxidation fraction (CEOF) is a measure of the rate at which enzymes break down food molecules. It can be calculated using the formula:\n\n\\[\n\\text{CEOF} = \\frac{\\text{Rate of change in enzyme activity}}{\\text{Initial enzyme activity}}\n\\]\n\nHowever, for this problem, we are given that the apple has been cut into 4 slices at 25\u00b0C and is now 1",
+        "latency_ms": 2316.95,
+        "continuous_ode_supported": false,
+        "notes": "SLMs cannot solve continuous parameter time evolutions without discrete token hallucination."
+      }
+    },
+    "continual_learning_zero_forgetting": {
+      "tests": [
+        {
+          "domain": "biology",
+          "query": "Is a tardigrade a living thing?",
+          "expected_status": "SUPPORTED",
+          "recalled_status": "SUPPORTED",
+          "passed": true,
+          "latency_ms": 2.274
+        },
+        {
+          "domain": "astronomy",
+          "query": "Is Kepler452b a celestial body?",
+          "expected_status": "SUPPORTED",
+          "recalled_status": "SUPPORTED",
+          "passed": true,
+          "latency_ms": 1.893
+        },
+        {
+          "domain": "geography",
+          "query": "Is Reykjavik located in Europe?",
+          "expected_status": "SUPPORTED",
+          "recalled_status": "SUPPORTED",
+          "passed": true,
+          "latency_ms": 1.652
+        },
+        {
+          "domain": "quantum",
+          "query": "Is a qubit physical?",
+          "expected_status": "SUPPORTED",
+          "recalled_status": "SUPPORTED",
+          "passed": true,
+          "latency_ms": 3.781
+        }
+      ],
+      "retention_rate_pct": 100.0,
+      "catastrophic_forgetting_pct": 0.0
+    }
+  },
+  "summary": {
+    "mivi": {
+      "total_tests": 34,
+      "passed_tests": 34,
+      "accuracy_pct": 100.0,
+      "hallucination_rate_pct": 0.0,
+      "catastrophic_forgetting_pct": 0.0,
+      "p50_latency_ms": 2.675,
+      "p90_latency_ms": 4.24,
+      "p99_latency_ms": 5.0,
+      "avg_latency_ms": 2.696,
+      "ram_footprint_mb": 59.04,
+      "device": "Pure CPU (Single Core)"
+    },
+    "slm": {
+      "model_name": "qwen2.5:0.5b",
+      "total_tests": 28,
+      "passed_tests": 10,
+      "accuracy_pct": 35.71,
+      "hallucination_rate_pct": 100.0,
+      "catastrophic_forgetting_pct": 100.0,
+      "p50_latency_ms": 1201.42,
+      "p90_latency_ms": 2414.54,
+      "p99_latency_ms": 4611.94,
+      "avg_latency_ms": 1317.391,
+      "ram_footprint_mb": 494.0,
+      "device": "Ollama CPU / GPU Runtime"
+    }
+  }
+}

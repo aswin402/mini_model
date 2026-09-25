@@ -20,7 +20,7 @@ from little.inference.engine import InferenceEngine
 from little.language.parser import LearningEngine, SimpleParser
 from little.memory.store import MemoryStore
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "Belief",

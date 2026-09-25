@@ -1,0 +1,32 @@
+{
+  "format": "little.response_policy.v1",
+  "response_policy": {
+    "math_templates": {
+      "is_prime_true": "Yes, {n} is a prime number.",
+      "is_prime_false": "No, {n} is not a prime number.",
+      "palindrome_true": "Yes, '{text}' is a palindrome. It reads the same forwards and backwards.",
+      "palindrome_false": "No, '{text}' is not a palindrome.",
+      "nth_prime": "The {n}th prime number is {answer}.",
+      "factorial": "The factorial of {n} ({n}!) is {answer}.",
+      "fibonacci": "The {n}th Fibonacci number is {answer}.",
+      "reverse_string": "The reverse of '{text}' is '{answer}'.",
+      "sqrt": "The square root of {n} is {answer}.",
+      "gcd": "The greatest common divisor of {a} and {b} is {answer}.",
+      "lcm": "The least common multiple of {a} and {b} is {answer}.",
+      "percent": "{percent}% of {total} is {answer}.",
+      "average": "The average (mean) is {answer}.",
+      "solve_linear": "The solution is x = {answer}.",
+      "solve_quadratic_single": "The solution is x = {answer}.",
+      "solve_quadratic_multiple": "The solutions are x = {answer}.",
+      "solve_quadratic_value": "The solution is x = {answer}.",
+      "calculus_derivative": "The derivative of {expression} with respect to x is {answer}.",
+      "simplify_expression": "The simplified form of {expression} is {answer}.",
+      "unit_convert": "{value} {from_unit} is equal to {answer} {to_unit}.",
+      "evaluate_expression": "The result of {expression} is {answer}."
+    },
+    "generic_templates": {
+      "numeric_result": "The result is {answer}.",
+      "value_result": "The result is {answer}."
+    }
+  }
+}

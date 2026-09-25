@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Any, List, Optional, Tuple
 
-from little.procedural.math_cas import MathSolution, SymbolicCAS
+from little.procedural.math_cas import MathSolution, SymbolicCAS, UnitConversionGraph
+from little.procedural.unit_conversion_policy import UnitConversionPolicy
 
 
 @dataclass
@@ -25,8 +26,9 @@ class StoryAction:
 class MathStorySolver:
     """Zero-hallucination semantic solver for multi-step math word problems."""
 
-    def __init__(self) -> None:
+    def __init__(self, unit_policy: UnitConversionPolicy | None = None) -> None:
         self.cas = SymbolicCAS()
+        self.unit_graph = UnitConversionGraph(unit_policy)
 
     def is_math_story(self, text: str) -> bool:
         """Detect if input text constitutes a math story / word problem."""
@@ -54,24 +56,26 @@ class MathStorySolver:
             time_val = float(m_rate.group(3))
             time_unit = m_rate.group(4)
 
-            # Normalization if minutes
-            if time_unit.lower().startswith("min"):
-                time_hrs = time_val / 60.0
-            elif time_unit.lower().startswith("s"):
-                time_hrs = time_val / 3600.0
-            else:
-                time_hrs = time_val
+            normalized_speed = self.unit_graph.convert(
+                speed, speed_unit, "km/h"
+            )
+            normalized_time = self.unit_graph.convert(time_val, time_unit, "hr")
+            if normalized_speed.status != "SOLVED" or normalized_time.status != "SOLVED":
+                return None
+            speed_kmh = float(normalized_speed.result)
+            time_hrs = float(normalized_time.result)
 
-            dist = speed * time_hrs
+            dist = speed_kmh * time_hrs
             dist_res = int(dist) if dist.is_integer() else round(dist, 2)
             steps = [
                 f"Rate & Distance Problem:",
                 f"  Speed v = {speed} {speed_unit}",
                 f"  Time t = {time_val} {time_unit} (= {time_hrs} hours)",
                 f"  Formula: Distance d = v * t",
-                f"  Calculation: {speed} * {time_hrs} = {dist_res} km",
+                f"  Normalized speed: {speed_kmh} km/h",
+                f"  Calculation: {speed_kmh} * {time_hrs} = {dist_res} km",
             ]
-            latex = f"d = {speed} \\times {time_hrs} = {dist_res}"
+            latex = f"d = {speed_kmh} \\times {time_hrs} = {dist_res}"
             return MathSolution(
                 status="SOLVED",
                 result=dist_res,

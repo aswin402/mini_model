@@ -1,0 +1,171 @@
+import json
+from pathlib import Path
+
+from little.core.grammar_registry import GrammarRegistry
+from little.core.models import Construction
+from little.language.construction import ConstructionEngine
+from little.language.parser import SimpleParser
+from little.language.parser_policy import ParserPolicy
+
+
+def test_simple_parser_has_no_process_global_parser_policy():
+    assert "POLICY" not in SimpleParser.__dict__
+
+
+def test_simple_parser_has_no_process_global_runtime_resources():
+    assert "CONSTRUCTIONS" not in SimpleParser.__dict__
+    assert "UNIT_CONVERSIONS" not in SimpleParser.__dict__
+    assert "CONSTRUCTION_ENGINE" not in SimpleParser.__dict__
+
+
+def test_parser_policy_loads_shared_lexical_tables():
+    policy = ParserPolicy.load(Path("data/schemas"))
+
+    assert policy.action_verbs["flies"] == "fly"
+    assert policy.irregular_plurals["mice"] == "mouse"
+    assert "transparent" in policy.known_properties
+    assert "hello" in policy.isolated_greetings
+    assert "into" in policy.pivot_prepositions
+    assert "used for" in policy.invalid_definition_markers
+    assert "than" in policy.invalid_category_markers
+    assert "ADD" in policy.numeric_skills
+    assert "used_for" in policy.open_query_predicates
+    assert "cannot" in policy.noun_auxiliaries
+    assert "oes" in policy.plural_es_suffixes
+    assert "wives" in policy.plural_f_to_fe_words
+
+
+def test_parser_uses_injected_action_vocabulary(tmp_path: Path, monkeypatch):
+    payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    payload["parser_policy"]["action_verbs"]["glides"] = "glide"
+    custom_path = tmp_path / "parser_policy.json"
+    custom_path.write_text(json.dumps(payload), encoding="utf-8")
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    parsed = SimpleParser.parse_statement("A bird glides")
+
+    assert parsed[0].predicate == "can"
+    assert parsed[0].object_ == "glide"
+
+
+def test_statement_parser_uses_an_injected_construction_catalog(monkeypatch):
+    custom = Construction.create(
+        name="custom_gliding_relation",
+        pattern_tokens=["{X}", "glides", "over", "{Y}"],
+        slot_roles={"X": "subject", "Y": "object"},
+        predicate_template="moves_over",
+    )
+    monkeypatch.setattr(SimpleParser, "CONSTRUCTIONS", [custom])
+
+    parsed = SimpleParser.parse_statement("A bird glides over clouds.")
+
+    assert [(triple.subject, triple.predicate, triple.object_) for triple in parsed] == [
+        ("bird", "moves_over", "cloud")
+    ]
+
+
+def test_question_parser_uses_an_injected_construction_catalog(monkeypatch):
+    custom = Construction.create(
+        name="custom_residence_question",
+        pattern_tokens=["where", "does", "{X}", "reside"],
+        slot_roles={"X": "subject"},
+        predicate_template="located_in",
+        construction_type="question",
+    )
+    monkeypatch.setattr(SimpleParser, "CONSTRUCTIONS", [custom])
+
+    parsed = SimpleParser.parse_question("Where does Paris reside?")
+
+    assert parsed == ("paris", "located_in", "?")
+
+
+def test_question_parser_uses_injected_procedural_catalog(monkeypatch):
+    custom = Construction.create(
+        name="custom_addition",
+        pattern_tokens=["compute", "{a}", "plus", "{b}"],
+        slot_roles={"a": "a", "b": "b"},
+        predicate_template="add",
+        construction_type="procedural",
+    )
+    monkeypatch.setattr(SimpleParser, "CONSTRUCTIONS", [custom])
+
+    parsed = SimpleParser.parse_question("compute 7 plus 5?")
+
+    assert parsed == ("ADD", "__math__", {"a": 7, "b": 5})
+
+
+def test_default_question_catalog_covers_relation_question_forms():
+    constructions = GrammarRegistry.default()
+    cases = [
+        ("Where is Paris?", "paris", "located_in", "?"),
+        ("Why is Paris in Europe?", "paris", "__why_located_in__", "europe"),
+        ("Is an animal not a vehicle?", "animal", "disjoint_with", "vehicle"),
+        ("Is a wheel part of a car?", "wheel", "part_of", "car"),
+        ("Does a salmon live in water?", "salmon", "lives_in", "water"),
+        ("Is ice made of water?", "ice", "made_of", "water"),
+        ("Does a tiger eat meat?", "tiger", "eats", "meat"),
+        ("Does Alice have a dog?", "alice", "has", "dog"),
+        ("Is a hammer used for hitting nails?", "hammer", "used_for", "hitting nail"),
+        ("Does fire cause smoke?", "fire", "causes", "smoke"),
+    ]
+    for text, subject, predicate, object_ in cases:
+        parsed = ConstructionEngine.parse_question_from_catalog(text, constructions)
+        assert parsed == (subject, predicate, object_)
+
+
+def test_default_catalog_covers_procedural_question_forms():
+    constructions = GrammarRegistry.default()
+    cases = [
+        ("2 + 3", "ADD", {"a": 2, "b": 3}),
+        ("what is 2 plus 3", "ADD", {"a": 2, "b": 3}),
+        ("what is the square root of 9", "SQRT", {"n": 9}),
+        ("is 7 prime", "IS_PRIME", {"n": 7}),
+        ("prime 11", "IS_PRIME", {"n": 11}),
+        ("what is 5 factorial", "FACTORIAL", {"n": 5}),
+        ("what is the gcd of 12 and 8", "GCD", {"a": 12, "b": 8}),
+        ("what is the lcm of 4 and 6", "LCM", {"a": 4, "b": 6}),
+    ]
+    for text, skill, args in cases:
+        assert ConstructionEngine.parse_procedural_from_catalog(
+            text, constructions
+        ) == (skill, args)
+
+
+def test_default_catalog_covers_relation_forms_without_fallback_regexes():
+    constructions = GrammarRegistry.default()
+
+    cases = [
+        ("A hammer is used for hitting nails.", "hammer", "used_for", "hitting nail"),
+        ("Fire causes smoke and heat.", "fire", "causes", "smoke"),
+        ("Penguins cannot fly.", "penguin", "can", "fly"),
+        ("Cities are in countries.", "city", "located_in", "country"),
+        ("Tools are made of metal.", "tool", "made_of", "metal"),
+        ("A truck has wheels, an engine, and headlights.", "truck", "has", "wheel"),
+        ("All felines are carnivores.", "feline", "is_a", "carnivore"),
+        ("Every tiger is a cat.", "tiger", "is_a", "cat"),
+        ("An animal is not a vehicle.", "animal", "disjoint_with", "vehicle"),
+        (
+            "If an animal is a canine, then it is a vertebrate.",
+            "canine",
+            "is_a",
+            "vertebrate",
+        ),
+        (
+            "If mammals are animals, then they are living things.",
+            "animal",
+            "is_a",
+            "living thing",
+        ),
+        ("I am Aswin.", "user", "has_name", "aswin"),
+        ("My name's Aswin.", "user", "has_name", "aswin"),
+    ]
+    for text, subject, predicate, object_ in cases:
+        parsed = ConstructionEngine.parse_from_catalog(text, constructions)
+        assert (parsed[0].subject, parsed[0].predicate, parsed[0].object_) == (
+            subject,
+            predicate,
+            object_,
+        )

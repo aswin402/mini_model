@@ -1,16 +1,18 @@
 [project]
 name = "little"
-version = "0.1.0"
+version = "0.1.1"
 description = "Add your description here"
 readme = "README.md"
 authors = [
     { name = "aswin402", email = "aswinvishal402@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "sympy>=1.14.0",
+]
 
 [project.scripts]
-little = "little:main"
+little = "little.main:main"
 
 [build-system]
 requires = ["uv_build>=0.10.7,<0.11.0"]

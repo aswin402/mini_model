@@ -1,0 +1,50 @@
+{
+  "knowledge_import_policy": {
+    "version": "1",
+    "relation_aliases": {
+      "/r/isa": "is_a",
+      "/r/partof": "part_of",
+      "/r/hasa": "has",
+      "/r/capableof": "can",
+      "/r/atlocation": "located_in",
+      "/r/madeof": "made_of",
+      "/r/usedfor": "used_for",
+      "/r/causes": "causes",
+      "/r/hasproperty": "has_property",
+      "/r/distinctfrom": "disjoint_with",
+      "/r/antonym": "disjoint_with",
+      "/r/desires": "wants",
+      "/r/receivesaction": "receives_action",
+      "/r/hassubevent": "has_subevent",
+      "/r/motivatedbygoal": "motivated_by",
+      "is_a": "is_a",
+      "isa": "is_a",
+      "part_of": "part_of",
+      "has": "has",
+      "has_a": "has",
+      "can": "can",
+      "located_in": "located_in",
+      "at_location": "located_in",
+      "made_of": "made_of",
+      "used_for": "used_for",
+      "causes": "causes",
+      "has_property": "has_property",
+      "disjoint_with": "disjoint_with",
+      "antonym": "disjoint_with",
+      "wants": "wants",
+      "eats": "eats",
+      "lives_in": "lives_in",
+      "larger_than": "larger_than",
+      "smaller_than": "smaller_than"
+    },
+    "discard_concepts": [
+      "it", "this", "that", "something", "someone", "anything", "anyone",
+      "thing", "things", "object", "one", "none", "etc", "everything",
+      "somebody", "anybody"
+    ],
+    "concept_limits": {
+      "max_words": 4,
+      "max_characters": 35
+    }
+  }
+}

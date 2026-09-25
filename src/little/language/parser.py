@@ -8,102 +8,37 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any
 
+from little.core.contracts import (
+    CandidateClaim,
+    CandidateFrame,
+    CommitStatus,
+    ParsedQuery,
+    SourceType,
+    VerificationResult,
+    VerificationStatus,
+)
+from little.core.grammar_registry import GrammarRegistry
+from little.core.runtime_policy import RuntimePolicy
 from little.core.models import (
     BeliefStatus,
+    Construction,
     InferenceResult,
     LearningResult,
     UpdateType,
 )
 from little.dynamics.cfc import ContinuousDynamicsEngine
-from little.dynamics.transformations import TransformationEngine
 from little.inference.engine import InferenceEngine
+from little.inference.invariant_gates import DeepSeekInvariantVerifier
 from little.language.construction import ConstructionEngine
 from little.language.dialogue import DialogueContext
+from little.language.parser_policy import ParserPolicy
+from little.language.perception import DeterministicPerceptionAdapter, PerceptionAdapter
 from little.memory.store import MemoryStore
 from little.procedural.runner import SkillRunner
+from little.procedural.math_cas import UnitConversionGraph
 from little.procedural.skills import register_builtin_skills
-
-NON_CONCEPT_WORDS = {
-    "?",
-    "a",
-    "an",
-    "the",
-    "who",
-    "what",
-    "where",
-    "when",
-    "why",
-    "how",
-    "which",
-    "you",
-    "u",
-    "ur",
-    "your",
-    "me",
-    "i",
-    "he",
-    "she",
-    "it",
-    "we",
-    "they",
-    "them",
-    "this",
-    "that",
-    "these",
-    "those",
-    "and",
-    "or",
-    "but",
-    "because",
-    "hi",
-    "hello",
-    "hey",
-    "hii",
-    "ok",
-    "okay",
-    "yes",
-    "no",
-    "so",
-    "well",
-    "now",
-    "then",
-    "things you can do",
-    "things u can do",
-    "so what",
-    "my",
-    "mine",
-    "our",
-    "ours",
-    "myself",
-    "yourself",
-    "my name",
-    "your name",
-}
-
-ACTION_VERBS: dict[str, str] = {
-    "fly": "fly",
-    "flies": "fly",
-    "swim": "swim",
-    "swims": "swim",
-    "run": "run",
-    "runs": "run",
-    "jump": "jump",
-    "jumps": "jump",
-    "walk": "walk",
-    "walks": "walk",
-    "crawl": "crawl",
-    "crawls": "crawl",
-    "sing": "sing",
-    "sings": "sing",
-    "bark": "bark",
-    "barks": "bark",
-    "meow": "meow",
-    "meows": "meow",
-    "roar": "roar",
-    "roars": "roar",
-}
 
 
 @dataclass
@@ -115,42 +50,50 @@ class ParsedTriple:
     is_negative: bool = False
 
 
-class SimpleParser:
+class _ParserPolicyCompatibilityMeta(type):
+    """Expose a legacy default without storing it on the parser base class."""
+
+    def __getattr__(cls, name: str) -> Any:
+        if name == "POLICY":
+            return ParserPolicy.default()
+        if name == "CONSTRUCTIONS":
+            return GrammarRegistry.default()
+        if name == "UNIT_CONVERSIONS":
+            return UnitConversionGraph()
+        if name == "CONSTRUCTION_ENGINE":
+            return ConstructionEngine
+        raise AttributeError(name)
+
+
+class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
     """Robust pattern and rule-based parser for English statements and questions."""
 
-    # Leading article pattern only at the start of a noun phrase
-    LEADING_ARTICLE = re.compile(
-        r"^(?:a|an|the|this|that|these|those|every|all)\s+", re.IGNORECASE
-    )
+    @classmethod
+    def _policy(cls) -> ParserPolicy:
+        """Resolve a bound or legacy policy without storing a base global default."""
+        configured = getattr(cls, "POLICY", None)
+        return configured if configured is not None else ParserPolicy.default()
 
     @classmethod
     def normalize_text(cls, text: str) -> str:
         s = text.strip()
-        # Internet slang & shorthand normalization
-        s = re.sub(r"\bu\b", "you", s, flags=re.IGNORECASE)
-        s = re.sub(r"\bur\b", "your", s, flags=re.IGNORECASE)
-        s = re.sub(r"\br\b", "are", s, flags=re.IGNORECASE)
-        s = re.sub(r"\bwat\b", "what", s, flags=re.IGNORECASE)
-        s = re.sub(r"\bplz\b", "please", s, flags=re.IGNORECASE)
-        s = re.sub(r"\bidk\b", "i do not know", s, flags=re.IGNORECASE)
-
-        # English contractions normalization
-        s = re.sub(r"\bwhat['’]?s\b", "what is", s, flags=re.IGNORECASE)
-        s = re.sub(r"\bwho['’]?s\b", "who is", s, flags=re.IGNORECASE)
-        s = re.sub(r"\bwhere['’]?s\b", "where is", s, flags=re.IGNORECASE)
-        s = re.sub(r"\bhow['’]?s\b", "how is", s, flags=re.IGNORECASE)
-        s = re.sub(r"\bisn['’]?t\b", "is not", s, flags=re.IGNORECASE)
-        s = re.sub(r"\baren['’]?t\b", "are not", s, flags=re.IGNORECASE)
-        s = re.sub(r"\bcan['’]?t\b", "cannot", s, flags=re.IGNORECASE)
+        for source, replacement in cls._policy().normalization_replacements:
+            token_pattern = rf"(?<!\w){re.escape(source)}(?!\w)"
+            s = re.sub(token_pattern, replacement, s, flags=re.IGNORECASE)
 
         # Isolated greetings must NOT be stripped away to empty
-        if re.match(r"^(?:hey|heyy|hello|hi|hii|yo|howdy)$", s, re.IGNORECASE):
+        if s.lower() in cls._policy().isolated_greetings:
             return s
 
         # Conversational discourse markers e.g. "so what is 10+10", "hey what can u do", "well tell me..."
-        if not re.match(r"^well\s+done\b", s, re.IGNORECASE):
+        protected = cls._policy().protected_discourse_prefixes
+        if not any(
+            re.match(rf"^{re.escape(prefix)}\b", s, re.IGNORECASE)
+            for prefix in protected
+        ):
+            markers = "|".join(re.escape(marker) for marker in cls._policy().discourse_markers)
             s = re.sub(
-                r"^(?:(?:so|well|hey|now|ok|okay|then|and|also|just)\b[\s,]*)+",
+                rf"^(?:(?:{markers})\b[\s,]*)+",
                 "",
                 s,
                 flags=re.IGNORECASE,
@@ -158,7 +101,7 @@ class SimpleParser:
 
         # Conversational polite prefixes e.g. "Can you calculate ...", "Could you please tell me ...", "Do you know ..."
         s = re.sub(
-            r"^(?:(?:can|could|would)\s+you\s+(?:please\s+)?(?:tell\s+me\s+)?|(?:do|would)\s+you\s+know\s+|(?:please\s+)?tell\s+me\s+|please\s+)",
+            cls._policy().polite_prefix_pattern,
             "",
             s,
             flags=re.IGNORECASE,
@@ -171,104 +114,13 @@ class SimpleParser:
         if not c or c.strip() in ("", "?"):
             return False
         clean = c.strip().lower()
-        if clean in NON_CONCEPT_WORDS or clean == "?":
+        if clean in cls._policy().non_concept_words or clean == "?":
             return False
         words = set(clean.split())
-        question_words = {"who", "what", "where", "when", "why", "how", "which"}
-        return not any(w in NON_CONCEPT_WORDS or w in question_words for w in words)
-
-    IRREGULAR_PLURALS: ClassVar[dict[str, str]] = {
-        "mice": "mouse",
-        "children": "child",
-        "geese": "goose",
-        "teeth": "tooth",
-        "feet": "foot",
-        "people": "person",
-        "men": "man",
-        "women": "woman",
-        "oxen": "ox",
-        "leaves": "leaf",
-        "knives": "knife",
-        "wolves": "wolf",
-        "halves": "half",
-        "lives": "life",
-        "loaves": "loaf",
-        "thieves": "thief",
-        "cacti": "cactus",
-        "fungi": "fungus",
-        "nuclei": "nucleus",
-        "phenomena": "phenomenon",
-        "criteria": "criterion",
-        "analyses": "analysis",
-        "crises": "crisis",
-        "diagnoses": "diagnosis",
-        "wings": "wing",
-        "fins": "fin",
-        "wheels": "wheel",
-        "viruses": "virus",
-        "walruses": "walrus",
-        "campuses": "campus",
-        "bonuses": "bonus",
-        "circuses": "circus",
-        "menus": "menu",
-        "gurus": "guru",
-        "emus": "emu",
-    }
-
-    INVARIABLE_WORDS: ClassVar[set[str]] = {
-        "mars",
-        "venus",
-        "uranus",
-        "phobos",
-        "deimos",
-        "celsius",
-        "paris",
-        "lens",
-        "series",
-        "species",
-        "physics",
-        "mathematics",
-        "news",
-        "status",
-        "canvas",
-        "atlantis",
-        "united states",
-        "sheep",
-        "deer",
-        "fish",
-        "aircraft",
-        "salmon",
-        "trout",
-        "spacecraft",
-        "swine",
-        "bison",
-        "water",
-        "ice",
-        "steam",
-        "meat",
-        "air",
-        "grass",
-        "glass",
-        "brass",
-        "compass",
-        "mass",
-        "bass",
-        "gas",
-        "virus",
-        "fungus",
-        "cactus",
-        "nucleus",
-        "radius",
-        "walrus",
-        "octopus",
-        "platypus",
-        "rhinoceros",
-        "hippopotamus",
-        "alps",
-        "athens",
-        "brussels",
-        "scissors",
-    }
+        return not any(
+            w in cls._policy().non_concept_words or w in cls._policy().question_words
+            for w in words
+        )
 
     @classmethod
     def resolve_anaphora(
@@ -333,12 +185,15 @@ class SimpleParser:
         raw_lower = text.strip().lower()
         if raw_lower in ("a", "an", "the", "this", "that", "these", "those"):
             return ""
-        s = cls.LEADING_ARTICLE.sub("", raw_lower).strip()
+        articles = "|".join(
+            re.escape(article) for article in cls._policy().leading_articles
+        )
+        s = re.sub(rf"^(?:{articles})\s+", "", raw_lower).strip()
         if not s:
             return ""
-        if s in cls.IRREGULAR_PLURALS:
-            return cls.IRREGULAR_PLURALS[s]
-        if s in cls.INVARIABLE_WORDS:
+        if s in cls._policy().irregular_plurals:
+            return cls._policy().irregular_plurals[s]
+        if s in cls._policy().invariable_words:
             return s
         # Multi-word nouns (e.g. "living things" -> "living thing", "apple slices" -> "apple slice")
         tokens = s.split()
@@ -349,16 +204,20 @@ class SimpleParser:
         if s.endswith("ies") and len(s) > 4:
             s = s[:-3] + "y"
         elif s.endswith("ves") and len(s) > 4:
-            if s in ("knives", "lives", "wives"):
+            if s in cls._policy().plural_f_to_fe_words:
                 s = s[:-3] + "fe"
             else:
                 s = s[:-3] + "f"
         elif s.endswith("es") and len(s) > 4:
-            if s.endswith(("oes", "xes", "sses", "ches", "shes")):
+            if s.endswith(cls._policy().plural_es_suffixes):
                 s = s[:-2]
             else:
                 s = s[:-1]
-        elif s.endswith("s") and not s.endswith(("ss", "us", "is")) and len(s) > 3:
+        elif (
+            s.endswith("s")
+            and not s.endswith(cls._policy().plural_s_exceptions)
+            and len(s) > 3
+        ):
             s = s[:-1]
         return s
 
@@ -425,7 +284,13 @@ class SimpleParser:
             concept = cls.clean_noun(m_subj_rel.group(3))
 
             if cls.is_valid_concept(concept) and cls.is_valid_concept(category):
-                triples.append(ParsedTriple(subject=concept, predicate="is_a", object_=category))
+                triples.append(
+                    ParsedTriple(
+                        subject=concept,
+                        predicate=cls._policy().semantic.taxonomy,
+                        object_=category,
+                    )
+                )
                 sub_clauses = [
                     c.strip()
                     for c in re.split(r",\s*(?:and\s+)?|\s+and\s+", rel_body)
@@ -465,291 +330,53 @@ class SimpleParser:
                             triples.append(st)
                 return triples
 
-        # 0b2. User self-introduction: "My name is Aswin", "Call me Aswin", "I am Aswin", "My name's Aswin"
-        m_user_intro = re.match(
-            r"^(?:(?:ok|okay|well|hello|hi|hey)[,\s]+)?(?:my\s+name\s+is|my\s+name['’]s|i\s+am|call\s+me)\s+([A-Za-z0-9_-]+)(?:[,\s]+and\s+.*)?$",
-            clean,
-            re.IGNORECASE,
+        # Prefer the versioned construction catalog for ordinary statements.
+        # Compatibility regexes below remain only for grammar not yet captured
+        # by the data pack; adding a new relation should not require Python code.
+        catalog_triples = cls.CONSTRUCTION_ENGINE.parse_from_catalog(
+            clean, cls.CONSTRUCTIONS
         )
-        if m_user_intro:
-            uname = m_user_intro.group(1).strip()
-            if uname.lower() not in NON_CONCEPT_WORDS:
-                triples.append(
-                    ParsedTriple(
-                        subject="user",
-                        predicate="name",
-                        object_=uname,
-                        is_property=True,
-                    )
+        if catalog_triples:
+            return [
+                ParsedTriple(
+                    subject=triple.subject,
+                    predicate=(
+                        cls._policy().semantic.taxonomy
+                        if triple.predicate == cls.CONSTRUCTION_ENGINE._policy().semantic.taxonomy
+                        else triple.predicate
+                    ),
+                    object_=triple.object_,
+                    is_property=triple.is_property,
+                    is_negative=triple.is_negative,
                 )
-                return triples
-
-        # 0c. Universal Quantifiers: "All felines are carnivores", "Every tiger is a cat"
-        m_univ = re.match(
-            r"^(?:all|every|each)\s+(.*?)\s+(?:are|is)\s+(?:(?:a|an|the)\s+)?(.*?)$",
-            clean,
-            re.IGNORECASE,
-        )
-        if m_univ:
-            s = cls.clean_noun(m_univ.group(1))
-            o = cls.clean_noun(m_univ.group(2))
-            if cls.is_valid_concept(s) and cls.is_valid_concept(o):
-                triples.append(ParsedTriple(subject=s, predicate="is_a", object_=o))
-                return triples
-
-        # 0d. Conditional Rules: "If an animal is a feline then it is a carnivore"
-        m_cond = re.match(
-            r"^if\s+(?:(?:a|an|the)\s+)?(.*?)\s+(?:is|are)\s+(?:(?:a|an|the)\s+)?(.*?)[,\s]+then\s+(?:it|they)\s+(?:is|are)\s+(?:(?:a|an|the)\s+)?(.*?)$",
-            clean,
-            re.IGNORECASE,
-        )
-        if m_cond:
-            antecedent_obj = cls.clean_noun(m_cond.group(2))
-            consequent_obj = cls.clean_noun(m_cond.group(3))
-            if cls.is_valid_concept(antecedent_obj) and cls.is_valid_concept(
-                consequent_obj
-            ):
-                triples.append(
-                    ParsedTriple(
-                        subject=antecedent_obj, predicate="is_a", object_=consequent_obj
-                    )
-                )
-                return triples
-
-        # 1. Negative / Disjoint statements: "An animal is not a vehicle" / "Animals are not vehicles"
-        m_neg = re.match(
-            r"^(.*?)\s+(?:is not|are not|cannot be)\s+(.*?)$", clean, re.IGNORECASE
-        )
-        if m_neg:
-            s = cls.clean_noun(m_neg.group(1))
-            o = cls.clean_noun(m_neg.group(2))
-            if cls.is_valid_concept(s) and cls.is_valid_concept(o):
-                triples.append(
-                    ParsedTriple(
-                        subject=s,
-                        predicate="disjoint_with",
-                        object_=o,
-                        is_negative=False,
-                    )
-                )
-                return triples
-
-        # 2. "disjoint with" / "different from"
-        m_disj = re.match(
-            r"^(.*?)\s+(?:is disjoint with|is different from|are disjoint with)\s+(.*?)$",
-            clean,
-            re.IGNORECASE,
-        )
-        if m_disj:
-            s = cls.clean_noun(m_disj.group(1))
-            o = cls.clean_noun(m_disj.group(2))
-            if cls.is_valid_concept(s) and cls.is_valid_concept(o):
-                triples.append(
-                    ParsedTriple(
-                        subject=s,
-                        predicate="disjoint_with",
-                        object_=o,
-                        is_negative=False,
-                    )
-                )
-                return triples
-
-        # 3. Property statements with adjectives: "The apple is green", "The sky is blue"
-        colors = {
-            "red",
-            "green",
-            "blue",
-            "yellow",
-            "black",
-            "white",
-            "brown",
-            "purple",
-            "orange",
-            "grey",
-            "gray",
-        }
-        m_color = re.match(
-            r"^(.*?)\s+(?:is|are)\s+(" + "|".join(colors) + r")$", clean, re.IGNORECASE
-        )
-        if m_color:
-            s = cls.clean_noun(m_color.group(1))
-            val = m_color.group(2).lower()
-            if cls.is_valid_concept(s):
-                triples.append(
-                    ParsedTriple(
-                        subject=s, predicate="color", object_=val, is_property=True
-                    )
-                )
-                return triples
-
-        # 4. "has a" / "owns a" / "have"
-        m_has = re.match(r"^(.*?)\s+(?:has|owns|have)\s+(.*?)$", clean, re.IGNORECASE)
-        if m_has:
-            s = cls.clean_noun(m_has.group(1))
-            raw_o = m_has.group(2)
-            conjoined = cls.split_conjoined_items(raw_o)
-            if cls.is_valid_concept(s) and conjoined:
-                for o in conjoined:
-                    triples.append(ParsedTriple(subject=s, predicate="has", object_=o))
-                return triples
-
-        # 4b. Mereology / Part-Whole: "Leaves are part of plants", "A wheel is part of a car"
-        m_part = re.match(
-            r"^(.*?)\s+(?:is part of|are part of|is a part of|are parts of)\s+(.*?)$",
-            clean,
-            re.IGNORECASE,
-        )
-        if m_part:
-            s = cls.clean_noun(m_part.group(1))
-            o = cls.clean_noun(m_part.group(2))
-            if cls.is_valid_concept(s) and cls.is_valid_concept(o):
-                triples.append(ParsedTriple(subject=s, predicate="part_of", object_=o))
-                return triples
-
-        # 5. Geographic & Topological containment: "Paris is located in France"
-        m_loc = re.match(
-            r"^(.*?)\s+(?:is located in|are located in|is in|are in)\s+(.*?)$",
-            clean,
-            re.IGNORECASE,
-        )
-        if m_loc:
-            s = cls.clean_noun(m_loc.group(1))
-            o = cls.clean_noun(m_loc.group(2))
-            if cls.is_valid_concept(s) and cls.is_valid_concept(o):
-                triples.append(
-                    ParsedTriple(subject=s, predicate="located_in", object_=o)
-                )
-                return triples
-
-        # 6. Habitat: "Fish live in water", "A salmon lives in water"
-        m_live = re.match(
-            r"^(.*?)\s+(?:lives in|live in)\s+(.*?)$", clean, re.IGNORECASE
-        )
-        if m_live:
-            s = cls.clean_noun(m_live.group(1))
-            o = cls.clean_noun(m_live.group(2))
-            if cls.is_valid_concept(s) and cls.is_valid_concept(o):
-                triples.append(ParsedTriple(subject=s, predicate="lives_in", object_=o))
-                return triples
-
-        # 7. Material Composition: "Ice is made of water"
-        m_made = re.match(
-            r"^(.*?)\s+(?:is made of|are made of)\s+(.*?)$", clean, re.IGNORECASE
-        )
-        if m_made:
-            s = cls.clean_noun(m_made.group(1))
-            o = cls.clean_noun(m_made.group(2))
-            if cls.is_valid_concept(s) and cls.is_valid_concept(o):
-                triples.append(ParsedTriple(subject=s, predicate="made_of", object_=o))
-                return triples
-
-        # 8. Capability: "Birds can fly", "Fish can swim and jump"
-        m_can = re.match(r"^(.*?)\s+can\s+(.*?)$", clean, re.IGNORECASE)
-        if m_can:
-            s = cls.clean_noun(m_can.group(1))
-            raw_acts = m_can.group(2)
-            conjoined = cls.split_conjoined_items(raw_acts)
-            if cls.is_valid_concept(s) and conjoined:
-                for act in conjoined:
-                    triples.append(
-                        ParsedTriple(subject=s, predicate="can", object_=act)
-                    )
-                return triples
-
-        # 8b. Negative capability: "Penguins cannot fly", "Ostriches can't fly"
-        m_cannot = re.match(
-            r"^(.*?)\s+(?:cannot|can not|cant|can't)\s+(.*?)$", clean, re.IGNORECASE
-        )
-        if m_cannot:
-            s = cls.clean_noun(m_cannot.group(1))
-            raw_acts = m_cannot.group(2)
-            conjoined = cls.split_conjoined_items(raw_acts)
-            if cls.is_valid_concept(s) and conjoined:
-                for act in conjoined:
-                    triples.append(
-                        ParsedTriple(
-                            subject=s, predicate="can", object_=act, is_negative=True
-                        )
-                    )
-                return triples
+                for triple in catalog_triples
+            ]
 
         # 8c. Intransitive capability verbs: "Dolphins swim", "An eagle flies", "It swims"
         m_act = re.match(
-            r"^(.*?)\s+(" + "|".join(ACTION_VERBS.keys()) + r")$",
+            r"^(.*?)\s+(" + "|".join(sorted(cls._policy().action_verbs)) + r")$",
             clean,
             re.IGNORECASE,
         )
         if m_act:
             s = cls.clean_noun(m_act.group(1))
-            verb = ACTION_VERBS[m_act.group(2).lower()]
+            verb = cls._policy().action_verbs[m_act.group(2).lower()]
             if cls.is_valid_concept(s):
-                triples.append(ParsedTriple(subject=s, predicate="can", object_=verb))
+                triples.append(
+                    ParsedTriple(
+                        subject=s,
+                        predicate=cls._policy().semantic.capability,
+                        object_=verb,
+                    )
+                )
                 return triples
 
-        # 9. Dietary: "Carnivores eat meat", "A tiger eats meat", "Bears eat meat and plant"
-        m_eat = re.match(r"^(.*?)\s+(?:eats|eat)\s+(.*?)$", clean, re.IGNORECASE)
-        if m_eat:
-            s = cls.clean_noun(m_eat.group(1))
-            raw_e = m_eat.group(2)
-            conjoined = cls.split_conjoined_items(raw_e)
-            if cls.is_valid_concept(s) and conjoined:
-                for o in conjoined:
-                    triples.append(ParsedTriple(subject=s, predicate="eats", object_=o))
-                return triples
-
-        # 9b. Purpose / Usage: "A hammer is used for hitting nails", "Knives are used to cut"
-        m_used = re.match(
-            r"^(.*?)\s+(?:is used for|are used for|is used to|are used to)\s+(.*?)$",
+        # Fallback: split on a novel verb when no construction has been learned yet.
+        m_verb = re.match(
+            r"^(?:(?:a|an|the)\s+)?(.*?)\s+([a-z_]+)\s+(.*?)$",
             clean,
             re.IGNORECASE,
         )
-        if m_used:
-            s = cls.clean_noun(m_used.group(1))
-            raw_u = m_used.group(2)
-            parts = [
-                p.strip()
-                for p in re.split(r",\s*(?:and\s+)?|\s+and\s+", raw_u)
-                if p.strip()
-            ]
-            for p in parts:
-                p_clean = cls.clean_noun(p)
-                if cls.is_valid_concept(s) and p_clean:
-                    triples.append(
-                        ParsedTriple(subject=s, predicate="used_for", object_=p_clean)
-                    )
-            if triples:
-                return triples
-
-        # 9c. Causality: "Fire causes smoke and heat"
-        m_cause = re.match(
-            r"^(.*?)\s+(?:causes|cause)\s+(.*?)$",
-            clean,
-            re.IGNORECASE,
-        )
-        if m_cause:
-            s = cls.clean_noun(m_cause.group(1))
-            raw_c = m_cause.group(2)
-            conjoined = cls.split_conjoined_items(raw_c)
-            if cls.is_valid_concept(s) and conjoined:
-                for eff in conjoined:
-                    triples.append(
-                        ParsedTriple(subject=s, predicate="causes", object_=eff)
-                    )
-                return triples
-
-        # 10. Taxonomic "is a" / "are" classification: "A dog is an animal", "Dogs are animals"
-        m_is_a = re.match(r"^(.*?)\s+(?:is|are)\s+(.*?)$", clean, re.IGNORECASE)
-        if m_is_a:
-            s = cls.clean_noun(m_is_a.group(1))
-            raw_o = m_is_a.group(2)
-            conjoined = cls.split_conjoined_items(raw_o)
-            if cls.is_valid_concept(s) and conjoined:
-                for o in conjoined:
-                    triples.append(ParsedTriple(subject=s, predicate="is_a", object_=o))
-                return triples
-
-        # 11. Fallback: split on common verbs
-        m_verb = re.match(r"^(.*?)\s+([a-z_]+)\s+(.*?)$", clean, re.IGNORECASE)
         if m_verb:
             s = cls.clean_noun(m_verb.group(1))
             p = m_verb.group(2).lower()
@@ -763,8 +390,11 @@ class SimpleParser:
     def parse_action(cls, text: str) -> tuple[str, dict[str, Any]] | None:
         """Parse procedural actions like 'slice apple into 4 pieces'."""
         clean = text.strip().rstrip(".").strip()
+        slice_verbs = "|".join(
+            re.escape(verb) for verb in cls._policy().slice_verbs
+        )
         m_slice = re.match(
-            r"^(?:slice|cut)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s-]+?)\s+into\s+(\d+)\s+pieces?$",
+            rf"^(?:{slice_verbs})\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s-]+?)\s+into\s+(\d+)\s+pieces?$",
             clean,
             re.IGNORECASE,
         )
@@ -783,8 +413,11 @@ class SimpleParser:
 
         # Strip leading conversational greetings or discourse markers before parsing the question
         # e.g. "hii who are you" -> "who are you", "hello can an eagle fly" -> "can an eagle fly"
+        greeting_prefixes = "|".join(
+            re.escape(prefix) for prefix in cls._policy().greeting_prefixes
+        )
         m_greeting_prefix = re.match(
-            r"^(?:hi|hii|hello|hey|heyy|howdy|yo|greetings|good\s+morning|good\s+afternoon|good\s+evening|ok|okay|so|well|please|tell\s+me)[,\s!]+(.+)$",
+            rf"^(?:{greeting_prefixes})[,\s!]+(.+)$",
             q,
             re.IGNORECASE,
         )
@@ -881,6 +514,13 @@ class SimpleParser:
             re.IGNORECASE,
         ):
             return ("little", "__chitchat_fact__", None)
+
+        procedural = cls.CONSTRUCTION_ENGINE.parse_procedural_from_catalog(
+            q, cls.CONSTRUCTIONS
+        )
+        if procedural:
+            skill_name, args = procedural
+            return (skill_name, "__math__", args)
 
         # 1. Arithmetic calculations: "4+4", "4 + 4", "What is 123 + 456?", "whats 4+4", "50 * 25"
         m_calc_sym = re.match(
@@ -1059,53 +699,6 @@ class SimpleParser:
         if m_pal:
             return ("PALINDROME", "__math__", {"text": m_pal.group(1).strip()})
 
-        m_sqrt = re.match(
-            r"^(?:(?:what\s+is|calculate|find)\s+)?(?:the\s+)?(?:square\s+root|sqrt)\s+(?:of\s+)?(\d+(?:\.\d+)?)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_sqrt:
-            num = (
-                float(m_sqrt.group(1))
-                if "." in m_sqrt.group(1)
-                else int(m_sqrt.group(1))
-            )
-            return ("SQRT", "__math__", {"n": num})
-
-        m_gcd = re.match(
-            r"^(?:(?:what\s+is|calculate|find)\s+)?(?:the\s+)?(?:gcd|greatest\s+common\s+divisor)\s+(?:of\s+)?(\d+)\s+and\s+(\d+)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_gcd:
-            return (
-                "GCD",
-                "__math__",
-                {"a": int(m_gcd.group(1)), "b": int(m_gcd.group(2))},
-            )
-
-        m_lcm = re.match(
-            r"^(?:(?:what\s+is|calculate|find)\s+)?(?:the\s+)?lcm\s+(?:of\s+)?(\d+)\s+and\s+(\d+)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_lcm:
-            return (
-                "LCM",
-                "__math__",
-                {"a": int(m_lcm.group(1)), "b": int(m_lcm.group(2))},
-            )
-
-        m_pct = re.match(
-            r"^(?:(?:what\s+is|calculate|find)\s+)?(\d+(?:\.\d+)?)\s*(?:%|percent)\s+(?:of\s+)(\d+(?:\.\d+)?)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_pct:
-            p = float(m_pct.group(1)) if "." in m_pct.group(1) else int(m_pct.group(1))
-            t = float(m_pct.group(2)) if "." in m_pct.group(2) else int(m_pct.group(2))
-            return ("PERCENT", "__math__", {"percent": p, "total": t})
-
         m_sq = re.match(
             r"^(?:(?:what\s+is|calculate|find)\s+)?(?:the\s+)?square\s+of\s+(\d+(?:\.\d+)?)$",
             q,
@@ -1250,7 +843,7 @@ class SimpleParser:
         m_color = re.match(r"^what color is\s+(.*?)$", q, re.IGNORECASE)
         if m_color:
             s = cls.clean_noun(m_color.group(1))
-            return (s, "color", "?")
+            return (s, cls._policy().semantic.color, "?")
 
         # Comparatives: "Is an elephant bigger than a mouse?", "Is the sun larger than the earth?"
         m_comp = re.match(
@@ -1263,16 +856,6 @@ class SimpleParser:
             o = cls.clean_noun(m_comp.group(2))
             if cls.is_valid_concept(s) and cls.is_valid_concept(o):
                 return (s, "larger_than", o)
-
-        # WH-Information Seeking Queries:
-        # Location: "Where is Paris?", "Where is Paris located?"
-        m_wh_loc = re.match(
-            r"^where\s+(?:is|are)\s+(.+?)(?:\s+located)?$", q, re.IGNORECASE
-        )
-        if m_wh_loc:
-            s = cls.clean_noun(m_wh_loc.group(1))
-            if cls.is_valid_concept(s):
-                return (s, "located_in", "?")
 
         # Habitat: "Where does a salmon live?", "Where do fish live?", "Where a salmon lives"
         m_wh_live = re.match(
@@ -1288,21 +871,21 @@ class SimpleParser:
             raw_s = m_wh_live.group(1) or m_wh_live.group(2)
             s = cls.clean_noun(raw_s)
             if cls.is_valid_concept(s):
-                return (s, "lives_in", "?")
+                return (s, cls._policy().semantic.habitat, "?")
 
         # Diet: "What does a lion eat?", "What do carnivores eat?"
         m_wh_eat = re.match(r"^what\s+(?:does|do)\s+(.+?)\s+eat$", q, re.IGNORECASE)
         if m_wh_eat:
             s = cls.clean_noun(m_wh_eat.group(1))
             if cls.is_valid_concept(s):
-                return (s, "eats", "?")
+                return (s, cls._policy().semantic.diet, "?")
 
         # Capability: "What can an eagle do?", "What can birds do?"
         m_wh_can = re.match(r"^what\s+can\s+(.+?)\s+do$", q, re.IGNORECASE)
         if m_wh_can:
             s = cls.clean_noun(m_wh_can.group(1))
             if cls.is_valid_concept(s):
-                return (s, "can", "?")
+                return (s, cls._policy().semantic.capability, "?")
 
         # Material: "What is ice made of?", "What is steam made of?"
         m_wh_mat = re.match(
@@ -1311,7 +894,7 @@ class SimpleParser:
         if m_wh_mat:
             s = cls.clean_noun(m_wh_mat.group(1))
             if cls.is_valid_concept(s):
-                return (s, "made_of", "?")
+                return (s, cls._policy().semantic.composition, "?")
 
         # Parts / Features: "What parts does a car have?", "What does a bird have?"
         m_wh_has = re.match(
@@ -1320,7 +903,7 @@ class SimpleParser:
         if m_wh_has:
             s = cls.clean_noun(m_wh_has.group(1))
             if cls.is_valid_concept(s):
-                return (s, "has", "?")
+                return (s, cls._policy().semantic.whole, "?")
 
         # Purpose / Usage: "What is a hammer used for?", "What is a knife used for?"
         m_wh_used = re.match(
@@ -1329,7 +912,7 @@ class SimpleParser:
         if m_wh_used:
             s = cls.clean_noun(m_wh_used.group(1))
             if cls.is_valid_concept(s):
-                return (s, "used_for", "?")
+                return (s, cls._policy().semantic.purpose, "?")
 
         # Cause / Effect: "What does fire cause?", "What does exercise cause?"
         m_wh_causes = re.match(
@@ -1338,14 +921,14 @@ class SimpleParser:
         if m_wh_causes:
             s = cls.clean_noun(m_wh_causes.group(1))
             if cls.is_valid_concept(s):
-                return (s, "causes", "?")
+                return (s, cls._policy().semantic.causality, "?")
 
         # Reverse Cause: "What causes rain?", "What causes cancer?"
         m_wh_caused_by = re.match(r"^what\s+causes\s+(.+)$", q, re.IGNORECASE)
         if m_wh_caused_by:
             o = cls.clean_noun(m_wh_caused_by.group(1))
             if cls.is_valid_concept(o):
-                return ("?", "causes", o)
+                return ("?", cls._policy().semantic.causality, o)
 
         # Properties: "What properties does glass have?"
         m_wh_prop = re.match(
@@ -1354,7 +937,7 @@ class SimpleParser:
         if m_wh_prop:
             s = cls.clean_noun(m_wh_prop.group(1))
             if cls.is_valid_concept(s):
-                return (s, "has_property", "?")
+                return (s, cls._policy().semantic.property, "?")
 
         # Why-Questions:
         # 1. Why is X not a Y? "Why is water not a solid?", "Why can't an animal be a vehicle?"
@@ -1374,18 +957,6 @@ class SimpleParser:
             target = cls.clean_noun(m_why_not.group(2))
             if cls.is_valid_concept(s) and cls.is_valid_concept(target):
                 return (s, "__why_not__", target)
-
-        # 2. Why is X in Y? "Why is Paris in Europe?", "Why is Paris located in France?"
-        m_why_loc = re.match(
-            r"^why\s+(?:is|are)\s+(.+?)\s+(?:located\s+in|in)\s+(.+)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_why_loc:
-            s = cls.clean_noun(m_why_loc.group(1))
-            target = cls.clean_noun(m_why_loc.group(2))
-            if cls.is_valid_concept(s) and cls.is_valid_concept(target):
-                return (s, "__why_located_in__", target)
 
         # 3. Why is X a Y? "Why is an eagle an animal?"
         m_why_is = re.match(r"^why\s+(?:is|are)\s+(.+)$", q, re.IGNORECASE)
@@ -1421,41 +992,6 @@ class SimpleParser:
                 if cls.is_valid_concept(s) and cls.is_valid_concept(target):
                     return (s, "__why_is_a__", target)
 
-        # 4. "Is an apple slice part of an apple?" / "Is a wheel part of a car?"
-        m_part = re.match(
-            r"^(?:is|are)\s+(.+?)\s+(?:part of|a part of)\s+(.+)$", q, re.IGNORECASE
-        )
-        if m_part:
-            s = cls.clean_noun(m_part.group(1))
-            o = cls.clean_noun(m_part.group(2))
-            return (s, "part_of", o)
-
-        # 5. Geographic: "Is Paris located in France?", "Is Paris in France?"
-        m_loc = re.match(
-            r"^(?:is|are)\s+(.+?)\s+(?:located in|in)\s+(.+)$", q, re.IGNORECASE
-        )
-        if m_loc:
-            s = cls.clean_noun(m_loc.group(1))
-            o = cls.clean_noun(m_loc.group(2))
-            if cls.is_valid_concept(s) and cls.is_valid_concept(o):
-                return (s, "located_in", o)
-
-        # 6. Habitat: "Does a salmon live in water?", "Do fish live in water?"
-        m_live = re.match(r"^(?:does|do)\s+(.+?)\s+live\s+in\s+(.+)$", q, re.IGNORECASE)
-        if m_live:
-            s = cls.clean_noun(m_live.group(1))
-            o = cls.clean_noun(m_live.group(2))
-            if cls.is_valid_concept(s) and cls.is_valid_concept(o):
-                return (s, "lives_in", o)
-
-        # 7. Material: "Is ice made of water?"
-        m_made = re.match(r"^(?:is|are)\s+(.+?)\s+made\s+of\s+(.+)$", q, re.IGNORECASE)
-        if m_made:
-            s = cls.clean_noun(m_made.group(1))
-            o = cls.clean_noun(m_made.group(2))
-            if cls.is_valid_concept(s) and cls.is_valid_concept(o):
-                return (s, "made_of", o)
-
         # 8. Capability: "Can an eagle fly?", "Can fish swim?", "Can whales communicate using songs?"
         m_can = re.match(r"^can\s+(.+?)\s+([a-zA-Z0-9_\s\-]+)$", q, re.IGNORECASE)
         if m_can:
@@ -1473,82 +1009,46 @@ class SimpleParser:
                     elif cs in known_concepts and cls.is_valid_concept(ca):
                         best_split = (cs, ca)
                 if best_split:
-                    return (best_split[0], "can", best_split[1])
+                    return (
+                        best_split[0],
+                        cls._policy().semantic.capability,
+                        best_split[1],
+                    )
             s = cls.clean_noun(raw_s)
             act = cls.clean_noun(raw_act)
             if cls.is_valid_concept(s) and act:
-                return (s, "can", act)
+                return (s, cls._policy().semantic.capability, act)
+            if not cls.is_valid_concept(s):
+                fallback_tokens = raw_act.split()
+                if len(fallback_tokens) > 1:
+                    s = cls.clean_noun(" ".join(fallback_tokens[:-1]))
+                    act = cls.clean_noun(fallback_tokens[-1])
+                    if cls.is_valid_concept(s) and act:
+                        return (s, cls._policy().semantic.capability, act)
 
         # 8b. Capability with does/do: "Does a dolphin swim?", "Do birds fly?", "Does it swim?"
         m_does_act = re.match(
-            r"^(?:does|do)\s+(.+?)\s+(" + "|".join(ACTION_VERBS.keys()) + r")$",
+            r"^(?:does|do)\s+(.+?)\s+("
+            + "|".join(sorted(cls._policy().action_verbs))
+            + r")$",
             q,
             re.IGNORECASE,
         )
         if m_does_act:
             s = cls.clean_noun(m_does_act.group(1))
-            act = ACTION_VERBS[m_does_act.group(2).lower()]
+            act = cls._policy().action_verbs[m_does_act.group(2).lower()]
             if cls.is_valid_concept(s):
-                return (s, "can", act)
-
-        # 9. Dietary: "Does a tiger eat meat?", "Do carnivores eat meat?"
-        m_eat = re.match(r"^(?:does|do)\s+(.+?)\s+eat\s+(.+)$", q, re.IGNORECASE)
-        if m_eat:
-            s = cls.clean_noun(m_eat.group(1))
-            o = cls.clean_noun(m_eat.group(2))
-            if cls.is_valid_concept(s) and cls.is_valid_concept(o):
-                return (s, "eats", o)
-
-        # 10. Possession: "Does Alice have a dog?", "Do birds have wings?"
-        m_does_have = re.match(
-            r"^(?:does|do)\s+(.*?)\s+(?:have|own)\s+(.*?)$", q, re.IGNORECASE
-        )
-        if m_does_have:
-            s = cls.clean_noun(m_does_have.group(1))
-            o = cls.clean_noun(m_does_have.group(2))
-            return (s, "has", o)
+                return (s, cls._policy().semantic.capability, act)
 
         # 11. Property boolean query: "Is the apple red?", "Is it red?"
-        colors = {
-            "red",
-            "green",
-            "blue",
-            "yellow",
-            "black",
-            "white",
-            "brown",
-            "purple",
-            "orange",
-            "grey",
-            "gray",
-        }
+        colors = sorted(cls._policy().colors)
         m_is_color = re.match(
             r"^(?:is|are)\s+(.*?)\s+(" + "|".join(colors) + r")$", q, re.IGNORECASE
         )
         if m_is_color:
             s = cls.clean_noun(m_is_color.group(1))
             val = m_is_color.group(2).lower()
-            return (s, "color", val)
-
-        # 12. Purpose boolean query: "Is a hammer used for hitting nails?", "Is a knife used to cut?"
-        m_is_used = re.match(
-            r"^(?:is|are)\s+(.+?)\s+used\s+(?:for|to)\s+(.+)$", q, re.IGNORECASE
-        )
-        if m_is_used:
-            s = cls.clean_noun(m_is_used.group(1))
-            o = cls.clean_noun(m_is_used.group(2))
-            if cls.is_valid_concept(s) and o:
-                return (s, "used_for", o)
-
-        # 13. Cause boolean query: "Does fire cause smoke?", "Does exercise cause fitness?"
-        m_does_cause = re.match(
-            r"^(?:does|do)\s+(.+?)\s+cause\s+(.+)$", q, re.IGNORECASE
-        )
-        if m_does_cause:
-            s = cls.clean_noun(m_does_cause.group(1))
-            o = cls.clean_noun(m_does_cause.group(2))
-            if cls.is_valid_concept(s) and cls.is_valid_concept(o):
-                return (s, "causes", o)
+            return (s, cls._policy().semantic.color, val)
 
         # 13b. General transitive action questions: "Does a falcon hunt rodents?", "Does X verb Y?"
         m_does_trans = re.match(
@@ -1578,19 +1078,7 @@ class SimpleParser:
                     return best_split
 
         # 14. Property boolean query: "Is glass transparent?", "Is metal hard?", "Is ice cold?"
-        known_props = {
-            "transparent",
-            "fragile",
-            "conductive",
-            "hard",
-            "soft",
-            "cold",
-            "hot",
-            "flexible",
-            "absorbent",
-            "warm-blooded",
-            "cold-blooded",
-        }
+        known_props = sorted(cls._policy().known_properties)
         m_is_prop = re.match(
             r"^(?:is|are)\s+(.+?)\s+(" + "|".join(known_props) + r")$",
             q,
@@ -1600,7 +1088,13 @@ class SimpleParser:
             s = cls.clean_noun(m_is_prop.group(1))
             prop = m_is_prop.group(2).lower()
             if cls.is_valid_concept(s):
-                return (s, "has_property", prop)
+                return (s, cls._policy().semantic.property, prop)
+
+        catalog_question = cls.CONSTRUCTION_ENGINE.parse_question_from_catalog(
+            q, cls.CONSTRUCTIONS
+        )
+        if catalog_question:
+            return catalog_question
 
         # 6. Concept definition query: "What is an apple?", "Who is Alice?", "Tell me about a dog"
         m_def = re.match(
@@ -1616,7 +1110,7 @@ class SimpleParser:
             )
         if m_def:
             target_noun = cls.clean_noun(m_def.group(1))
-            if target_noun and target_noun not in NON_CONCEPT_WORDS:
+            if target_noun and target_noun not in cls._policy().non_concept_words:
                 return (target_noun, "__definition__", None)
 
         # 5. Taxonomic queries: "Is a dog an animal?" / "Is an rtx 4090 hardware?" / "Are dogs animals?"
@@ -1634,7 +1128,7 @@ class SimpleParser:
             if m_two_arts:
                 s = cls.clean_noun(m_two_arts.group(1))
                 o = cls.clean_noun(m_two_arts.group(2))
-                return (s, "is_a", o)
+                return (s, cls._policy().semantic.taxonomy, o)
 
             # If known_concepts is provided, find the optimal boundary
             if known_concepts:
@@ -1650,277 +1144,358 @@ class SimpleParser:
                         if not best_split:
                             best_split = (cand_s, cand_o)
                 if best_split:
-                    return (best_split[0], "is_a", best_split[1])
+                    return (
+                        best_split[0],
+                        cls._policy().semantic.taxonomy,
+                        best_split[1],
+                    )
 
             # Fallback: predicate nominal (category) is the last token or tokens
             tokens = body.split()
             if len(tokens) >= 2:
                 s = cls.clean_noun(" ".join(tokens[:-1]))
                 o = cls.clean_noun(tokens[-1])
-                return (s, "is_a", o)
+                return (s, cls._policy().semantic.taxonomy, o)
 
         return None
+
+    @classmethod
+    def split_compound_question(cls, text: str) -> list[str]:
+        """Split a conjoined question into ordered question clauses."""
+        clean = text.strip()
+        if "?" in clean[:-1]:
+            return [part.strip() for part in re.split(r"\?\s*", clean) if part.strip()]
+        return [
+            part.strip()
+            for part in re.split(
+                r",?\s+and\s+(?=(?:is|are|was|were|do|does|did|can|could|will|would|has|have|what|who|where|how|why)\b)",
+                clean,
+                flags=re.IGNORECASE,
+            )
+            if part.strip()
+        ]
+
+    @classmethod
+    def parse_compound_question(
+        cls,
+        text: str,
+        *,
+        memory: MemoryStore | None = None,
+        constructions: list[Construction] | None = None,
+        known_concepts: set[str] | None = None,
+        last_subject: str | None = None,
+        last_object: str | None = None,
+    ) -> tuple[list[str], list[ParsedQuery | None]]:
+        """Parse each compound question clause once, preserving clause alignment."""
+        parts = cls.split_compound_question(text)
+        if len(parts) <= 1:
+            return [], []
+
+        known = known_concepts or set()
+        resolved_parts: list[str] = []
+        parsed_queries: list[ParsedQuery | None] = []
+        subject = last_subject
+        for part in parts:
+            resolved = cls.resolve_anaphora(part, subject, last_object)
+            parsed: ParsedQuery | None = None
+            catalog = (
+                constructions
+                if constructions is not None
+                else memory.list_constructions()
+                if memory is not None
+                else None
+            )
+            if catalog is not None:
+                parsed = cls.CONSTRUCTION_ENGINE.parse_question_from_catalog_with_procedural(
+                    resolved, catalog
+                )
+            if parsed is None:
+                parsed = cls.parse_question(resolved, known_concepts=known)
+            resolved_parts.append(part)
+            parsed_queries.append(parsed)
+            if parsed is not None:
+                subject = parsed[0]
+        return resolved_parts, parsed_queries
+
+
+def configured_parser(
+    policy: ParserPolicy | None = None,
+    *,
+    constructions: list[Construction] | None = None,
+    unit_conversions: UnitConversionGraph | None = None,
+) -> type[SimpleParser]:
+    """Build an isolated parser class bound to one runtime policy bundle.
+
+    ``SimpleParser`` keeps its classmethod API for compatibility with existing
+    callers.  Runtime components use this factory so a custom policy is held
+    on a private subclass instead of mutating the process-wide defaults.
+    """
+    active_policy = SimpleParser._policy() if policy is None else policy
+    construction_engine = type(
+        "ConfiguredConstructionEngine",
+        (ConstructionEngine,),
+        {"_POLICY": active_policy},
+    )
+    return type(
+        "ConfiguredSimpleParser",
+        (SimpleParser,),
+        {
+            "POLICY": active_policy,
+            "CONSTRUCTIONS": list(
+                SimpleParser.CONSTRUCTIONS if constructions is None else constructions
+            ),
+            "UNIT_CONVERSIONS": unit_conversions or UnitConversionGraph(),
+            "CONSTRUCTION_ENGINE": construction_engine,
+        },
+    )
 
 
 class LearningEngine:
     """Orchestrates learning interactions and question answering over persistent memory."""
 
-    def __init__(self, memory: MemoryStore) -> None:
+    def __init__(
+        self,
+        memory: MemoryStore,
+        perception: PerceptionAdapter | None = None,
+        runtime_policy: RuntimePolicy | None = None,
+    ) -> None:
         self.memory = memory
-        self.inference = InferenceEngine(memory)
+        explicit_runtime_policy = runtime_policy is not None
+        self.runtime_policy = runtime_policy or RuntimePolicy.default()
+        self.unit_conversions = UnitConversionGraph(self.runtime_policy.units)
+        self.parser = configured_parser(
+            self.runtime_policy.parser if explicit_runtime_policy else None,
+            constructions=(
+                self.runtime_policy.constructions
+                if explicit_runtime_policy
+                else None
+            ),
+            unit_conversions=self.unit_conversions,
+        )
+        self.semantic = (
+            self.runtime_policy.semantic
+            if explicit_runtime_policy
+            else self.parser.POLICY.semantic
+        )
+        self.perception = perception or DeterministicPerceptionAdapter(
+            policy=self.runtime_policy.perception,
+            parser=self.parser,
+        )
+        self.transformation_policy = self.runtime_policy.transformation
+        self.memory.ledger.transformation_policy = self.transformation_policy
+        self.memory.ledger.dynamics_registry = self.runtime_policy.dynamics
+        self.registry = self.memory.ledger.registry
+        self.inference = InferenceEngine(
+            memory,
+            registry=self.registry,
+            semantic_policy=self.semantic,
+            policy=self.runtime_policy.reasoning,
+        )
+        self.verifier = DeepSeekInvariantVerifier(memory, registry=self.registry)
         self.last_subject: str | None = None
         self.last_object: str | None = None
         self.dialogue = DialogueContext()
-        register_builtin_skills(self.memory)
+        register_builtin_skills(
+            self.memory,
+            policy=self.runtime_policy.procedural,
+            unit_policy=self.runtime_policy.units,
+        )
 
     def learn(self, text: str) -> LearningResult:
-        """Process an input statement or action, extract concepts & relations, and persist them."""
-        # Multi-sentence input handler: "A dog is an animal. It has fur. It can bark."
-        raw_sentences = [
-            s.strip()
-            for s in re.split(r"(?<=[.!?;\n])\s+", text)
-            if s.strip() and not s.strip().endswith("?")
-        ]
-        if len(raw_sentences) > 1:
-            all_concepts: list[str] = []
-            all_relations: list[str] = []
-            all_updates: list[UpdateType] = []
-            for sent in raw_sentences:
-                sub_res = self.learn(sent)
-                if sub_res.update_type != UpdateType.NO_OP:
-                    all_concepts.extend(sub_res.concepts_created)
-                    all_relations.extend(sub_res.relations_created)
-                    all_updates.append(sub_res.update_type)
-            if all_relations or all_concepts:
-                primary = all_updates[0] if all_updates else UpdateType.NEW_RELATION
-                return LearningResult(
-                    input_text=text,
-                    update_type=primary,
-                    experience_id="",
-                    concepts_created=list(dict.fromkeys(all_concepts)),
-                    relations_created=list(dict.fromkeys(all_relations)),
-                    message=f"Successfully learned: {', '.join(all_relations or all_concepts)}",
-                )
-
-        # Dialogue coreference resolution
-        resolved_text = self.dialogue.resolve_anaphora_in_text(text)
-        if resolved_text == text:
-            resolved_text = SimpleParser.resolve_anaphora(
-                text, self.last_subject, self.last_object
-            )
-
-        # Guard: If the text is recognized as a question or calculation, do NOT treat it as a statement to be learned!
-        norm = SimpleParser.normalize_text(resolved_text)
-        if (
-            SimpleParser.parse_question(text) is not None
-            or SimpleParser.parse_question(norm) is not None
-            or SimpleParser.parse_question(resolved_text) is not None
-            or text.strip().endswith("?")
-            or resolved_text.strip().endswith("?")
-        ):
-            exp = self.memory.add_experience(input_text=text, extracted_triples=[])
-            return LearningResult(
-                input_text=text,
-                update_type=UpdateType.NO_OP,
-                experience_id=exp.id,
-                message=f"Input was recognized as an inquiry or calculation, not a declarative statement: '{text}'",
-            )
-
-        # 0. Check procedural actions via Construction Grammar or fallback
-        action = ConstructionEngine.parse_action_with_constructions(
-            resolved_text, self.memory
+        """Perceive once and delegate candidate decisions to the commit boundary."""
+        frame = self.perception.perceive(
+            text, memory=self.memory, context=self.dialogue
         )
-        if not action:
-            action = SimpleParser.parse_action(resolved_text)
+        return self.commit_frame(frame, source_type=SourceType.USER)
 
-        if action:
-            act_name, act_args = action
-            if act_name.upper() == "SLICE":
-                res = TransformationEngine.slice_object(
-                    self.memory,
-                    object_name=act_args["object"],
-                    num_pieces=act_args["count"],
-                )
-                self.last_subject = act_args["object"]
-                return LearningResult(
-                    input_text=text,
-                    update_type=UpdateType.NEW_ENTITY,
-                    experience_id=res.entities_created[0].id
-                    if res.entities_created
-                    else "",
-                    concepts_created=[res.slice_concept],
-                    relations_created=res.relations_created,
-                    message=res.message,
-                )
-
-        # 1. Parse statements: try dynamic Construction Grammar (with Open Pivot Learning) FIRST,
-        # grounded in memory-stored constructions in SQLite rather than hardcoded Python regexes.
-        # Fall back to SimpleParser for complex multi-clause/relative clause syntax.
-        cxn_triples = ConstructionEngine.parse_with_constructions(
-            resolved_text, self.memory
-        )
-        triples: list[ParsedTriple] = []
-        if cxn_triples:
-            for ct in cxn_triples:
-                triples.append(
-                    ParsedTriple(
-                        subject=ct.subject,
-                        predicate=ct.predicate,
-                        object_=ct.object_,
-                        is_property=ct.is_property,
-                        is_negative=ct.is_negative,
-                    )
-                )
-        else:
-            triples = SimpleParser.parse_statement(resolved_text)
-
-        if not triples:
-            exp = self.memory.add_experience(input_text=text, extracted_triples=[])
-            return LearningResult(
-                input_text=text,
-                update_type=UpdateType.NO_OP,
-                experience_id=exp.id,
-                message=f"Could not extract structured relations from: '{text}'",
+    def commit_frame(
+        self,
+        frame: CandidateFrame,
+        *,
+        source_type: SourceType = SourceType.USER,
+    ) -> LearningResult:
+        """Verify and commit candidates without parsing the source text again."""
+        text = frame.source_text
+        if frame.actions:
+            result = self.memory.ledger.commit_action(
+                frame, frame.actions[0], source_type=source_type
             )
+            if result.update_type is not UpdateType.NO_OP:
+                self.last_subject = frame.actions[0].arguments.get("object")
+            return result
 
-        extracted_dicts: list[dict[str, Any]] = []
+        if not frame.claims:
+            exp = self.memory.add_experience(input_text=text, extracted_triples=[])
+            message = (
+                f"Input was recognized as an inquiry or calculation, not a declarative statement: '{text}'"
+                if frame.intent == "question"
+                else f"Could not extract structured relations from: '{text}'"
+            )
+            return LearningResult(text, UpdateType.NO_OP, exp.id, message=message)
+
+        extracted: list[dict[str, Any]] = []
         concepts_created: list[str] = []
         relations_created: list[str] = []
         update_types: list[UpdateType] = []
+        accepted_claims: list[CandidateClaim] = []
+        registry = self.memory.ledger.registry
+        self.registry = registry
+        self.verifier.registry = registry
 
-        for t in triples:
-            extracted_dicts.append(
+        for claim in frame.claims:
+            extracted.append(
                 {
-                    "subject": t.subject,
-                    "predicate": t.predicate,
-                    "object": t.object_,
-                    "is_property": t.is_property,
-                    "is_negative": t.is_negative,
+                    "subject": claim.subject,
+                    "predicate": claim.predicate,
+                    "object": claim.object,
+                    "is_property": claim.is_property,
+                    "is_negative": not claim.positive,
                 }
             )
-
-            # 1. Resolve or create subject concept
-            subj_concept = self.memory.get_concept(t.subject)
-            if not subj_concept:
-                subj_concept = self.memory.create_concept(name=t.subject)
-                concepts_created.append(subj_concept.name)
-                update_types.append(UpdateType.NEW_CONCEPT)
-
-            # 2. Handle property vs relational edge
-            if t.is_property:
-                # Store attribute directly on concept
-                existing_attrs = subj_concept.attributes
-                prop_key = t.predicate
-                prop_val = t.object_
-
-                # Multi-valued attribute handling (e.g. apple colors: red, green)
-                if prop_key in existing_attrs:
-                    current_val = existing_attrs[prop_key]
-                    if isinstance(current_val, list):
-                        if prop_val not in current_val:
-                            current_val.append(prop_val)
-                    elif current_val != prop_val:
-                        existing_attrs[prop_key] = [current_val, prop_val]
+            evidence = self.memory.ledger.propose_relation(
+                frame,
+                claim,
+                source_type=source_type,
+                source_reference=f"frame:{frame.frame_id}",
+                positive=claim.positive,
+            )
+            subject_before = self.memory.get_concept(claim.subject)
+            relation_schema = registry.relation(claim.predicate)
+            property_schema = (
+                relation_schema
+                if relation_schema and relation_schema.attribute_key is not None
+                else None
+            )
+            if property_schema is not None:
+                if not claim.positive:
+                    verification = VerificationResult(
+                        status=VerificationStatus.UNKNOWN,
+                        reasons=["Negative property assertions need a separate policy"],
+                    )
                 else:
-                    existing_attrs[prop_key] = prop_val
+                        verification = self.verifier.verify_relation(
+                            claim.subject, claim.predicate, claim.object
+                        ).to_verification_result()
+                decision = self.memory.ledger.commit_property(
+                    evidence,
+                    verification,
+                    key=(
+                        property_schema.attribute_key
+                        if property_schema.attribute_key
+                        else claim.predicate
+                    ),
+                    value=claim.object,
+                    update_policy=(
+                        property_schema.attribute_update_policy
+                        if property_schema else "append"
+                    ),
+                    value_format=(
+                        property_schema.attribute_value_format
+                        if property_schema else "preserve"
+                    ),
+                )
+                if decision.status is CommitStatus.ACCEPTED:
+                    if subject_before is None:
+                        concepts_created.append(claim.subject)
+                    relations_created.append(
+                        f"({claim.subject} {claim.predicate}={claim.object})"
+                    )
+                    update_types.append(UpdateType.PROPERTY_UPDATE)
+                    accepted_claims.append(claim)
+                continue
 
-                self.memory.update_concept_attributes(subj_concept.id, existing_attrs)
-                relations_created.append(f"({subj_concept.name} {prop_key}={prop_val})")
-                update_types.append(UpdateType.PROPERTY_UPDATE)
+            if relation_schema is None:
+                verification = VerificationResult(
+                    status=VerificationStatus.UNKNOWN,
+                    reasons=[f"Unregistered predicate: {claim.predicate}"],
+                )
             else:
-                # Relational edge: resolve or create object concept
-                obj_concept = self.memory.get_concept(t.object_)
-                if not obj_concept:
-                    obj_concept = self.memory.create_concept(name=t.object_)
-                    concepts_created.append(obj_concept.name)
-                    update_types.append(UpdateType.NEW_CONCEPT)
-
-                # Check if relation already existed
-                existing_rels = self.memory.get_relations(
-                    subject_id=subj_concept.id,
-                    predicate=t.predicate,
-                    object_id=obj_concept.id,
+                verification = self.verifier.verify_relation(
+                    claim.subject, claim.predicate, claim.object
+                ).to_verification_result()
+            object_before = self.memory.get_concept(claim.object)
+            existing = (
+                self.memory.get_relations(
+                    subject_id=subject_before.id,
+                    predicate=claim.predicate,
+                    object_id=object_before.id,
                 )
-
-                self.memory.add_relation(
-                    subject_id=subj_concept.id,
-                    predicate=t.predicate,
-                    object_id=obj_concept.id,
-                    positive=not t.is_negative,
-                )
+                if subject_before and object_before
+                else []
+            )
+            decision = self.memory.ledger.commit_relation(
+                evidence, verification, positive=claim.positive
+            )
+            if decision.status is CommitStatus.ACCEPTED:
+                if subject_before is None:
+                    concepts_created.append(claim.subject)
+                if object_before is None:
+                    concepts_created.append(claim.object)
                 relations_created.append(
-                    f"({subj_concept.name} {t.predicate} {obj_concept.name})"
+                    f"({claim.subject} {claim.predicate} {claim.object})"
                 )
+                update_types.append(
+                    UpdateType.EVIDENCE_ADDITION if existing else UpdateType.NEW_RELATION
+                )
+                accepted_claims.append(claim)
 
-                if existing_rels:
-                    update_types.append(UpdateType.EVIDENCE_ADDITION)
-                else:
-                    update_types.append(UpdateType.NEW_RELATION)
+        exp = self.memory.add_experience(input_text=text, extracted_triples=extracted)
+        if accepted_claims:
+            first = accepted_claims[0]
+            self.last_subject = first.subject
+            self.last_object = first.object
+            self.dialogue.record_turn(
+                speaker="user", text=text, entities=[first.subject, first.object]
+            )
+            self.dialogue.register_entity(name=first.subject, role="subject")
+            self.dialogue.register_entity(name=first.object, role="object")
 
-        # Log episodic experience
-        exp = self.memory.add_experience(
-            input_text=text, extracted_triples=extracted_dicts
-        )
-
-        if triples:
-            self.last_subject = triples[0].subject
-            self.last_object = triples[0].object_
-            ents = [triples[0].subject]
-            if triples[0].object_:
-                ents.append(triples[0].object_)
-            self.dialogue.record_turn(speaker="user", text=text, entities=ents)
-            self.dialogue.register_entity(name=triples[0].subject, role="subject")
-            if triples[0].object_:
-                self.dialogue.register_entity(name=triples[0].object_, role="object")
-
-        # Prioritize domain-level action (property or relation) over raw concept instantiation
         if UpdateType.PROPERTY_UPDATE in update_types:
-            primary_update = UpdateType.PROPERTY_UPDATE
+            primary = UpdateType.PROPERTY_UPDATE
         elif UpdateType.NEW_RELATION in update_types:
-            primary_update = UpdateType.NEW_RELATION
+            primary = UpdateType.NEW_RELATION
         elif UpdateType.EVIDENCE_ADDITION in update_types:
-            primary_update = UpdateType.EVIDENCE_ADDITION
-        elif update_types:
-            primary_update = update_types[0]
+            primary = UpdateType.EVIDENCE_ADDITION
         else:
-            primary_update = UpdateType.NO_OP
-        if any(
-            t.subject == "user" and t.predicate in ("name", "has_name")
-            for t in triples
-        ):
-            u_t = next(
-                t
-                for t in triples
-                if t.subject == "user" and t.predicate in ("name", "has_name")
-            )
-            user_c = self.memory.get_concept("user")
-            if user_c:
-                user_attrs = dict(user_c.attributes)
-                user_attrs["name"] = u_t.object_.capitalize()
-                self.memory.update_concept_attributes(user_c.id, user_attrs)
-            return LearningResult(
-                input_text=text,
-                update_type=primary_update,
-                experience_id=exp.id,
-                concepts_created=concepts_created,
-                relations_created=relations_created,
-                message=f"Nice to meet you, {u_t.object_.capitalize()}! I have recorded your name in my persistent memory.",
-            )
+            primary = UpdateType.NO_OP
 
+        user_name = next(
+            (claim for claim in accepted_claims
+             if claim.subject == "user" and claim.predicate in ("name", "has_name")),
+            None,
+        )
+        if user_name is not None:
+            message = (
+                f"Nice to meet you, {user_name.object.capitalize()}! "
+                "I have recorded your name in my persistent memory."
+            )
+        elif primary is UpdateType.NO_OP:
+            message = f"Could not verify structured relations from: '{text}'"
+        else:
+            message = f"Successfully learned: {', '.join(relations_created or concepts_created)}"
         return LearningResult(
-            input_text=text,
-            update_type=primary_update,
-            experience_id=exp.id,
-            concepts_created=concepts_created,
-            relations_created=relations_created,
-            message=f"Successfully learned: {', '.join(relations_created or concepts_created)}",
+            input_text=text, update_type=primary, experience_id=exp.id,
+            concepts_created=list(dict.fromkeys(concepts_created)),
+            relations_created=relations_created, message=message,
         )
 
-    def ask(self, question: str) -> InferenceResult:
+    def ask(
+        self,
+        question: str,
+        *,
+        parsed_query: ParsedQuery | None = None,
+        parsed_queries: list[ParsedQuery | None] | None = None,
+        question_parts: list[str] | None = None,
+    ) -> InferenceResult:
         """Answer questions by querying the knowledge graph via InferenceEngine."""
+        payload_supplied = (
+            parsed_query is not None
+            or parsed_queries is not None
+            or question_parts is not None
+        )
         # 0a. Check for multi-step math word problems
         from little.procedural.math_story import MathStorySolver
-        story_solver = MathStorySolver()
+        story_solver = MathStorySolver(unit_policy=self.runtime_policy.units)
         if story_solver.is_math_story(question):
             sol = story_solver.solve_story(question)
             if sol and sol.status == "SOLVED":
@@ -1928,7 +1503,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.SUPPORTED,
                     answer=sol.result,
-                    confidence=1.0,
+                confidence=self.parser.POLICY.confidence.certain,
                     evidence=[f"<math_trace>\n{sol.verbalize()}\n</math_trace>"],
                     trace=sol.steps,
                 )
@@ -1936,12 +1511,16 @@ class LearningEngine:
         # 0. Check for compound / conjoined questions: e.g. "Can an eagle fly and does it have wings?"
         q_clean = question.strip()
         sub_questions: list[str] = []
-        if "?" in q_clean[:-1]:
+        supplied_queries: list[ParsedQuery | None] = []
+        if payload_supplied and parsed_queries and len(parsed_queries) > 1:
+            sub_questions = list(question_parts or [])
+            supplied_queries = list(parsed_queries)
+        elif not payload_supplied and "?" in q_clean[:-1]:
             # Multiple questions with question marks: "Can an eagle fly? Does it have wings?"
             sub_questions = [
                 s.strip() for s in re.split(r"\?\s*", q_clean) if s.strip()
             ]
-        elif re.search(
+        elif not payload_supplied and re.search(
             r",?\s+and\s+(?=(?:is|are|was|were|do|does|did|can|could|will|would|has|have|what|who|where|how|why)\b)",
             q_clean,
             flags=re.IGNORECASE,
@@ -1958,43 +1537,51 @@ class LearningEngine:
 
         if len(sub_questions) > 1:
             sub_results: list[InferenceResult] = []
-            for sq in sub_questions:
+            for index, sq in enumerate(sub_questions):
                 sq_clean = sq.strip()
-                is_q = (
-                    sq_clean.endswith("?")
-                    or SimpleParser.parse_question(sq_clean) is not None
-                    or SimpleParser.parse_question(f"{sq_clean}?") is not None
-                    or sq_clean.lower().startswith(
-                        (
-                            "what",
-                            "who",
-                            "where",
-                            "how",
-                            "why",
-                            "which",
-                            "is",
-                            "are",
-                            "do",
-                            "does",
-                            "did",
-                            "can",
-                            "could",
-                            "will",
-                            "would",
-                            "has",
-                            "have",
-                            "calculate",
+                parsed_part = (
+                    supplied_queries[index]
+                    if index < len(supplied_queries)
+                    else None
+                )
+                if payload_supplied:
+                    is_q = parsed_part is not None or sq_clean.endswith("?")
+                else:
+                    is_q = (
+                        sq_clean.endswith("?")
+                        or self.parser.parse_question(sq_clean) is not None
+                        or self.parser.parse_question(f"{sq_clean}?") is not None
+                        or sq_clean.lower().startswith(
+                            (
+                                "what",
+                                "who",
+                                "where",
+                                "how",
+                                "why",
+                                "which",
+                                "is",
+                                "are",
+                                "do",
+                                "does",
+                                "did",
+                                "can",
+                                "could",
+                                "will",
+                                "would",
+                                "has",
+                                "have",
+                                "calculate",
+                            )
                         )
                     )
-                )
-                if not is_q and SimpleParser.parse_statement(sq_clean):
+                if not is_q and self.parser.parse_statement(sq_clean):
                     learn_res = self.learn(sq_clean)
                     sub_results.append(
                         InferenceResult(
                             query=sq_clean,
                             status=BeliefStatus.SUPPORTED,
                             answer=learn_res.message,
-                            confidence=1.0,
+                confidence=self.parser.POLICY.confidence.certain,
                             evidence=[
                                 f"Learned: {', '.join(learn_res.relations_created or [learn_res.message])}"
                             ],
@@ -2004,13 +1591,25 @@ class LearningEngine:
                         )
                     )
                 else:
-                    sq_resolved = SimpleParser.resolve_anaphora(
-                        sq_clean, self.last_subject, self.last_object
+                    sq_resolved = (
+                        sq_clean
+                        if payload_supplied
+                        else self.parser.resolve_anaphora(
+                            sq_clean, self.last_subject, self.last_object
+                        )
                     )
                     sq_formatted = (
                         sq_resolved if sq_resolved.endswith("?") else f"{sq_resolved}?"
                     )
-                    sub_res = self.ask(sq_formatted)
+                    if payload_supplied:
+                        sub_res = self.ask(
+                            sq_formatted,
+                            parsed_query=parsed_part,
+                            parsed_queries=[],
+                            question_parts=[],
+                        )
+                    else:
+                        sub_res = self.ask(sq_formatted)
                     sub_results.append(sub_res)
 
             all_bool = all(isinstance(sr.answer, bool) for sr in sub_results)
@@ -2073,31 +1672,38 @@ class LearningEngine:
         # Resolve anaphora using dialogue context
         resolved_q = self.dialogue.resolve_anaphora_in_text(question)
         if resolved_q == question:
-            resolved_q = SimpleParser.resolve_anaphora(
+            resolved_q = self.parser.resolve_anaphora(
                 question, self.last_subject, self.last_object
             )
         known = {c.name.lower() for c in self.memory.list_concepts()}
 
-        # 1. Check dynamic Construction Grammar in SQLite FIRST (zero hardcoded regexes)
-        parsed = ConstructionEngine.parse_question_with_constructions(
-            resolved_q, self.memory
-        )
-        if not parsed:
-            parsed = ConstructionEngine.parse_question_with_constructions(
-                question, self.memory
+        if payload_supplied:
+            parsed = parsed_query or next(
+                (candidate for candidate in (parsed_queries or []) if candidate),
+                None,
             )
-        # 2. Fallback to SimpleParser for specialized queries (e.g. temporal ODEs) if needed
-        if not parsed:
-            parsed = SimpleParser.parse_question(resolved_q, known_concepts=known)
-        if not parsed:
-            parsed = SimpleParser.parse_question(question, known_concepts=known)
+        else:
+            # 1. Check dynamic Construction Grammar in SQLite FIRST (zero hardcoded regexes)
+            catalog = list(self.parser.CONSTRUCTIONS) + self.memory.list_constructions()
+            parsed = self.parser.CONSTRUCTION_ENGINE.parse_question_from_catalog_with_procedural(
+                resolved_q, catalog
+            )
+            if not parsed:
+                parsed = self.parser.CONSTRUCTION_ENGINE.parse_question_from_catalog_with_procedural(
+                    question, catalog
+                )
+            # 2. Fallback to SimpleParser for specialized queries (e.g. temporal ODEs) if needed
+            if not parsed:
+                parsed = self.parser.parse_question(resolved_q, known_concepts=known)
+            if not parsed:
+                parsed = self.parser.parse_question(question, known_concepts=known)
 
         if not parsed:
             return InferenceResult(
                 query=question,
                 status=BeliefStatus.UNKNOWN,
                 answer=None,
-                confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                 evidence=[],
                 trace=[f"Question pattern not recognized: '{question}'"],
             )
@@ -2106,13 +1712,13 @@ class LearningEngine:
 
         # Update dialogue focus if valid concept
         if (
-            SimpleParser.is_valid_concept(subj)
+            self.parser.is_valid_concept(subj)
             and not pred.startswith("__")
             and pred != "little"
-        ) or (pred == "__definition__" and SimpleParser.is_valid_concept(subj)):
+        ) or (pred == "__definition__" and self.parser.is_valid_concept(subj)):
             self.last_subject = subj
             self.dialogue.register_entity(name=subj, role="subject")
-        if isinstance(target, str) and SimpleParser.is_valid_concept(target):
+        if isinstance(target, str) and self.parser.is_valid_concept(target):
             self.last_object = target
             self.dialogue.register_entity(name=target, role="object")
 
@@ -2123,7 +1729,7 @@ class LearningEngine:
             if not name and user_c:
                 rels = self.memory.get_relations(subject_id=user_c.id)
                 for r in rels:
-                    if r.predicate in ("has_name", "name", "is"):
+                    if r.predicate in self.semantic.identity:
                         target_c = self.memory.get_concept(r.object_id)
                         if target_c:
                             name = target_c.name.capitalize()
@@ -2133,7 +1739,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.SUPPORTED,
                     answer=f"Your name is {name}.",
-                    confidence=1.0,
+                confidence=self.parser.POLICY.confidence.certain,
                     evidence=[f"User profile in persistent memory: name={name}"],
                     trace=["Retrieved user identity attribute from concept 'user'"],
                 )
@@ -2142,7 +1748,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer="I do not know your name yet. What should I call you?",
-                    confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                     evidence=["User profile has no name recorded"],
                     trace=["Concept 'user' has no stored 'name' attribute"],
                 )
@@ -2153,7 +1759,7 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.SUPPORTED,
                 answer="My name is LITTLE (Lightweight In-memory Transitive & Temporal Learning Engine).",
-                confidence=1.0,
+                confidence=self.parser.POLICY.confidence.certain,
                 evidence=["Self-identity specification"],
                 trace=["Dialogue self-knowledge retrieval"],
             )
@@ -2164,7 +1770,7 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.SUPPORTED,
                 answer="Hello! I am LITTLE (Lightweight In-memory Transitive & Temporal Learning Engine). How can I help you reason, compute, or learn today?",
-                confidence=1.0,
+                confidence=self.parser.POLICY.confidence.certain,
                 evidence=["Conversational greeting acknowledged"],
                 trace=["Dialogue interaction"],
             )
@@ -2174,7 +1780,7 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.SUPPORTED,
                 answer="You're very welcome! I am always here to reason, learn new concepts, and compute with zero hallucination.",
-                confidence=1.0,
+                confidence=self.parser.POLICY.confidence.certain,
                 evidence=["Conversational pleasantry acknowledged"],
                 trace=["Dialogue interaction"],
             )
@@ -2184,7 +1790,7 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.SUPPORTED,
                 answer="I am operating at 100% nominal efficiency. Continuous memory is active, ODE states are stable, and my inference engine is ready to reason.",
-                confidence=1.0,
+                confidence=self.parser.POLICY.confidence.certain,
                 evidence=["Architecture operational status normal"],
                 trace=["LITTLE Cognitive Architecture v0.1.0"],
             )
@@ -2194,7 +1800,7 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.SUPPORTED,
                 answer="Thank you! I strive for deterministic accuracy, continuous learning, and multi-hop logical precision.",
-                confidence=1.0,
+                confidence=self.parser.POLICY.confidence.certain,
                 evidence=["Positive reinforcement received"],
                 trace=["Dialogue interaction"],
             )
@@ -2205,15 +1811,15 @@ class LearningEngine:
                 r
                 for r in relations
                 if r.predicate
-                in (
-                    "is_a",
-                    "located_in",
-                    "has",
-                    "can",
-                    "made_of",
-                    "lives_in",
-                    "part_of",
-                )
+                in {
+                    self.semantic.taxonomy,
+                    self.semantic.location,
+                    self.semantic.whole,
+                    self.semantic.capability,
+                    self.semantic.composition,
+                    self.semantic.habitat,
+                    self.semantic.part,
+                }
                 and r.weight_positive > r.weight_negative
             ]
             import random
@@ -2231,19 +1837,19 @@ class LearningEngine:
                 p = selected_rel.predicate
                 s_art = "an" if s_n and s_n[0] in "aeiou" else "a"
                 o_art = "an" if o_n and o_n[0] in "aeiou" else "a"
-                if p == "is_a":
+                if p == self.semantic.taxonomy:
                     fact_str = f"Here is a verified fact from my memory: {s_art.capitalize()} {s_n} is {o_art} {o_n}."
-                elif p == "located_in":
+                elif p == self.semantic.location:
                     fact_str = f"Here is a verified fact from my memory: {s_n.capitalize()} is located in {o_n.capitalize()}."
-                elif p == "has":
+                elif p == self.semantic.whole:
                     fact_str = f"Here is a verified fact from my memory: {s_n.capitalize()} has {o_art} {o_n}."
-                elif p == "can":
+                elif p == self.semantic.capability:
                     fact_str = f"Here is a verified fact from my memory: {s_art.capitalize()} {s_n} can {o_n}."
-                elif p == "made_of":
+                elif p == self.semantic.composition:
                     fact_str = f"Here is a verified fact from my memory: {s_n.capitalize()} is made of {o_n}."
-                elif p == "lives_in":
+                elif p == self.semantic.habitat:
                     fact_str = f"Here is a verified fact from my memory: {s_art.capitalize()} {s_n} lives in {o_n}."
-                elif p == "part_of":
+                elif p == self.semantic.part:
                     fact_str = f"Here is a verified fact from my memory: {s_art.capitalize()} {s_n} is part of {o_art} {o_n}."
                 else:
                     fact_str = (
@@ -2254,7 +1860,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.SUPPORTED,
                     answer=fact_str,
-                    confidence=1.0,
+                confidence=self.parser.POLICY.confidence.certain,
                     evidence=[f"{s_n} {p} {o_n}"],
                     trace=["Retrieved verified relation from semantic memory"],
                 )
@@ -2276,7 +1882,7 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.SUPPORTED,
                 answer=bio,
-                confidence=1.0,
+                confidence=self.parser.POLICY.confidence.certain,
                 evidence=["Self-identity and capabilities specification"],
                 trace=["LITTLE Cognitive Architecture v0.1.0"],
             )
@@ -2292,7 +1898,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.SUPPORTED,
                     answer=f"{capitalized} is you! You introduced yourself as {capitalized}.",
-                    confidence=1.0,
+                confidence=self.parser.POLICY.confidence.certain,
                     evidence=[f"User profile identity: name={user_name}"],
                     trace=["Matched query concept with recorded user name"],
                 )
@@ -2302,7 +1908,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.SUPPORTED,
                     answer="I am LITTLE (Lightweight In-memory Transitive & Temporal Learning Engine), a continuous-learning cognitive architecture.",
-                    confidence=1.0,
+                confidence=self.parser.POLICY.confidence.certain,
                     evidence=["Self-identity specification"],
                     trace=["Self-concept definition retrieval"],
                 )
@@ -2313,7 +1919,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer=None,
-                    confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                     evidence=[],
                     trace=[f"Concept '{subj}' is unknown in memory."],
                 )
@@ -2323,17 +1929,20 @@ class LearningEngine:
             is_a_rels = [
                 self.memory.get_concept(r.object_id).name
                 for r in out_rels
-                if r.predicate == "is_a" and self.memory.get_concept(r.object_id)
+                if r.predicate == self.semantic.taxonomy
+                and self.memory.get_concept(r.object_id)
             ]
             part_of_rels = [
                 self.memory.get_concept(r.object_id).name
                 for r in out_rels
-                if r.predicate == "part_of" and self.memory.get_concept(r.object_id)
+                if r.predicate == self.semantic.part
+                and self.memory.get_concept(r.object_id)
             ]
             has_rels = [
                 self.memory.get_concept(r.object_id).name
                 for r in out_rels
-                if r.predicate == "has" and self.memory.get_concept(r.object_id)
+                if r.predicate == self.semantic.whole
+                and self.memory.get_concept(r.object_id)
             ]
             disjoint_rels = [
                 self.memory.get_concept(r.object_id).name
@@ -2346,7 +1955,8 @@ class LearningEngine:
             parts = [
                 self.memory.get_concept(r.subject_id).name
                 for r in in_rels
-                if r.predicate == "part_of" and self.memory.get_concept(r.subject_id)
+                if r.predicate == self.semantic.part
+                and self.memory.get_concept(r.subject_id)
             ]
 
             if is_a_rels:
@@ -2382,6 +1992,18 @@ class LearningEngine:
                 trace=[f"Knowledge graph query for concept ID: {concept.id}"],
             )
 
+        if target is None:
+            return InferenceResult(
+                query=question,
+                status=BeliefStatus.UNKNOWN,
+                answer=None,
+                confidence=self.parser.POLICY.confidence.unknown,
+                evidence=[],
+                trace=[
+                    f"Question handler '{pred}' did not provide a graph target."
+                ],
+            )
+
         # Procedural Mathematics query:
         if pred == "__math__":
             skill = self.memory.get_skill(subj)
@@ -2390,7 +2012,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer=None,
-                    confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                     evidence=[],
                     trace=[f"Skill '{subj}' is not registered in procedural memory."],
                 )
@@ -2401,7 +2023,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.SUPPORTED,
                     answer=exec_res.result,
-                    confidence=1.0,
+                confidence=self.parser.POLICY.confidence.certain,
                     evidence=[
                         f"Evaluated skill {subj}({arg_repr}) = {exec_res.result}"
                     ],
@@ -2411,25 +2033,27 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.REFUTED,
                 answer=None,
-                confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                 evidence=[],
                 trace=[f"Execution failed: {exec_res.error}"],
             )
 
         # Continuous Dynamics queries:
         if pred in ("__temporal_color__", "__temporal_condition__"):
-            sec_mult = {
-                "second": 1.0,
-                "seconds": 1.0,
-                "minute": 60.0,
-                "minutes": 60.0,
-                "hour": 3600.0,
-                "hours": 3600.0,
-                "day": 86400.0,
-                "days": 86400.0,
-            }
             val, unit = target
-            dt = val * sec_mult.get(unit, 1.0)
+            conversion = self.unit_conversions.convert(float(val), unit, "s")
+            if conversion.status != "SOLVED":
+                return InferenceResult(
+                    query=question,
+                    status=BeliefStatus.UNKNOWN,
+                    answer=None,
+                    confidence=self.parser.POLICY.confidence.unknown,
+                    evidence=[],
+                    trace=[
+                        f"Unable to convert temporal unit '{unit}' to seconds."
+                    ],
+                )
+            dt = float(conversion.result)
 
             concept = self.memory.get_concept(subj)
             if not concept:
@@ -2437,7 +2061,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer=None,
-                    confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                     evidence=[],
                     trace=[f"Concept '{subj}' is unknown."],
                 )
@@ -2457,7 +2081,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.SUPPORTED,
                     answer=perceived_color,
-                    confidence=0.95,
+                confidence=self.parser.POLICY.confidence.derived,
                     evidence=[
                         f"ODE state at dt={dt:.0f}s: oxidation={evolved.oxidation:.2f}, tau={evolved.tau_seconds:.0f}s -> {perceived_color}"
                     ],
@@ -2474,7 +2098,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.SUPPORTED if is_fresh else BeliefStatus.REFUTED,
                     answer=is_fresh,
-                    confidence=0.95,
+                confidence=self.parser.POLICY.confidence.derived,
                     evidence=[
                         f"ODE state at dt={dt:.0f}s: freshness={evolved.freshness:.2f} -> {condition}"
                     ],
@@ -2485,19 +2109,19 @@ class LearningEngine:
                 )
 
         # Property boolean query: "Is the apple red?", "Is it red?"
-        if pred == "color" and target != "?":
+        if pred == self.semantic.color and target != "?":
             concept = self.memory.get_concept(subj)
             if not concept:
                 return InferenceResult(
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer=None,
-                    confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                     evidence=[],
                     trace=[f"Concept '{subj}' is unknown."],
                 )
             attrs = self.inference.get_inherited_attributes(subj)
-            actual_color = attrs.get("color")
+            actual_color = attrs.get(self.semantic.color)
             if actual_color:
                 actual_list = (
                     [c.lower() for c in actual_color]
@@ -2510,7 +2134,7 @@ class LearningEngine:
                         query=question,
                         status=BeliefStatus.SUPPORTED,
                         answer=True,
-                        confidence=0.95,
+                confidence=self.parser.POLICY.confidence.derived,
                         evidence=[f"{subj} color is {target_str}"],
                         trace=[f"Matched property 'color'={target_str}"],
                     )
@@ -2519,7 +2143,7 @@ class LearningEngine:
                         query=question,
                         status=BeliefStatus.REFUTED,
                         answer=False,
-                        confidence=0.95,
+                confidence=self.parser.POLICY.confidence.derived,
                         evidence=[
                             f"{subj} color is {', '.join(actual_list)}, not {target_str}"
                         ],
@@ -2531,32 +2155,32 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.UNKNOWN,
                 answer=None,
-                confidence=0.1,
+                confidence=self.parser.POLICY.confidence.low,
                 evidence=[],
                 trace=[f"No color recorded for '{subj}'."],
             )
 
         # Special query: "What color is X?"
-        if pred == "color" and target == "?":
+        if pred == self.semantic.color and target == "?":
             concept = self.memory.get_concept(subj)
             if not concept:
                 return InferenceResult(
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer=None,
-                    confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                     evidence=[],
                     trace=[f"Concept '{subj}' is unknown."],
                 )
             attrs = self.inference.get_inherited_attributes(subj)
-            color = attrs.get("color")
+            color = attrs.get(self.semantic.color)
             if color:
                 val_str = ", ".join(color) if isinstance(color, list) else str(color)
                 return InferenceResult(
                     query=question,
                     status=BeliefStatus.SUPPORTED,
                     answer=f"The color of {subj} is {val_str}.",
-                    confidence=0.95,
+                confidence=self.parser.POLICY.confidence.derived,
                     evidence=[f"{subj} color is {val_str}"],
                     trace=[f"Retrieved property 'color' for '{subj}': {val_str}"],
                 )
@@ -2564,20 +2188,20 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.UNKNOWN,
                 answer=None,
-                confidence=0.1,
+                confidence=self.parser.POLICY.confidence.low,
                 evidence=[],
                 trace=[f"No color property recorded for '{subj}'."],
             )
 
         # WH-Location query: "Where is X?", "Where is X located?"
-        if pred == "located_in" and target == "?":
+        if pred == self.semantic.location and target == "?":
             concept = self.memory.get_concept(subj)
             if not concept:
                 return InferenceResult(
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer=None,
-                    confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                     evidence=[],
                     trace=[f"Concept '{subj}' is unknown in memory."],
                 )
@@ -2586,7 +2210,7 @@ class LearningEngine:
             visited: set[str] = {curr_id}
             while True:
                 rels = self.memory.get_relations(
-                    subject_id=curr_id, predicate="located_in"
+                    subject_id=curr_id, predicate=self.semantic.location
                 )
                 pos_rels = [
                     r
@@ -2608,7 +2232,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.SUPPORTED,
                     answer=ans_str,
-                    confidence=1.0,
+                confidence=self.parser.POLICY.confidence.certain,
                     evidence=[f"{subj} located_in {' -> '.join(loc_names)}"],
                     trace=["Resolved location hierarchy in semantic memory"],
                 )
@@ -2616,28 +2240,30 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.UNKNOWN,
                 answer=None,
-                confidence=0.1,
+                confidence=self.parser.POLICY.confidence.low,
                 evidence=[],
                 trace=[f"No location recorded for '{subj}'."],
             )
 
         # WH-Habitat query: "Where does X live?"
-        if pred == "lives_in" and target == "?":
+        if pred == self.semantic.habitat and target == "?":
             concept = self.memory.get_concept(subj)
             if not concept:
                 return InferenceResult(
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer=None,
-                    confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                     evidence=[],
                     trace=[f"Concept '{subj}' is unknown."],
                 )
             cand_ids = [concept.id] + self.inference.get_ancestor_ids(
-                concept.id, predicate="is_a"
+                concept.id, predicate=self.semantic.taxonomy
             )
             for cid in cand_ids:
-                rels = self.memory.get_relations(subject_id=cid, predicate="lives_in")
+                rels = self.memory.get_relations(
+                    subject_id=cid, predicate=self.semantic.habitat
+                )
                 pos_rels = [r for r in rels if r.weight_positive > r.weight_negative]
                 if pos_rels:
                     obj_c = self.memory.get_concept(pos_rels[0].object_id)
@@ -2654,7 +2280,7 @@ class LearningEngine:
                             query=question,
                             status=BeliefStatus.SUPPORTED,
                             answer=ans_str,
-                            confidence=0.95,
+                confidence=self.parser.POLICY.confidence.derived,
                             evidence=[f"{concept.name} lives_in {obj_c.name}{anc_str}"],
                             trace=[
                                 f"Habitat resolved via knowledge graph: {pos_rels[0].id}"
@@ -2664,28 +2290,30 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.UNKNOWN,
                 answer=None,
-                confidence=0.1,
+                confidence=self.parser.POLICY.confidence.low,
                 evidence=[],
                 trace=[f"No habitat recorded for '{subj}'."],
             )
 
         # WH-Diet query: "What does X eat?"
-        if pred == "eats" and target == "?":
+        if pred == self.semantic.diet and target == "?":
             concept = self.memory.get_concept(subj)
             if not concept:
                 return InferenceResult(
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer=None,
-                    confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                     evidence=[],
                     trace=[f"Concept '{subj}' is unknown."],
                 )
             cand_ids = [concept.id] + self.inference.get_ancestor_ids(
-                concept.id, predicate="is_a"
+                concept.id, predicate=self.semantic.taxonomy
             )
             for cid in cand_ids:
-                rels = self.memory.get_relations(subject_id=cid, predicate="eats")
+                rels = self.memory.get_relations(
+                    subject_id=cid, predicate=self.semantic.diet
+                )
                 pos_rels = [r for r in rels if r.weight_positive > r.weight_negative]
                 if pos_rels:
                     obj_c = self.memory.get_concept(pos_rels[0].object_id)
@@ -2702,7 +2330,7 @@ class LearningEngine:
                             query=question,
                             status=BeliefStatus.SUPPORTED,
                             answer=ans_str,
-                            confidence=0.95,
+                confidence=self.parser.POLICY.confidence.derived,
                             evidence=[f"{concept.name} eats {obj_c.name}"],
                             trace=[
                                 f"Diet resolved via knowledge graph: {pos_rels[0].id}"
@@ -2712,29 +2340,31 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.UNKNOWN,
                 answer=None,
-                confidence=0.1,
+                confidence=self.parser.POLICY.confidence.low,
                 evidence=[],
                 trace=[f"No diet recorded for '{subj}'."],
             )
 
         # WH-Capability query: "What can X do?"
-        if pred == "can" and target == "?":
+        if pred == self.semantic.capability and target == "?":
             concept = self.memory.get_concept(subj)
             if not concept:
                 return InferenceResult(
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer=None,
-                    confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                     evidence=[],
                     trace=[f"Concept '{subj}' is unknown."],
                 )
             cand_ids = [concept.id] + self.inference.get_ancestor_ids(
-                concept.id, predicate="is_a"
+                concept.id, predicate=self.semantic.taxonomy
             )
             actions: list[str] = []
             for cid in cand_ids:
-                rels = self.memory.get_relations(subject_id=cid, predicate="can")
+                rels = self.memory.get_relations(
+                    subject_id=cid, predicate=self.semantic.capability
+                )
                 for r in rels:
                     if r.weight_positive > r.weight_negative:
                         obj_c = self.memory.get_concept(r.object_id)
@@ -2747,7 +2377,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.SUPPORTED,
                     answer=ans_str,
-                    confidence=0.95,
+                confidence=self.parser.POLICY.confidence.derived,
                     evidence=[f"{subj} can {', '.join(actions)}"],
                     trace=["Resolved capabilities from concept and ancestors"],
                 )
@@ -2755,24 +2385,26 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.UNKNOWN,
                 answer=None,
-                confidence=0.1,
+                confidence=self.parser.POLICY.confidence.low,
                 evidence=[],
                 trace=[f"No capabilities recorded for '{subj}'."],
             )
 
         # WH-Material query: "What is X made of?"
-        if pred == "made_of" and target == "?":
+        if pred == self.semantic.composition and target == "?":
             concept = self.memory.get_concept(subj)
             if not concept:
                 return InferenceResult(
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer=None,
-                    confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                     evidence=[],
                     trace=[f"Concept '{subj}' is unknown."],
                 )
-            rels = self.memory.get_relations(subject_id=concept.id, predicate="made_of")
+            rels = self.memory.get_relations(
+                subject_id=concept.id, predicate=self.semantic.composition
+            )
             pos_rels = [r for r in rels if r.weight_positive > r.weight_negative]
             if pos_rels:
                 obj_c = self.memory.get_concept(pos_rels[0].object_id)
@@ -2782,7 +2414,7 @@ class LearningEngine:
                         query=question,
                         status=BeliefStatus.SUPPORTED,
                         answer=ans_str,
-                        confidence=0.95,
+                confidence=self.parser.POLICY.confidence.derived,
                         evidence=[f"{subj} made_of {obj_c.name}"],
                         trace=["Resolved composition from memory"],
                     )
@@ -2790,34 +2422,38 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.UNKNOWN,
                 answer=None,
-                confidence=0.1,
+                confidence=self.parser.POLICY.confidence.low,
                 evidence=[],
                 trace=[f"No composition recorded for '{subj}'."],
             )
 
         # WH-Features/Parts query: "What does X have?", "What parts does X have?"
-        if pred == "has" and target == "?":
+        if pred == self.semantic.whole and target == "?":
             concept = self.memory.get_concept(subj)
             if not concept:
                 return InferenceResult(
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer=None,
-                    confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                     evidence=[],
                     trace=[f"Concept '{subj}' is unknown."],
                 )
             cand_ids = [concept.id] + self.inference.get_ancestor_ids(
-                concept.id, predicate="is_a"
+                concept.id, predicate=self.semantic.taxonomy
             )
             has_items: list[str] = []
             for cid in cand_ids:
-                for r in self.memory.get_relations(subject_id=cid, predicate="has"):
+                for r in self.memory.get_relations(
+                    subject_id=cid, predicate=self.semantic.whole
+                ):
                     if r.weight_positive > r.weight_negative:
                         obj_c = self.memory.get_concept(r.object_id)
                         if obj_c and obj_c.name not in has_items:
                             has_items.append(obj_c.name)
-                for r in self.memory.get_relations(object_id=cid, predicate="part_of"):
+                for r in self.memory.get_relations(
+                    object_id=cid, predicate=self.semantic.part
+                ):
                     if r.weight_positive > r.weight_negative:
                         sc = self.memory.get_concept(r.subject_id)
                         if sc and sc.name not in has_items:
@@ -2832,7 +2468,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.SUPPORTED,
                     answer=ans_str,
-                    confidence=0.95,
+                confidence=self.parser.POLICY.confidence.derived,
                     evidence=[f"{subj} has {', '.join(has_items)}"],
                     trace=[
                         "Resolved features and parts via semantic memory and duality"
@@ -2842,29 +2478,31 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.UNKNOWN,
                 answer=None,
-                confidence=0.1,
+                confidence=self.parser.POLICY.confidence.low,
                 evidence=[],
                 trace=[f"No parts or features recorded for '{subj}'."],
             )
 
         # WH-Purpose query: "What is X used for?"
-        if pred == "used_for" and target == "?":
+        if pred == self.semantic.purpose and target == "?":
             concept = self.memory.get_concept(subj)
             if not concept:
                 return InferenceResult(
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer=None,
-                    confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                     evidence=[],
                     trace=[f"Concept '{subj}' is unknown."],
                 )
             cand_ids = [concept.id] + self.inference.get_ancestor_ids(
-                concept.id, predicate="is_a"
+                concept.id, predicate=self.semantic.taxonomy
             )
             purposes: list[str] = []
             for cid in cand_ids:
-                rels = self.memory.get_relations(subject_id=cid, predicate="used_for")
+                rels = self.memory.get_relations(
+                    subject_id=cid, predicate=self.semantic.purpose
+                )
                 for r in rels:
                     if r.weight_positive > r.weight_negative:
                         obj_c = self.memory.get_concept(r.object_id)
@@ -2877,7 +2515,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.SUPPORTED,
                     answer=ans_str,
-                    confidence=0.95,
+                confidence=self.parser.POLICY.confidence.derived,
                     evidence=[f"{subj} used_for {', '.join(purposes)}"],
                     trace=[
                         "Resolved usage and purpose via semantic memory and inheritance"
@@ -2887,29 +2525,31 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.UNKNOWN,
                 answer=None,
-                confidence=0.1,
+                confidence=self.parser.POLICY.confidence.low,
                 evidence=[],
                 trace=[f"No purpose or usage recorded for '{subj}'."],
             )
 
         # WH-Causality query: "What does X cause?"
-        if pred == "causes" and target == "?":
+        if pred == self.semantic.causality and target == "?":
             concept = self.memory.get_concept(subj)
             if not concept:
                 return InferenceResult(
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer=None,
-                    confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                     evidence=[],
                     trace=[f"Concept '{subj}' is unknown."],
                 )
             cand_ids = [concept.id] + self.inference.get_ancestor_ids(
-                concept.id, predicate="is_a"
+                concept.id, predicate=self.semantic.taxonomy
             )
             effects: list[str] = []
             for cid in cand_ids:
-                rels = self.memory.get_relations(subject_id=cid, predicate="causes")
+                rels = self.memory.get_relations(
+                    subject_id=cid, predicate=self.semantic.causality
+                )
                 for r in rels:
                     if r.weight_positive > r.weight_negative:
                         obj_c = self.memory.get_concept(r.object_id)
@@ -2921,7 +2561,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.SUPPORTED,
                     answer=ans_str,
-                    confidence=0.95,
+                confidence=self.parser.POLICY.confidence.derived,
                     evidence=[f"{subj} causes {', '.join(effects)}"],
                     trace=["Resolved causality from semantic memory"],
                 )
@@ -2929,24 +2569,30 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.UNKNOWN,
                 answer=None,
-                confidence=0.1,
+                confidence=self.parser.POLICY.confidence.low,
                 evidence=[],
                 trace=[f"No effects recorded for '{subj}'."],
             )
 
         # WH-Reverse Causality: "What causes X?"
-        if subj == "?" and pred == "causes" and isinstance(target, str):
+        if (
+            subj == "?"
+            and pred == self.semantic.causality
+            and isinstance(target, str)
+        ):
             concept = self.memory.get_concept(target)
             if not concept:
                 return InferenceResult(
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer=None,
-                    confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                     evidence=[],
                     trace=[f"Concept '{target}' is unknown."],
                 )
-            rels = self.memory.get_relations(object_id=concept.id, predicate="causes")
+            rels = self.memory.get_relations(
+                object_id=concept.id, predicate=self.semantic.causality
+            )
             causes: list[str] = []
             for r in rels:
                 if r.weight_positive > r.weight_negative:
@@ -2961,7 +2607,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.SUPPORTED,
                     answer=ans_str,
-                    confidence=0.95,
+                confidence=self.parser.POLICY.confidence.derived,
                     evidence=[f"{', '.join(causes)} causes {target}"],
                     trace=["Resolved causes from semantic memory"],
                 )
@@ -2969,30 +2615,30 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.UNKNOWN,
                 answer=None,
-                confidence=0.1,
+                confidence=self.parser.POLICY.confidence.low,
                 evidence=[],
                 trace=[f"No causes recorded for '{target}'."],
             )
 
         # WH-Properties query: "What properties does X have?"
-        if pred == "has_property" and target == "?":
+        if pred == self.semantic.property and target == "?":
             concept = self.memory.get_concept(subj)
             if not concept:
                 return InferenceResult(
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer=None,
-                    confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                     evidence=[],
                     trace=[f"Concept '{subj}' is unknown."],
                 )
             cand_ids = [concept.id] + self.inference.get_ancestor_ids(
-                concept.id, predicate="is_a"
+                concept.id, predicate=self.semantic.taxonomy
             )
             props: list[str] = []
             for cid in cand_ids:
                 rels = self.memory.get_relations(
-                    subject_id=cid, predicate="has_property"
+                    subject_id=cid, predicate=self.semantic.property
                 )
                 for r in rels:
                     if r.weight_positive > r.weight_negative:
@@ -3005,7 +2651,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.SUPPORTED,
                     answer=ans_str,
-                    confidence=0.95,
+                confidence=self.parser.POLICY.confidence.derived,
                     evidence=[f"{subj} has_property {', '.join(props)}"],
                     trace=["Resolved properties from semantic memory"],
                 )
@@ -3013,7 +2659,7 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.UNKNOWN,
                 answer=None,
-                confidence=0.1,
+                confidence=self.parser.POLICY.confidence.low,
                 evidence=[],
                 trace=[f"No properties recorded for '{subj}'."],
             )
@@ -3021,7 +2667,11 @@ class LearningEngine:
         # Why-Questions:
         # 1. Why is X a Y?
         if pred == "__why_is_a__":
-            res = self.inference.infer(subject=subj, predicate="is_a", target=target)
+            res = self.inference.infer(
+                subject=subj,
+                predicate=self.semantic.taxonomy,
+                target=target,
+            )
             if res.status == BeliefStatus.SUPPORTED:
                 trans_step = next(
                     (t for t in res.trace if "Transitive path discovered" in t), None
@@ -3062,7 +2712,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer=f"I do not know whether {subj} is a {target} yet, so I cannot deduce a proof.",
-                    confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                     evidence=[],
                     trace=res.trace,
                 )
@@ -3070,7 +2720,7 @@ class LearningEngine:
         # 2. Why is X located in Y?
         if pred == "__why_located_in__":
             res = self.inference.infer(
-                subject=subj, predicate="located_in", target=target
+                subject=subj, predicate=self.semantic.location, target=target
             )
             if res.status == BeliefStatus.SUPPORTED:
                 trans_step = next(
@@ -3101,7 +2751,11 @@ class LearningEngine:
 
         # 3. Why is X not a Y?
         if pred == "__why_not__":
-            res = self.inference.infer(subject=subj, predicate="is_a", target=target)
+            res = self.inference.infer(
+                subject=subj,
+                predicate=self.semantic.taxonomy,
+                target=target,
+            )
             if res.status == BeliefStatus.REFUTED:
                 disj_step = next(
                     (t for t in res.trace if "Disjoint constraint triggered" in t), None
@@ -3125,7 +2779,7 @@ class LearningEngine:
                 query=question,
                 status=BeliefStatus.UNKNOWN,
                 answer=f"I do not have evidence that {subj} is incompatible with {target}.",
-                confidence=0.0,
+                confidence=self.parser.POLICY.confidence.unknown,
                 evidence=[],
                 trace=res.trace,
             )

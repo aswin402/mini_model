@@ -1,0 +1,293 @@
+{
+  "relation_types": [
+    {
+      "name": "is_a",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept"
+      ],
+      "transitive": true,
+      "acyclic": true,
+      "primary": true,
+      "axis": "taxonomy"
+    },
+    {
+      "name": "instance_of",
+      "domain": [
+        "entity"
+      ],
+      "range": [
+        "concept"
+      ],
+      "transitive": true,
+      "axis": "taxonomy"
+    },
+    {
+      "name": "subclass_of",
+      "domain": [
+        "concept"
+      ],
+      "range": [
+        "concept"
+      ],
+      "transitive": true,
+      "acyclic": true,
+      "axis": "taxonomy"
+    },
+    {
+      "name": "part_of",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "entity"
+      ],
+      "inverse": "has_part",
+      "acyclic": true,
+      "transitive": true,
+      "axis": "mereology"
+    },
+    {
+      "name": "has_part",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "entity"
+      ],
+      "inverse": "part_of",
+      "axis": "mereology"
+    },
+    {
+      "name": "has",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "entity"
+      ],
+      "axis": "mereology"
+    },
+    {
+      "name": "disjoint_with",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "entity"
+      ],
+      "symmetric": true,
+      "disjoint": true,
+      "axis": "invariants"
+    },
+    {
+      "name": "cannot_be",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "entity"
+      ],
+      "symmetric": true,
+      "disjoint": true,
+      "axis": "invariants"
+    },
+    {
+      "name": "different_from",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "entity"
+      ],
+      "symmetric": true,
+      "disjoint": true,
+      "axis": "invariants"
+    },
+    {
+      "name": "can",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "entity",
+        "skill"
+      ],
+      "axis": "procedural"
+    },
+    {
+      "name": "used_for",
+      "domain": [
+        "concept",
+        "entity",
+        "skill"
+      ],
+      "range": [
+        "concept",
+        "entity"
+      ],
+      "axis": "procedural"
+    },
+    {
+      "name": "causes",
+      "domain": [
+        "concept",
+        "entity",
+        "event"
+      ],
+      "range": [
+        "concept",
+        "entity",
+        "event"
+      ],
+      "axis": "procedural"
+    },
+    {
+      "name": "eats",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "entity"
+      ],
+      "axis": "procedural"
+    },
+    {
+      "name": "lives_in",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "entity"
+      ],
+      "axis": "procedural"
+    },
+    {
+      "name": "hunts",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "entity"
+      ],
+      "axis": "procedural"
+    },
+    {
+      "name": "located_in",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "entity"
+      ],
+      "transitive": true
+    },
+    {
+      "name": "larger_than",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "entity"
+      ],
+      "transitive": true,
+      "reverse_refutation": true
+    },
+    {
+      "name": "made_of",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "entity"
+      ]
+    },
+    {
+      "name": "has_property",
+      "attribute_key": "has_property",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "value"
+      ]
+    },
+    {
+      "name": "name",
+      "attribute_key": "name",
+      "attribute_update_policy": "replace",
+      "attribute_value_format": "capitalize",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "value"
+      ]
+    },
+    {
+      "name": "color",
+      "attribute_key": "color",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "value"
+      ]
+    },
+    {
+      "name": "material",
+      "attribute_key": "material",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "value"
+      ]
+    },
+    {
+      "name": "has_name",
+      "attribute_key": "name",
+      "attribute_update_policy": "replace",
+      "attribute_value_format": "capitalize",
+      "domain": ["concept", "entity"],
+      "range": ["concept", "value"]
+    }
+  ]
+}

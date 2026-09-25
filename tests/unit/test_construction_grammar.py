@@ -52,6 +52,15 @@ def test_construction_grammar_parsing_and_specificity():
     assert triples_neg[0].predicate == "disjoint_with"
     assert triples_neg[0].object_ == "machine"
 
+    triples_list = ConstructionEngine.parse_with_constructions(
+        "A truck has wheels, an engine, and headlights.", store
+    )
+    assert [triple.object_ for triple in triples_list] == [
+        "wheel",
+        "engine",
+        "headlight",
+    ]
+
     # Question parsing
     q_res = ConstructionEngine.parse_question_with_constructions(
         "Is a tiger a carnivore?", store
@@ -69,38 +78,28 @@ def test_construction_grammar_parsing_and_specificity():
 
 
 def test_open_pivot_learning_and_reuse():
-    """Verify that LITTLE dynamically acquires novel grammar patterns from uncurated text.
-
-    Sentence: 'Apples originated in Central Asia.'
-    - No regex exists for 'originated in'
-    - OpenPivotLearner detects pivot, creates Construction in SQLite, extracts triple
-    - Subsequent sentence 'Peaches originated in China' immediately matches stored construction!
-    """
+    """Novel predicates remain candidates until a relation schema approves them."""
     store = MemoryStore(":memory:")
     engine = LearningEngine(store)
+    before = store.count_relations()
 
-    # 1. First encounter with novel syntax: dynamic acquisition
-    res1 = engine.learn(
-        "Apples originated in Central Asia, where their wild ancestor is still found today."
-    )
-    assert res1.update_type in (UpdateType.NEW_CONCEPT, UpdateType.NEW_RELATION)
+    first = engine.learn("Apples originated in Central Asia.")
+    second = engine.learn("Peaches originated in China.")
 
-    # Verify construction was permanently saved to SQLite memory
-    cxn = store.get_construction_by_name("cxn_originated_in")
-    assert cxn is not None
-    assert cxn.pattern_tokens == ["{x}", "originated", "in", "{y}"]
-    assert cxn.predicate_template == "originated_in"
-
-    # 2. Second encounter with the same construction: reuse without relearning
-    res2 = engine.learn("Peaches originated in China.")
-    assert res2.update_type in (UpdateType.NEW_CONCEPT, UpdateType.NEW_RELATION)
-
-    # Verify relations stored in semantic memory
-    rels_apple = store.get_relations()
-    apple_orig = [r for r in rels_apple if r.predicate == "originated_in"]
-    assert len(apple_orig) >= 1
-    peach_orig = [r for r in rels_apple if r.predicate == "originated_in"]
-    assert len(peach_orig) >= 1
+    assert first.update_type is UpdateType.NO_OP
+    assert second.update_type is UpdateType.NO_OP
+    assert store.count_relations() == before
+    assert store.get_construction_by_name("cxn_originated_in") is None
+    evidence = store.evidence.list_for_claim("apple", "originated", "in central asia")
+    evidence += store.evidence.list_for_claim("peach", "originated", "in china")
+    assert len(evidence) == 2
+    assert all(record.status.value == "candidate" for record in evidence)
+    decisions = store._conn.execute(
+        "SELECT status FROM commit_decisions WHERE evidence_id IN (?, ?)",
+        (evidence[0].evidence_id, evidence[1].evidence_id),
+    ).fetchall()
+    assert len(decisions) == 2
+    assert all(row[0] == "unknown" for row in decisions)
 
 
 def test_qualitative_physics_generalization():

@@ -1,0 +1,10 @@
+{
+  "ontology_generation_policy": {
+    "version": "1",
+    "root_category": "artifact",
+    "taxonomy_predicate": "is_a",
+    "composition_predicate": "made_of",
+    "location_predicate": "located_in",
+    "component_predicate": "has_part"
+  }
+}

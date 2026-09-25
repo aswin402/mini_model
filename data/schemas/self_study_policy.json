@@ -1,0 +1,21 @@
+{
+  "self_study_policy": {
+    "version": "1",
+    "axes": [
+      {"name": "taxonomy", "coverage": "relation"},
+      {"name": "procedural", "coverage": "relation"},
+      {"name": "mereology", "coverage": "relation"},
+      {"name": "invariants", "coverage": "relation"},
+      {"name": "dynamics", "coverage": "attributes"},
+      {"name": "episodic", "coverage": "experience"}
+    ],
+    "hierarchy_axis": "taxonomy",
+    "default_axis": "procedural",
+    "no_analogy_axis": "unknown",
+    "hypothesis_probability": 0.85,
+    "hypothesis_uncertainty": 0.15,
+    "model_id": "autonomous-self-study",
+    "model_version": "1",
+    "max_steps": 5
+  }
+}

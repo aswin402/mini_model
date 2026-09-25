@@ -8,32 +8,44 @@ detection under the Open-World Assumption.
 from __future__ import annotations
 
 from collections import deque
-from typing import Any, ClassVar
+from typing import Any
 
 from little.core.models import BeliefStatus, InferenceResult
+from little.knowledge.registry import SchemaRegistry
+from little.core.semantic_predicate_policy import SemanticPredicatePolicy
+from little.inference.reasoning_policy import ReasoningPolicy
 from little.memory.store import MemoryStore
 
 
 class InferenceEngine:
     """Performs graph-based multi-hop reasoning with evidence tracking and uncertainty."""
 
-    TRANSITIVE_PREDICATES: ClassVar[set[str]] = {
-        "is_a",
-        "subclass_of",
-        "part_of",
-        "instance_of",
-        "located_in",
-        "larger_than",
-    }
-    DISJOINT_PREDICATES: ClassVar[set[str]] = {
-        "disjoint_with",
-        "cannot_be",
-        "different_from",
-    }
-
-    def __init__(self, memory: MemoryStore, max_depth: int = 8) -> None:
+    def __init__(
+        self,
+        memory: MemoryStore,
+        max_depth: int | None = None,
+        registry: SchemaRegistry | None = None,
+        semantic_policy: SemanticPredicatePolicy | None = None,
+        policy: ReasoningPolicy | None = None,
+    ) -> None:
         self.memory = memory
-        self.max_depth = max_depth
+        self.policy = policy or ReasoningPolicy.default()
+        self.max_depth = (
+            self.policy.max_depth if max_depth is None else max_depth
+        )
+        self.registry = registry or SchemaRegistry.default()
+        self.semantic = semantic_policy or SemanticPredicatePolicy.default()
+        self.taxonomy_predicate = (
+            self.registry.primary_predicate("taxonomy")
+            or self.semantic.taxonomy
+        )
+        self.part_predicate = self.semantic.part
+        self.whole_predicate = self.semantic.whole
+        self.transitive_predicates = self.registry.predicates(transitive=True)
+        self.disjoint_predicates = self.registry.predicates(disjoint=True)
+        self.reverse_refutation_predicates = self.registry.predicates(
+            reverse_refutation=True
+        )
 
     def infer(
         self,
@@ -129,7 +141,7 @@ class InferenceEngine:
                 )
 
         # 3. Transitive Graph Reasoning (if predicate supports transitivity)
-        if clean_pred in self.TRANSITIVE_PREDICATES:
+        if clean_pred in self.transitive_predicates:
             trace.append(f"Evaluating transitive path via '{clean_pred}'...")
             path_result = self._find_transitive_path(
                 start_id=subj_concept.id,
@@ -152,11 +164,11 @@ class InferenceEngine:
                 )
 
         # 3b. Asymmetric Refutation for strict ordering (e.g. larger_than)
-        if clean_pred == "larger_than":
+        if clean_pred in self.reverse_refutation_predicates:
             rev_path = self._find_transitive_path(
                 start_id=target_concept.id,
                 target_id=subj_concept.id,
-                predicate="larger_than",
+                predicate=clean_pred,
             )
             if rev_path:
                 rev_names, rev_conf = rev_path
@@ -174,14 +186,16 @@ class InferenceEngine:
                 )
 
         # 3c. Part-Whole Duality and Taxonomic Inheritance for 'has' and 'part_of'
-        if clean_pred == "has":
+        if clean_pred == self.whole_predicate:
             subj_anc = [subj_concept.id] + self.get_ancestor_ids(
-                subj_concept.id, predicate="is_a"
+                subj_concept.id, predicate=self.taxonomy_predicate
             )
             for anc_id in subj_anc:
                 # Direct has
                 anc_has = self.memory.get_relations(
-                    subject_id=anc_id, predicate="has", object_id=target_concept.id
+                    subject_id=anc_id,
+                    predicate=self.whole_predicate,
+                    object_id=target_concept.id,
                 )
                 if anc_has and anc_has[0].weight_positive > anc_has[0].weight_negative:
                     anc_c = self.memory.get_concept(anc_id)
@@ -196,7 +210,11 @@ class InferenceEngine:
                         answer=True,
                         confidence=round(
                             anc_has[0].confidence
-                            * (0.95 if anc_id != subj_concept.id else 1.0),
+                            * (
+                                self.policy.inheritance_confidence_factor
+                                if anc_id != subj_concept.id
+                                else 1.0
+                            ),
                             4,
                         ),
                         evidence=ev,
@@ -205,7 +223,7 @@ class InferenceEngine:
                 # Duality: target part_of ancestor
                 part_rels = self.memory.get_relations(
                     subject_id=target_concept.id,
-                    predicate="part_of",
+                    predicate=self.part_predicate,
                     object_id=anc_id,
                 )
                 if (
@@ -226,22 +244,26 @@ class InferenceEngine:
                         answer=True,
                         confidence=round(
                             part_rels[0].confidence
-                            * (0.95 if anc_id != subj_concept.id else 1.0),
+                            * (
+                                self.policy.inheritance_confidence_factor
+                                if anc_id != subj_concept.id
+                                else 1.0
+                            ),
                             4,
                         ),
                         evidence=ev,
                         trace=trace,
                     )
 
-        if clean_pred == "part_of":
+        if clean_pred == self.part_predicate:
             target_anc = [target_concept.id] + self.get_ancestor_ids(
-                target_concept.id, predicate="is_a"
+                target_concept.id, predicate=self.taxonomy_predicate
             )
             for anc_id in target_anc:
                 # Direct part_of ancestor
                 part_rels = self.memory.get_relations(
                     subject_id=subj_concept.id,
-                    predicate="part_of",
+                    predicate=self.part_predicate,
                     object_id=anc_id,
                 )
                 if (
@@ -260,7 +282,11 @@ class InferenceEngine:
                         answer=True,
                         confidence=round(
                             part_rels[0].confidence
-                            * (0.95 if anc_id != target_concept.id else 1.0),
+                            * (
+                                self.policy.inheritance_confidence_factor
+                                if anc_id != target_concept.id
+                                else 1.0
+                            ),
                             4,
                         ),
                         evidence=ev,
@@ -268,7 +294,9 @@ class InferenceEngine:
                     )
                 # Duality: ancestor has subj
                 anc_has = self.memory.get_relations(
-                    subject_id=anc_id, predicate="has", object_id=subj_concept.id
+                    subject_id=anc_id,
+                    predicate=self.whole_predicate,
+                    object_id=subj_concept.id,
                 )
                 if anc_has and anc_has[0].weight_positive > anc_has[0].weight_negative:
                     anc_c = self.memory.get_concept(anc_id)
@@ -285,7 +313,11 @@ class InferenceEngine:
                         answer=True,
                         confidence=round(
                             anc_has[0].confidence
-                            * (0.95 if anc_id != target_concept.id else 1.0),
+                            * (
+                                self.policy.inheritance_confidence_factor
+                                if anc_id != target_concept.id
+                                else 1.0
+                            ),
                             4,
                         ),
                         evidence=ev,
@@ -294,14 +326,16 @@ class InferenceEngine:
 
         # 3d. Taxonomic Inheritance of Other Non-Transitive Predicates (e.g. can, lives_in, eats, made_of)
         if (
-            clean_pred not in self.TRANSITIVE_PREDICATES
-            and clean_pred not in self.DISJOINT_PREDICATES
-            and clean_pred not in ("has", "part_of")
+            clean_pred not in self.transitive_predicates
+            and clean_pred not in self.disjoint_predicates
+            and clean_pred not in (self.whole_predicate, self.part_predicate)
         ):
             trace.append(
                 f"Evaluating taxonomic inheritance for predicate '{clean_pred}'..."
             )
-            for anc_id in self.get_ancestor_ids(subj_concept.id, predicate="is_a"):
+            for anc_id in self.get_ancestor_ids(
+                subj_concept.id, predicate=self.taxonomy_predicate
+            ):
                 anc_rels = self.memory.get_relations(
                     subject_id=anc_id,
                     predicate=clean_pred,
@@ -319,7 +353,11 @@ class InferenceEngine:
                             query=query_str,
                             status=BeliefStatus.SUPPORTED,
                             answer=True,
-                            confidence=round(rel.confidence * 0.95, 4),
+                            confidence=round(
+                                rel.confidence
+                                * self.policy.inheritance_confidence_factor,
+                                4,
+                            ),
                             evidence=[
                                 f"{subj_concept.name} is_a {anc_name}",
                                 f"{anc_name} {clean_pred} {target_concept.name}",
@@ -334,7 +372,11 @@ class InferenceEngine:
                             query=query_str,
                             status=BeliefStatus.REFUTED,
                             answer=False,
-                            confidence=round(rel.confidence * 0.95, 4),
+                            confidence=round(
+                                rel.confidence
+                                * self.policy.inheritance_confidence_factor,
+                                4,
+                            ),
                             evidence=[
                                 f"NOT ({anc_name} {clean_pred} {target_concept.name})"
                             ],
@@ -366,7 +408,7 @@ class InferenceEngine:
             query=query_str,
             status=BeliefStatus.UNKNOWN,
             answer=None,
-            confidence=0.1,  # baseline low epistemic confidence
+            confidence=self.policy.inference_unknown_confidence,
             evidence=[],
             trace=trace,
         )
@@ -512,7 +554,9 @@ class InferenceEngine:
         target_ancestors.add(target_id)
 
         # Check disjoint relations between any pair of ancestors (symmetric check)
-        for disj_pred in self.DISJOINT_PREDICATES:
+        # Legacy "is not a" constructions encode exclusion as negative
+        # disjoint_with evidence; preserve that interpretation here.
+        for disj_pred in self.disjoint_predicates:
             # 1. Outgoing from subj_ancestors
             for s_node in subj_ancestors:
                 for rel in self.memory.get_relations(
@@ -520,7 +564,10 @@ class InferenceEngine:
                 ):
                     if (
                         rel.object_id in target_ancestors
-                        and rel.weight_positive > rel.weight_negative
+                        and (
+                            rel.weight_positive > rel.weight_negative
+                            or rel.weight_negative > rel.weight_positive
+                        )
                     ):
                         c1 = self.memory.get_concept(s_node)
                         c2 = self.memory.get_concept(rel.object_id)
@@ -535,7 +582,10 @@ class InferenceEngine:
                 ):
                     if (
                         rel.object_id in subj_ancestors
-                        and rel.weight_positive > rel.weight_negative
+                        and (
+                            rel.weight_positive > rel.weight_negative
+                            or rel.weight_negative > rel.weight_positive
+                        )
                     ):
                         c1 = self.memory.get_concept(t_node)
                         c2 = self.memory.get_concept(rel.object_id)
@@ -545,8 +595,11 @@ class InferenceEngine:
 
         return None
 
-    def get_ancestor_ids(self, concept_id: str, predicate: str = "is_a") -> list[str]:
+    def get_ancestor_ids(
+        self, concept_id: str, predicate: str | None = None
+    ) -> list[str]:
         """Collect all ancestor IDs up the transitive chain."""
+        predicate = predicate or self.taxonomy_predicate
         ancestors: list[str] = []
         visited: set[str] = {concept_id}
         queue: deque[str] = deque([concept_id])
@@ -562,8 +615,11 @@ class InferenceEngine:
 
         return ancestors
 
-    def query_ancestors(self, concept_name: str, predicate: str = "is_a") -> list[str]:
+    def query_ancestors(
+        self, concept_name: str, predicate: str | None = None
+    ) -> list[str]:
         """Return human-readable names of all ancestors of a concept."""
+        predicate = predicate or self.taxonomy_predicate
         concept = self.memory.get_concept(concept_name)
         if not concept:
             return []
@@ -583,7 +639,9 @@ class InferenceEngine:
 
         attributes: dict[str, Any] = {}
         # Start from top ancestors down to specific concept
-        ancestor_ids = list(reversed(self.get_ancestor_ids(concept.id, "is_a")))
+        ancestor_ids = list(
+            reversed(self.get_ancestor_ids(concept.id, self.taxonomy_predicate))
+        )
         for aid in ancestor_ids:
             ac = self.memory.get_concept(aid)
             if ac:

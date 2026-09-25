@@ -1,0 +1,38 @@
+{
+  "laya_runtime_policy": {
+    "version": "1",
+    "question_id": "intent",
+    "question_definition": {
+      "type": "choice",
+      "instructions": "Classify the input into the configured intent categories.",
+      "criteria": {
+        "assertion": "A declarative statement or observation.",
+        "query": "A request for information or verification.",
+        "command": "A request to perform an operation.",
+        "unknown": "Insufficient information to classify the input."
+      }
+    },
+    "prediction_method": "predict",
+    "result_fields": {
+      "answers": "answers",
+      "model": "model",
+      "routing": "routing",
+      "routing_model_id": "model_id",
+      "routing_model_version": "model_version",
+      "model_id": "model_id",
+      "model_version": "version"
+    },
+    "answer_fields": {
+      "choice": "choice",
+      "probabilities": "probabilities",
+      "confidence": "confidence"
+    },
+    "model_load": {
+      "model_id_or_path": null,
+      "device": "cpu",
+      "subfolder": null,
+      "runtime": "agent",
+      "model_version": null
+    }
+  }
+}

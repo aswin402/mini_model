@@ -1,0 +1,22 @@
+{
+  "semantic_predicate_policy": {
+    "version": "1",
+    "roles": {
+      "taxonomy": "is_a",
+      "part": "part_of",
+      "whole": "has",
+      "disjoint": "disjoint_with",
+      "location": "located_in",
+      "property": "has_property",
+      "color": "color",
+      "material": "material",
+      "capability": "can",
+      "habitat": "lives_in",
+      "diet": "eats",
+      "composition": "made_of",
+      "purpose": "used_for",
+      "causality": "causes"
+    },
+    "identity_predicates": ["has_name", "name", "is"]
+  }
+}

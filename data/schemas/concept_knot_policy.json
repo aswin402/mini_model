@@ -1,0 +1,24 @@
+{
+  "concept_knot_policy": {
+    "version": "1",
+    "taxonomy_axis": "taxonomy",
+    "mereology_axis": "mereology",
+    "invariant_axis": "invariants",
+    "procedural_axis": "procedural",
+    "defaults": {
+      "freshness": 1.0,
+      "oxidation": 0.0,
+      "moisture": 0.85,
+      "temperature": 22.0,
+      "mass": 150.0,
+      "record_mass": 0.0,
+      "constructor_mass": 180.0
+    },
+    "mereology_roles": {
+      "part_of": "proper_part",
+      "has_part": "proper_part",
+      "has": "proper_part",
+      "made_of": "material_substance"
+    }
+  }
+}

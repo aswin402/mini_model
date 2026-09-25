@@ -1,9 +1,13 @@
 """Unit tests for LITTLE procedural memory and skill execution."""
 
+import json
+from pathlib import Path
+
 from little.core.models import Skill
 from little.memory.store import MemoryStore
 from little.procedural.runner import SkillRunner
-from little.procedural.skills import register_builtin_skills
+from little.procedural.skill_policy import ProceduralSkillPolicy
+from little.procedural.skills import get_builtin_skills, register_builtin_skills
 
 
 def test_custom_skill_execution():
@@ -63,3 +67,56 @@ def test_builtin_skills_registration_and_persistence():
     assert slice_res.result[0]["name"] == "apple_slice_1"
     assert slice_res.result[0]["part_of"] == "apple"
     assert slice_res.result[0]["exposed_flesh"] is True
+
+
+def test_slice_skill_output_contract_is_data_driven(tmp_path: Path):
+    payload = json.loads(
+        Path("data/schemas/procedural_skill_policy.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    output = payload["procedural_skill_policy"]["slice_output"]
+    output.update(
+        {
+            "name_suffix": "portion",
+            "part_key": "component_of",
+            "exposed_key": "inner_exposed",
+            "skin_key": "boundary_intact",
+            "exposed_value": False,
+            "skin_value": True,
+        }
+    )
+    policy_path = tmp_path / "procedural_skill_policy.json"
+    policy_path.write_text(json.dumps(payload), encoding="utf-8")
+    policy = ProceduralSkillPolicy.load(tmp_path)
+    skill = next(
+        skill for skill in get_builtin_skills(policy) if skill.name == "SLICE"
+    )
+
+    result = SkillRunner.execute(skill, item="apple", count=1)
+
+    assert result.success is True
+    assert result.result == [
+        {
+            "name": "apple_portion_1",
+            "component_of": "apple",
+            "inner_exposed": False,
+            "boundary_intact": True,
+        }
+    ]
+
+
+def test_builtin_skill_catalog_can_be_restricted_by_policy(tmp_path: Path):
+    payload = json.loads(
+        Path("data/schemas/procedural_skill_policy.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    payload["procedural_skill_policy"]["enabled_skills"] = ["ADD"]
+    policy_path = tmp_path / "procedural_skill_policy.json"
+    policy_path.write_text(json.dumps(payload), encoding="utf-8")
+    policy = ProceduralSkillPolicy.load(tmp_path)
+
+    skills = get_builtin_skills(policy)
+
+    assert [skill.name for skill in skills] == ["ADD"]

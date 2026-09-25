@@ -16,59 +16,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from little.core.construction_policy import ConstructionPolicy
 from little.core.models import Construction
+from little.language.parser_policy import ParserPolicy
 from little.memory.store import MemoryStore
-
-NON_CONCEPT_WORDS = {
-    "who",
-    "what",
-    "where",
-    "when",
-    "why",
-    "how",
-    "you",
-    "me",
-    "i",
-    "he",
-    "she",
-    "it",
-    "we",
-    "they",
-    "them",
-    "this",
-    "that",
-    "these",
-    "those",
-    "hi",
-    "hello",
-    "hey",
-    "hii",
-    "ok",
-    "okay",
-    "yes",
-    "no",
-}
-
-SINGULAR_EXCEPTIONS = {
-    "mars",
-    "paris",
-    "lens",
-    "series",
-    "species",
-    "physics",
-    "mathematics",
-    "news",
-    "status",
-    "canvas",
-    "atlantis",
-    "asia",
-}
-
-# Clause boundary splitters for complex real-world text (e.g. Wikipedia)
-CLAUSE_DELIMITERS = re.compile(
-    r"(?:,\s*(?:where|which|who|whom|whose|although|because|while|since|but|and)\s+|\s*;\s*|\s*\b(?:until|whereas)\s+)",
-    re.IGNORECASE,
-)
 
 
 @dataclass
@@ -93,61 +44,110 @@ class ParsedConstructionTriple:
 class ConstructionEngine:
     """Executes grammar matching, clause segmentation, and dynamic grammar acquisition."""
 
-    LEADING_ARTICLE = re.compile(
-        r"^(?:a|an|the|this|that|these|those|every|all)\s+", re.IGNORECASE
-    )
+    @classmethod
+    def _policy(cls) -> ParserPolicy:
+        """Resolve an optional bound policy without global mutable state."""
+        configured = getattr(cls, "_POLICY", None)
+        return configured if configured is not None else ParserPolicy.default()
 
     @classmethod
     def normalize_text(cls, text: str) -> str:
         """Expand English contractions and strip irregular whitespace."""
         s = text.strip()
-        s = re.sub(r"\bwhat['’]?s\b", "what is", s, flags=re.IGNORECASE)
-        s = re.sub(r"\bwho['’]?s\b", "who is", s, flags=re.IGNORECASE)
-        s = re.sub(r"\bwhere['’]?s\b", "where is", s, flags=re.IGNORECASE)
-        s = re.sub(r"\bhow['’]?s\b", "how is", s, flags=re.IGNORECASE)
-        s = re.sub(r"\bisn['’]?t\b", "is not", s, flags=re.IGNORECASE)
-        s = re.sub(r"\baren['’]?t\b", "are not", s, flags=re.IGNORECASE)
-        s = re.sub(r"\bcan['’]?t\b", "cannot", s, flags=re.IGNORECASE)
-        s = re.sub(r"\bdon['’]?t\b", "do not", s, flags=re.IGNORECASE)
-        s = re.sub(r"\bdoesn['’]?t\b", "does not", s, flags=re.IGNORECASE)
+        for source, replacement in cls._policy().normalization_replacements:
+            token_pattern = rf"(?<!\w){re.escape(source)}(?!\w)"
+            s = re.sub(token_pattern, replacement, s, flags=re.IGNORECASE)
         return s
 
     @classmethod
     def clean_noun(cls, text: str) -> str:
         """Strip articles, auxiliary adverbs, and normalize plural forms."""
-        s = cls.LEADING_ARTICLE.sub("", text.strip().lower()).strip()
-        for aux in ["was formerly", "is formerly", "was originally", "does not", "did not", "cannot"]:
+        articles = "|".join(
+            re.escape(article) for article in cls._policy().leading_articles
+        )
+        s = re.sub(
+            rf"^(?:{articles})\s+", "", text.strip().lower(), flags=re.IGNORECASE
+        ).strip()
+        for aux in cls._policy().noun_auxiliaries:
             if s.endswith(f" {aux}"):
                 s = s[: -len(aux) - 1].strip()
             if s.startswith(f"{aux} "):
                 s = s[len(aux) + 1 :].strip()
 
-        if s in SINGULAR_EXCEPTIONS:
+        if not s:
+            return ""
+        if s in cls._policy().irregular_plurals:
+            return cls._policy().irregular_plurals[s]
+        if s in cls._policy().invariable_words:
             return s
+        tokens = s.split()
+        if len(tokens) > 1:
+            last = cls.clean_noun(tokens[-1])
+            return " ".join(tokens[:-1] + [last])
+
         # Plural inflection normalization
         if s.endswith("ies") and len(s) > 4:
             s = s[:-3] + "y"
-        elif s.endswith("s") and not s.endswith("ss") and len(s) > 3:
+        elif s.endswith("ves") and len(s) > 4:
+            if s in cls._policy().plural_f_to_fe_words:
+                s = s[:-3] + "fe"
+            else:
+                s = s[:-3] + "f"
+        elif s.endswith("es") and len(s) > 4:
+            if s.endswith(cls._policy().plural_es_suffixes):
+                s = s[:-2]
+            else:
+                s = s[:-1]
+        elif (
+            s.endswith("s")
+            and not s.endswith(cls._policy().plural_s_exceptions)
+            and len(s) > 3
+        ):
             s = s[:-1]
         return s
+
+    @classmethod
+    def is_valid_concept(cls, c: str) -> bool:
+        """Check if candidate text constitutes a valid domain concept rather than a question or pronoun."""
+        if not c:
+            return False
+        clean = c.strip().lower()
+        if clean in cls._policy().non_concept_words:
+            return False
+        words = set(clean.split())
+        return not any(
+            w in cls._policy().non_concept_words or w in cls._policy().question_words
+            for w in words
+        )
 
     @classmethod
     def tokenize(cls, text: str) -> list[str]:
         """Convert normalized string into lowercase tokens, stripping sentence punctuation."""
         clean = cls.normalize_text(text).rstrip(".!?").strip()
-        # Extract alphanumeric words and basic mathematical symbols
-        tokens = re.findall(r"[a-zA-Z0-9_\-\+\*\/\^]+", clean.lower())
+        # Keep commas as list-boundary tokens so a slot can later normalize
+        # "wheels, an engine, and headlights" into separate objects.
+        tokens = re.findall(r"[a-zA-Z0-9_\-\+\*\/\^]+|,", clean.lower())
         return tokens
 
     @classmethod
     def segment_clauses(cls, text: str) -> list[str]:
         """Decompose compound or complex sentences into primary declarative clauses."""
-        clean = cls.normalize_text(text).rstrip(".!?").strip()
+        clean = cls.normalize_text(text).strip()
         clean = re.sub(r"^unlike\s+[^,]+,\s*", "", clean, flags=re.IGNORECASE)
-        parts = CLAUSE_DELIMITERS.split(clean)
-        clauses = [p.strip() for p in parts if p and len(p.strip()) > 3]
-        return clauses if clauses else [clean]
-
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", clean) if s.strip()]
+        clauses: list[str] = []
+        for sent in sentences:
+            sent_clean = sent.rstrip(".!?").strip()
+            parts = re.split(
+                cls._policy().clause_delimiter_pattern,
+                sent_clean,
+                flags=re.IGNORECASE,
+            )
+            for p in parts:
+                p_str = p.strip()
+                if p_str and len(p_str) > 2:
+                    clauses.append(p_str)
+        return clauses if clauses else [clean.rstrip(".!?").strip()]
 
     @classmethod
     def match_tokens(
@@ -235,6 +235,135 @@ class ConstructionEngine:
         return bindings if t_idx == len(tokens) else None
 
     @classmethod
+    def parse_from_catalog(
+        cls,
+        text: str,
+        constructions: list[Construction],
+        construction_type: str = "statement",
+    ) -> list[ParsedConstructionTriple]:
+        """Parse text using an explicitly supplied construction catalog.
+
+        This is the pure, side-effect-free counterpart to
+        :meth:`parse_with_constructions`.  It is used by the parser before its
+        compatibility fallbacks, so a grammar pack can add a new relation
+        without adding a Python regex or changing parser code.
+        """
+        candidates = [
+            construction
+            for construction in constructions
+            if construction.construction_type == construction_type
+        ]
+
+        def anchor_count(construction: Construction) -> int:
+            return sum(
+                1
+                for token in construction.pattern_tokens
+                if not (token.startswith("{") and token.endswith("}"))
+            )
+
+        ordered = sorted(
+            candidates,
+            key=lambda construction: (
+                anchor_count(construction),
+                construction.confidence,
+            ),
+            reverse=True,
+        )
+        results: list[ParsedConstructionTriple] = []
+
+        for clause in cls.segment_clauses(text):
+            tokens = cls.tokenize(clause)
+            if not tokens:
+                continue
+
+            for construction in ordered:
+                bindings = cls.match_tokens(tokens, construction)
+                if bindings is None:
+                    continue
+
+                triples = cls._triples_from_catalog_match(construction, bindings)
+                if triples:
+                    results.extend(triples)
+                    break
+
+        return results
+
+    @classmethod
+    def _triples_from_catalog_match(
+        cls, construction: Construction, bindings: dict[str, str]
+    ) -> list[ParsedConstructionTriple]:
+        """Convert a matched construction into normalized semantic triples."""
+        role_to_slot = {
+            value.lower(): key.upper()
+            for key, value in construction.slot_roles.items()
+        }
+        subject_slot = role_to_slot.get("subject", "X")
+        object_slot = role_to_slot.get("object", "Y")
+        subject_raw = bindings.get(subject_slot) or bindings.get("X", "")
+        object_raw = bindings.get(object_slot) or bindings.get("Y", "")
+
+        if construction.predicate_template == "__user_name__":
+            name_raw = (
+                bindings.get("NAME")
+                or bindings.get("name")
+                or bindings.get("X")
+                or ""
+            )
+            name = cls.clean_noun(name_raw)
+            if not name:
+                return []
+            return [
+                ParsedConstructionTriple(
+                    subject="user",
+                    predicate="has_name",
+                    object_=name,
+                    is_property=True,
+                    construction_id=construction.id,
+                )
+            ]
+
+        subject = cls.clean_noun(subject_raw)
+        if not subject or not cls.is_valid_concept(subject):
+            return []
+
+        predicate = construction.predicate_template
+        is_property = construction.is_property
+        conjoined = [
+            cls.clean_noun(part)
+            for part in re.split(r",\s*(?:and\s+)?|\s+and\s+", object_raw)
+            if part.strip()
+        ]
+        if len(conjoined) > 1:
+            if not all(cls.is_valid_concept(part) for part in conjoined):
+                return []
+            objects = conjoined
+        else:
+            object_ = cls.clean_noun(object_raw)
+            if not object_ or not cls.is_valid_concept(object_):
+                return []
+            objects = [object_]
+
+        if (
+            predicate == cls._policy().semantic.taxonomy
+            and len(objects) == 1
+            and objects[0] in cls._policy().colors
+        ):
+            predicate = cls._policy().semantic.color
+            is_property = True
+
+        return [
+            ParsedConstructionTriple(
+                subject=subject,
+                predicate=predicate,
+                object_=part,
+                is_property=is_property,
+                is_negative=construction.is_negative,
+                construction_id=construction.id,
+            )
+            for part in objects
+        ]
+
+    @classmethod
     def parse_with_constructions(
         cls,
         text: str,
@@ -275,59 +404,17 @@ class ConstructionEngine:
             matched = False
             for cxn in sorted_constructions:
                 bindings = cls.match_tokens(tokens, cxn)
-                if bindings is not None:
-                    # Invert slot roles to find the slot variable for subject and object
-                    role_to_slot = {
-                        v.lower(): k.upper() for k, v in cxn.slot_roles.items()
-                    }
-                    subj_slot = role_to_slot.get("subject", "X")
-                    obj_slot = role_to_slot.get("object", "Y")
+                if bindings is None:
+                    continue
 
-                    s_raw = bindings.get(subj_slot) or bindings.get("X", "")
-                    o_raw = bindings.get(obj_slot) or bindings.get("Y", "")
+                triples = cls._triples_from_catalog_match(cxn, bindings)
+                if not triples:
+                    continue
 
-                    s_clean = cls.clean_noun(s_raw)
-                    o_clean = cls.clean_noun(o_raw)
-
-                    if (
-                        s_clean
-                        and o_clean
-                        and s_clean not in NON_CONCEPT_WORDS
-                        and o_clean not in NON_CONCEPT_WORDS
-                    ):
-                        is_prop = cxn.is_property
-                        pred = cxn.predicate_template
-                        if pred == "is_a" and o_clean in {
-                            "red",
-                            "green",
-                            "blue",
-                            "yellow",
-                            "black",
-                            "white",
-                            "brown",
-                            "purple",
-                            "orange",
-                            "grey",
-                            "gray",
-                            "pink",
-                        }:
-                            pred = "color"
-                            is_prop = True
-
-                        results.append(
-                            ParsedConstructionTriple(
-                                subject=s_clean,
-                                predicate=pred,
-                                object_=o_clean,
-                                is_property=is_prop,
-                                is_negative=cxn.is_negative,
-                                construction_id=cxn.id,
-                            )
-                        )
-                        # Reinforce construction in memory
-                        memory.add_construction_evidence(cxn.id, positive=True)
-                        matched = True
-                        break
+                results.extend(triples)
+                memory.add_construction_evidence(cxn.id, positive=True)
+                matched = True
+                break
 
             # If no known construction matched, invoke Open Pivot Learner
             if not matched and construction_type == "statement":
@@ -350,27 +437,15 @@ class ConstructionEngine:
         if len(tokens) < 3:
             return None
 
-        # Common relational prepositions that attach to verbs
-        prepositions = {
-            "in",
-            "to",
-            "from",
-            "with",
-            "by",
-            "of",
-            "on",
-            "at",
-            "for",
-            "as",
-            "into",
-        }
-
         # Search for verbal pivot candidate in tokens[1:-1]
         best_pivot: tuple[int, int] | None = None
 
         # Check for multi-word pivot (e.g. "originated in", "belongs to", "borders on")
         for i in range(1, len(tokens) - 1):
-            if i + 1 < len(tokens) - 1 and tokens[i + 1] in prepositions:
+            if (
+                i + 1 < len(tokens) - 1
+                and tokens[i + 1] in cls._policy().pivot_prepositions
+            ):
                 best_pivot = (i, i + 2)
                 break
 
@@ -379,9 +454,9 @@ class ConstructionEngine:
             for i in range(1, len(tokens) - 1):
                 word = tokens[i]
                 if (
-                    word.endswith(("ed", "es", "s"))
-                    or word in {"discovered", "produced", "created", "borders", "eats"}
-                ) and word not in {"is", "are", "not", "has", "have", "can"}:
+                    word.endswith(cls._policy().verb_suffixes)
+                    or word in cls._policy().pivot_verbs
+                ) and word not in cls._policy().excluded_pivot_verbs:
                     best_pivot = (i, i + 1)
                     break
 
@@ -405,8 +480,8 @@ class ConstructionEngine:
         if (
             not s_clean
             or not o_clean
-            or s_clean in NON_CONCEPT_WORDS
-            or o_clean in NON_CONCEPT_WORDS
+            or not cls.is_valid_concept(s_clean)
+            or not cls.is_valid_concept(o_clean)
         ):
             return None
 
@@ -421,7 +496,7 @@ class ConstructionEngine:
             slot_roles=slot_roles,
             predicate_template=predicate_name,
             construction_type="statement",
-            confidence=0.8,
+            confidence=ConstructionPolicy.default().learned_confidence,
         )
         saved_id = memory.save_construction(new_cxn)
 
@@ -439,19 +514,35 @@ class ConstructionEngine:
         cls, text: str, memory: MemoryStore
     ) -> tuple[str, str, Any] | None:
         """Parse natural language question using stored question constructions."""
+        return cls.parse_question_from_catalog_with_procedural(
+            text, memory.list_constructions()
+        )
+
+    @classmethod
+    def parse_question_from_catalog_with_procedural(
+        cls, text: str, constructions: list[Construction]
+    ) -> tuple[str, str, Any] | None:
+        """Parse a question or procedural request from one explicit catalog."""
+        proc = cls.parse_procedural_from_catalog(text, constructions)
+        if proc:
+            skill_name, proc_args = proc
+            return (skill_name, "__math__", proc_args)
+        return cls.parse_question_from_catalog(text, constructions)
+
+    @classmethod
+    def parse_question_from_catalog(
+        cls, text: str, constructions: list[Construction]
+    ) -> tuple[str, str, Any] | None:
+        """Parse a question from an explicit catalog without touching memory."""
         tokens = cls.tokenize(text)
         if not tokens:
             return None
 
-        # 1. Identity questions: "who are you", "what are you"
-        if tokens in (
-            ["who", "are", "you"],
-            ["what", "are", "you"],
-            ["who", "is", "little"],
-        ):
-            return ("little", "__identity__", None)
-
-        stored_q_cxns = memory.list_constructions(construction_type="question")
+        question_constructions = [
+            construction
+            for construction in constructions
+            if construction.construction_type == "question"
+        ]
 
         def anchor_count(cxn: Construction) -> int:
             return sum(
@@ -461,7 +552,9 @@ class ConstructionEngine:
             )
 
         sorted_q = sorted(
-            stored_q_cxns, key=lambda c: (anchor_count(c), c.confidence), reverse=True
+            question_constructions,
+            key=lambda c: (anchor_count(c), c.confidence),
+            reverse=True,
         )
 
         for cxn in sorted_q:
@@ -472,22 +565,127 @@ class ConstructionEngine:
                 subj_slot = role_to_slot.get("subject", "X")
                 obj_slot = role_to_slot.get("object", "Y")
 
-                if pred == "__identity__":
+                if pred in ("__identity__", "__identity_name__"):
                     return ("little", "__identity__", None)
+
+                if pred == "__query_user_name__":
+                    return ("user", "__user_name__", None)
 
                 if pred == "__definition__":
                     s_raw = bindings.get(subj_slot) or bindings.get("X", "")
+                    if any(
+                        marker in s_raw.lower()
+                        for marker in cls._policy().invalid_definition_markers
+                    ):
+                        continue
                     s_clean = cls.clean_noun(s_raw)
-                    if s_clean and s_clean not in NON_CONCEPT_WORDS:
+                    if s_clean and s_clean not in cls._policy().non_concept_words:
                         return (s_clean, "__definition__", None)
 
                 s_raw = bindings.get(subj_slot) or bindings.get("X", "")
                 o_raw = bindings.get(obj_slot) or bindings.get("Y", "")
+
+                # Guardrail for generic categorical questions:
+                # If s_raw or o_raw contains "than", "used for", or math symbols, it is NOT a simple is_a relation
+                if (
+                    any(
+                        marker in s_raw.lower()
+                        for marker in cls._policy().invalid_category_markers
+                    )
+                    or (
+                        o_raw
+                        and any(
+                            marker in o_raw.lower()
+                            for marker in cls._policy().invalid_category_markers
+                        )
+                    )
+                ) and pred == cls._policy().semantic.taxonomy:
+                    continue
+
                 s_clean = cls.clean_noun(s_raw)
                 o_clean = cls.clean_noun(o_raw)
 
+                # Open WH query target placeholder handling (e.g. "what is X used for")
+                if (
+                    pred in cls._policy().open_query_predicates
+                    and not o_clean
+                    and s_clean
+                ):
+                    return (s_clean, pred, "?")
+
                 if s_clean and o_clean:
                     return (s_clean, pred, o_clean)
+
+        return None
+
+    @classmethod
+    def parse_procedural_with_constructions(
+        cls, text: str, memory: MemoryStore
+    ) -> tuple[str, dict[str, Any]] | None:
+        """Parse procedural skill inquiries (e.g. math operations) using stored procedural constructions."""
+        return cls.parse_procedural_from_catalog(
+            text, memory.list_constructions(construction_type="procedural")
+        )
+
+    @classmethod
+    def parse_procedural_from_catalog(
+        cls, text: str, constructions: list[Construction]
+    ) -> tuple[str, dict[str, Any]] | None:
+        """Parse a procedural request using an explicit construction catalog."""
+        tokens = cls.tokenize(text)
+        if not tokens:
+            return None
+
+        procedural_constructions = [
+            construction
+            for construction in constructions
+            if construction.construction_type == "procedural"
+        ]
+
+        def anchor_count(cxn: Construction) -> int:
+            return sum(
+                1
+                for t in cxn.pattern_tokens
+                if not (t.startswith("{") and t.endswith("}"))
+            )
+
+        sorted_proc = sorted(
+            procedural_constructions,
+            key=lambda c: (anchor_count(c), c.confidence),
+            reverse=True,
+        )
+
+        for cxn in sorted_proc:
+            bindings = cls.match_tokens(tokens, cxn)
+            if bindings is not None:
+                skill_name = cxn.predicate_template
+                args: dict[str, Any] = {}
+                valid = True
+                for slot_key, param_name in cxn.slot_roles.items():
+                    raw_val = (
+                        bindings.get(slot_key.upper())
+                        or bindings.get(slot_key.lower())
+                        or bindings.get(param_name.upper())
+                        or bindings.get(param_name.lower())
+                    )
+                    if raw_val is None:
+                        valid = False
+                        break
+                    raw_val_str = str(raw_val).strip()
+                    try:
+                        if "." in raw_val_str:
+                            args[param_name] = float(raw_val_str)
+                        else:
+                            args[param_name] = int(raw_val_str)
+                    except ValueError:
+                        args[param_name] = raw_val_str
+                if valid:
+                    # Enforce that arithmetic operations MUST receive numeric arguments
+                    if skill_name.upper() in cls._policy().numeric_skills and not all(
+                        isinstance(v, (int, float)) for v in args.values()
+                    ):
+                        continue
+                    return (skill_name.upper(), args)
 
         return None
 
@@ -496,11 +694,24 @@ class ConstructionEngine:
         cls, text: str, memory: MemoryStore
     ) -> tuple[str, dict[str, Any]] | None:
         """Parse physical actions (e.g. slicing) using stored action constructions."""
+        return cls.parse_action_from_catalog(
+            text, memory.list_constructions(construction_type="action")
+        )
+
+    @classmethod
+    def parse_action_from_catalog(
+        cls, text: str, constructions: list[Construction]
+    ) -> tuple[str, dict[str, Any]] | None:
+        """Parse a physical action using an explicit construction catalog."""
         tokens = cls.tokenize(text)
         if not tokens:
             return None
 
-        stored_act_cxns = memory.list_constructions(construction_type="action")
+        stored_act_cxns = [
+            construction
+            for construction in constructions
+            if construction.construction_type == "action"
+        ]
 
         for cxn in stored_act_cxns:
             bindings = cls.match_tokens(tokens, cxn)

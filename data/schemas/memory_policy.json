@@ -1,0 +1,8 @@
+{
+  "memory_policy": {
+    "version": "1",
+    "concept_confidence": 1.0,
+    "experience_query_limit": 50,
+    "bulk_import_batch_size": 5000
+  }
+}

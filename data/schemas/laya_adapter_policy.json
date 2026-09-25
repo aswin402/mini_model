@@ -1,0 +1,32 @@
+{
+  "laya_adapter_policy": {
+    "version": "1",
+    "fallback_intent": "unknown",
+    "rejected_model_ids": [
+      "deterministic-parser"
+    ],
+    "intent_mapping": {
+      "assertion": "statement",
+      "statement": "statement",
+      "query": "question",
+      "question": "question",
+      "command": "action",
+      "action": "action",
+      "unknown": "unknown"
+    },
+    "candidate_requirements": {
+      "statement": ["claims"],
+      "question": ["parsed_query", "parsed_queries", "question_parts"],
+      "action": ["actions"],
+      "unknown": []
+    },
+    "allowed_payloads": {
+      "statement": ["claims", "entities"],
+      "question": ["entities", "parsed_query", "parsed_queries", "question_parts"],
+      "action": ["entities", "actions"],
+      "unknown": []
+    },
+    "structured_query_predicate_prefixes": ["__"]
+    
+  }
+}

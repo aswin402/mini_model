@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set
 from little.inference.invariant_gates import DeepSeekInvariantVerifier
+from little.inference.reasoning_policy import ReasoningPolicy
 from little.memory.store import MemoryStore
 
 
@@ -26,18 +27,29 @@ class DualSpeedInfillingEngine:
     """Dual-speed cognitive reasoning engine with bidirectional frontier collision search."""
 
     def __init__(
-        self, memory: MemoryStore, verifier: DeepSeekInvariantVerifier
+        self,
+        memory: MemoryStore,
+        verifier: DeepSeekInvariantVerifier,
+        policy: ReasoningPolicy | None = None,
     ) -> None:
         self.memory = memory
         self.verifier = verifier
+        self.policy = policy or ReasoningPolicy.default()
 
     def _resolve_variants(self, node: str) -> Set[str]:
-        variants = {node, node.lower(), node.upper(), node.capitalize()}
-        c = self.memory.get_concept(node)
-        if c:
-            variants.add(c.id)
-            variants.add(c.name)
-            variants.add(c.name.upper())
+        variants = {
+            node,
+            node.lower(),
+            node.upper(),
+            node.capitalize(),
+            node.replace("_", " "),
+        }
+        for lookup in (node, node.replace("_", " ")):
+            c = self.memory.get_concept(lookup)
+            if c:
+                variants.add(c.id)
+                variants.add(c.name)
+                variants.add(c.name.upper())
         return variants
 
     def _to_name(self, id_or_name: str) -> str:
@@ -51,23 +63,28 @@ class DualSpeedInfillingEngine:
         objs: Set[str] = set()
         for variant in self._resolve_variants(node):
             for r in self.memory.get_relations(subject_id=variant, predicate=predicate):
-                objs.add(self._to_name(r.object_id))
+                if r.weight_positive > r.weight_negative:
+                    objs.add(self._to_name(r.object_id))
         return list(objs)
 
     def _get_incoming(self, node: str, predicate: str) -> List[str]:
         subjs: Set[str] = set()
         for variant in self._resolve_variants(node):
             for r in self.memory.get_relations(object_id=variant, predicate=predicate):
-                subjs.add(self._to_name(r.subject_id))
+                if r.weight_positive > r.weight_negative:
+                    subjs.add(self._to_name(r.subject_id))
         return list(subjs)
 
     def query(
-        self, subject: str, target: str, predicate: str = "is_a"
+        self, subject: str, target: str, predicate: str | None = None
     ) -> InfillingResult:
         t0 = time.perf_counter()
         subj_clean = subject.strip().upper().replace(" ", "_")
         target_clean = target.strip().upper().replace(" ", "_")
-        pred_clean = predicate.strip().lower()
+        configured_predicate = predicate or self.verifier.registry.primary_predicate(
+            "taxonomy"
+        )
+        pred_clean = (configured_predicate or "").strip().lower()
 
         # 1. FAST MODE: Single-hop direct index / cache hit (<0.2ms)
         direct_objs = self._get_outgoing(subj_clean, pred_clean)
@@ -76,7 +93,7 @@ class DualSpeedInfillingEngine:
             return InfillingResult(
                 mode="FAST",
                 path=[subj_clean, target_clean],
-                confidence=0.95,
+                confidence=self.policy.fast_confidence,
                 inspectable_trace=f"Direct reflex hit: ({subj_clean}, {pred_clean}, {target_clean})",
                 latency_ms=lat,
             )
@@ -90,7 +107,7 @@ class DualSpeedInfillingEngine:
         bwd_frontier: Set[str] = {target_clean}
 
         collision_node: Optional[str] = None
-        max_depth = 8
+        max_depth = self.policy.max_depth
         depth = 0
 
         trace_log = [
@@ -163,7 +180,11 @@ class DualSpeedInfillingEngine:
             return InfillingResult(
                 mode="THINKING",
                 path=full_path,
-                confidence=0.90 if gate_res.passed else 0.0,
+                confidence=(
+                    self.policy.verified_confidence
+                    if gate_res.passed
+                    else self.policy.unknown_confidence
+                ),
                 inspectable_trace="\n".join(trace_log),
                 latency_ms=lat,
             )
@@ -175,7 +196,7 @@ class DualSpeedInfillingEngine:
         return InfillingResult(
             mode="THINKING",
             path=[],
-            confidence=0.0,
+            confidence=self.policy.unknown_confidence,
             inspectable_trace="\n".join(trace_log),
             latency_ms=lat,
         )

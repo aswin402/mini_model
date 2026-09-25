@@ -29,6 +29,17 @@ def test_proportional_rate_word_problem():
     assert res.result == 180
 
 
+def test_proportional_rate_uses_configured_unit_graph():
+    solver = MathStorySolver()
+    problem = "A vehicle travels at 10 m/s for 1 hour. How far does it travel?"
+
+    res = solver.solve_story(problem)
+
+    assert res is not None
+    assert res.status == "SOLVED"
+    assert res.result == 36
+
+
 def test_fractional_partition_word_problem():
     solver = MathStorySolver()
     problem = (
