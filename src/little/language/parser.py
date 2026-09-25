@@ -546,6 +546,74 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         return None
 
     @classmethod
+    def _parse_split_semantic_pattern(
+        cls, pattern: Any, text: str, known_concepts: set[str] | None
+    ) -> tuple[str, str, Any] | None:
+        """Apply one data-defined semantic pattern that needs a token boundary."""
+        if pattern.split_strategy is None or pattern.body_group is None:
+            return None
+        match = re.match(pattern.pattern, text, re.IGNORECASE)
+        if match is None:
+            return None
+        body = (match.group(pattern.body_group) or "").strip()
+        tokens = body.split()
+        split: tuple[str, str] | None = None
+
+        if pattern.split_strategy == "known_concepts_or_last_token":
+            if known_concepts:
+                for index in range(len(tokens) - 1, 0, -1):
+                    subject = cls.clean_noun(" ".join(tokens[:index]))
+                    target = cls.clean_noun(" ".join(tokens[index:]))
+                    if subject in known_concepts and target in known_concepts:
+                        split = (subject, target)
+                        break
+                    if split is None and (
+                        subject in known_concepts or target in known_concepts
+                    ):
+                        split = (subject, target)
+            if split is None and len(tokens) >= 2:
+                split = (
+                    cls.clean_noun(" ".join(tokens[:-1])),
+                    cls.clean_noun(tokens[-1]),
+                )
+
+        elif pattern.split_strategy == "known_subject_or_tail":
+            if known_concepts:
+                for index in range(1, len(tokens)):
+                    subject = cls.clean_noun(" ".join(tokens[:index]))
+                    target = cls.clean_noun(" ".join(tokens[index:]))
+                    if subject in known_concepts and target in known_concepts:
+                        split = (subject, target)
+                        break
+                    if (
+                        split is None
+                        and subject in known_concepts
+                        and cls.is_valid_concept(target)
+                    ):
+                        split = (subject, target)
+            if split is None and len(tokens) >= 2:
+                split = (
+                    cls.clean_noun(" ".join(tokens[:-1])),
+                    cls.clean_noun(tokens[-1]),
+                )
+
+        elif pattern.split_strategy == "action_verb_tail":
+            if len(tokens) >= 2:
+                action = cls._policy().action_verbs.get(tokens[-1].lower())
+                subject = cls.clean_noun(" ".join(tokens[:-1]))
+                if action is not None and cls.is_valid_concept(subject):
+                    split = (subject, action)
+
+        if split is None or not split[0] or not split[1]:
+            return None
+        predicate = pattern.predicate
+        if predicate is None and pattern.predicate_role is not None:
+            predicate = getattr(cls._policy().semantic, pattern.predicate_role)
+        if predicate is None:
+            return None
+        return (split[0], predicate, split[1])
+
+    @classmethod
     def parse_question(
         cls, text: str, known_concepts: set[str] | None = None
     ) -> tuple[str, str, Any] | None:
@@ -687,53 +755,15 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
                 if cls.is_valid_concept(s) and cls.is_valid_concept(target):
                     return (s, "__why_is_a__", target)
 
-        # 8. Capability: "Can an eagle fly?", "Can fish swim?", "Can whales communicate using songs?"
-        m_can = re.match(r"^can\s+(.+?)\s+([a-zA-Z0-9_\s\-]+)$", q, re.IGNORECASE)
-        if m_can:
-            raw_s = m_can.group(1).strip()
-            raw_act = m_can.group(2).strip()
-            if known_concepts and (" " in raw_s or " " in raw_act):
-                all_tokens = (raw_s + " " + raw_act).split()
-                best_split = None
-                for i in range(1, len(all_tokens)):
-                    cs = cls.clean_noun(" ".join(all_tokens[:i]))
-                    ca = cls.clean_noun(" ".join(all_tokens[i:]))
-                    if cs in known_concepts and ca in known_concepts:
-                        best_split = (cs, ca)
-                        break
-                    elif cs in known_concepts and cls.is_valid_concept(ca):
-                        best_split = (cs, ca)
-                if best_split:
-                    return (
-                        best_split[0],
-                        cls._policy().semantic.capability,
-                        best_split[1],
-                    )
-            s = cls.clean_noun(raw_s)
-            act = cls.clean_noun(raw_act)
-            if cls.is_valid_concept(s) and act:
-                return (s, cls._policy().semantic.capability, act)
-            if not cls.is_valid_concept(s):
-                fallback_tokens = raw_act.split()
-                if len(fallback_tokens) > 1:
-                    s = cls.clean_noun(" ".join(fallback_tokens[:-1]))
-                    act = cls.clean_noun(fallback_tokens[-1])
-                    if cls.is_valid_concept(s) and act:
-                        return (s, cls._policy().semantic.capability, act)
-
-        # 8b. Capability with does/do: "Does a dolphin swim?", "Do birds fly?", "Does it swim?"
-        m_does_act = re.match(
-            r"^(?:does|do)\s+(.+?)\s+("
-            + "|".join(sorted(cls._policy().action_verbs))
-            + r")$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_does_act:
-            s = cls.clean_noun(m_does_act.group(1))
-            act = cls._policy().action_verbs[m_does_act.group(2).lower()]
-            if cls.is_valid_concept(s):
-                return (s, cls._policy().semantic.capability, act)
+        # Capability split strategies are selected by the semantic catalog.
+        for pattern in cls._semantic_patterns().patterns:
+            if pattern.phase != "capability":
+                continue
+            parsed = cls._parse_split_semantic_pattern(
+                pattern, q, known_concepts
+            )
+            if parsed is not None:
+                return parsed
 
         # 11. Property boolean query: "Is the apple red?", "Is it red?"
         colors = sorted(cls._policy().colors)
@@ -808,45 +838,14 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
 
         # 5. Taxonomic boundary strategies are selected by the semantic catalog.
         for pattern in cls._semantic_patterns().patterns:
-            if pattern.split_strategy is None:
+            if pattern.phase != "taxonomy":
                 continue
-            match = re.match(pattern.pattern, q, re.IGNORECASE)
-            if match is None or pattern.body_group is None:
+            parsed = cls._parse_split_semantic_pattern(
+                pattern, q, known_concepts
+            )
+            if parsed is None:
                 continue
-            body = match.group(pattern.body_group).strip()
-            tokens = body.split()
-            best_split = None
-            if pattern.split_strategy == "known_concepts_or_last_token":
-                if known_concepts:
-                    for i in range(len(tokens) - 1, 0, -1):
-                        candidate_subject = cls.clean_noun(" ".join(tokens[:i]))
-                        candidate_target = cls.clean_noun(" ".join(tokens[i:]))
-                        if (
-                            candidate_subject in known_concepts
-                            and candidate_target in known_concepts
-                        ):
-                            best_split = (candidate_subject, candidate_target)
-                            break
-                        if (
-                            best_split is None
-                            and (
-                                candidate_subject in known_concepts
-                                or candidate_target in known_concepts
-                            )
-                        ):
-                            best_split = (candidate_subject, candidate_target)
-                if best_split is None and len(tokens) >= 2:
-                    best_split = (
-                        cls.clean_noun(" ".join(tokens[:-1])),
-                        cls.clean_noun(tokens[-1]),
-                    )
-            if best_split is None:
-                continue
-            predicate = pattern.predicate
-            if predicate is None and pattern.predicate_role is not None:
-                predicate = getattr(cls._policy().semantic, pattern.predicate_role)
-            if predicate is not None:
-                return (best_split[0], predicate, best_split[1])
+            return parsed
 
         return None
 

@@ -26,6 +26,7 @@ class SemanticQuestionPattern:
     validate_target: bool
     split_strategy: str | None = None
     body_group: int | None = None
+    phase: str = "direct"
 
 
 @dataclass(frozen=True)
@@ -98,11 +99,21 @@ class SemanticQuestionPolicy:
                 )
             split_strategy = raw.get("split_strategy")
             body_group = raw.get("body_group")
+            phase = raw.get("phase", "direct")
+            if not isinstance(phase, str) or not phase.strip():
+                raise TypeError(
+                    f"{path} patterns[{index}] phase must be a non-empty string"
+                )
+            phase = phase.strip().lower()
             if split_strategy is not None:
                 if split_strategy != "known_concepts_or_last_token":
-                    raise ValueError(
-                        f"{path} patterns[{index}] has an unsupported split_strategy"
-                    )
+                    if split_strategy not in {
+                        "known_subject_or_tail",
+                        "action_verb_tail",
+                    }:
+                        raise ValueError(
+                            f"{path} patterns[{index}] has an unsupported split_strategy"
+                        )
                 if not isinstance(body_group, int) or body_group <= 0:
                     raise TypeError(
                         f"{path} patterns[{index}] body_group must be a positive integer"
@@ -160,6 +171,7 @@ class SemanticQuestionPolicy:
                     validate_target=validate_target,
                     split_strategy=split_strategy,
                     body_group=body_group,
+                    phase=phase,
                 )
             )
 

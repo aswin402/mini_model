@@ -38,6 +38,22 @@
       "target_literal": "?"
     },
     {
+      "name": "capability_can",
+      "pattern": "^can\\s+(.+)$",
+      "predicate_role": "capability",
+      "split_strategy": "known_subject_or_tail",
+      "body_group": 1,
+      "phase": "capability"
+    },
+    {
+      "name": "capability_action_verb",
+      "pattern": "^(?:does|do)\\s+(.+)$",
+      "predicate_role": "capability",
+      "split_strategy": "action_verb_tail",
+      "body_group": 1,
+      "phase": "capability"
+    },
+    {
       "name": "composition",
       "pattern": "^what\\s+(?:is|are)\\s+(.+?)\\s+made\\s+of$",
       "predicate_role": "composition",
@@ -121,7 +137,8 @@
       "pattern": "^(?:is|are)\\s+(.+)$",
       "predicate_role": "taxonomy",
       "split_strategy": "known_concepts_or_last_token",
-      "body_group": 1
+      "body_group": 1,
+      "phase": "taxonomy"
     }
   ]
 }
