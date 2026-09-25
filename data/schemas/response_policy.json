@@ -24,6 +24,83 @@
       "unit_convert": "{value} {from_unit} is equal to {answer} {to_unit}.",
       "evaluate_expression": "The result of {expression} is {answer}."
     },
+    "math_routes": {
+      "IS_PRIME": {
+        "kind": "boolean",
+        "true_template": "is_prime_true",
+        "false_template": "is_prime_false",
+        "arguments": {"n": "n"}
+      },
+      "PALINDROME": {
+        "kind": "boolean",
+        "true_template": "palindrome_true",
+        "false_template": "palindrome_false",
+        "arguments": {"text": "text"}
+      },
+      "NTH_PRIME": {
+        "template": "nth_prime",
+        "answer": "grouped",
+        "arguments": {"n": "n"}
+      },
+      "FACTORIAL": {
+        "template": "factorial",
+        "answer": "grouped",
+        "arguments": {"n": "n"}
+      },
+      "FIBONACCI": {
+        "template": "fibonacci",
+        "answer": "grouped",
+        "arguments": {"n": "n"}
+      },
+      "REVERSE_STRING": {
+        "template": "reverse_string",
+        "arguments": {"text": "text"}
+      },
+      "SQRT": {
+        "template": "sqrt",
+        "arguments": {"n": "n"}
+      },
+      "GCD": {
+        "template": "gcd",
+        "arguments": {"a": "a", "b": "b"}
+      },
+      "LCM": {
+        "template": "lcm",
+        "arguments": {"a": "a", "b": "b"}
+      },
+      "PERCENT": {
+        "template": "percent",
+        "arguments": {"percent": "percent", "total": "total"}
+      },
+      "AVERAGE": {"template": "average"},
+      "SOLVE_LINEAR": {"template": "solve_linear"},
+      "SOLVE_QUADRATIC": {
+        "kind": "quadratic",
+        "single_template": "solve_quadratic_single",
+        "multiple_template": "solve_quadratic_multiple",
+        "value_template": "solve_quadratic_value"
+      },
+      "CALCULUS_DERIVATIVE": {
+        "template": "calculus_derivative",
+        "arguments": {"expression": "expression"}
+      },
+      "SIMPLIFY_EXPR": {
+        "template": "simplify_expression",
+        "arguments": {"expression": "expression"}
+      },
+      "UNIT_CONVERT": {
+        "template": "unit_convert",
+        "arguments": {
+          "value": "value",
+          "from_unit": "from_unit",
+          "to_unit": "to_unit"
+        }
+      },
+      "EVAL_EXPR": {
+        "template": "evaluate_expression",
+        "arguments": {"expression": "expression"}
+      }
+    },
     "generic_templates": {
       "numeric_result": "The result is {answer}.",
       "value_result": "The result is {answer}."
