@@ -6,6 +6,7 @@ from pathlib import Path
 from little.core.models import Skill
 from little.memory.store import MemoryStore
 from little.procedural.runner import SkillRunner
+from little.procedural.skill_catalog import ProceduralSkillCatalog
 from little.procedural.skill_policy import ProceduralSkillPolicy
 from little.procedural.skills import get_builtin_skills, register_builtin_skills
 
@@ -120,6 +121,35 @@ def test_builtin_skill_catalog_can_be_restricted_by_policy(tmp_path: Path):
     skills = get_builtin_skills(policy)
 
     assert [skill.name for skill in skills] == ["ADD"]
+
+
+def test_builtin_skill_definitions_are_loaded_from_injected_catalog(tmp_path: Path):
+    catalog_path = tmp_path / "procedural_skill_catalog.json"
+    catalog_path.write_text(
+        json.dumps(
+            {
+                "format": "little.procedural_skill_catalog.v1",
+                "skills": [
+                    {
+                        "name": "ADD",
+                        "parameters": ["a", "b"],
+                        "code": "a - b",
+                        "description": "Configured subtraction test skill",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    catalog = ProceduralSkillCatalog.load(tmp_path)
+
+    skills = get_builtin_skills(catalog=catalog)
+    result = SkillRunner.execute(skills[0], a=9, b=4)
+
+    assert [skill.name for skill in skills] == ["ADD"]
+    assert skills[0].description == "Configured subtraction test skill"
+    assert result.success is True
+    assert result.result == 5
 
 
 def test_skill_runner_uses_injected_execution_policy(tmp_path: Path):

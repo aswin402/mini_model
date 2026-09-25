@@ -1,0 +1,287 @@
+{
+  "format": "little.procedural_skill_catalog.v1",
+  "skills": [
+    {
+      "name": "ADD",
+      "parameters": ["a", "b"],
+      "code": "a + b",
+      "description": "Exact arithmetic addition of two numbers: a + b"
+    },
+    {
+      "name": "SUBTRACT",
+      "parameters": ["a", "b"],
+      "code": "a - b",
+      "description": "Exact arithmetic subtraction: a - b"
+    },
+    {
+      "name": "MULTIPLY",
+      "parameters": ["a", "b"],
+      "code": "a * b",
+      "description": "Exact arithmetic multiplication: a * b"
+    },
+    {
+      "name": "DIVIDE",
+      "parameters": ["a", "b"],
+      "code": "a / b",
+      "description": "Exact arithmetic division: a / b"
+    },
+    {
+      "name": "POWER",
+      "parameters": ["a", "b"],
+      "code": "a ** b",
+      "description": "Exact exponentiation: a ** b"
+    },
+    {
+      "name": "FACTORIAL",
+      "parameters": ["n"],
+      "code": "math.factorial(int(n))",
+      "description": "Factorial of non-negative integer n: n!"
+    },
+    {
+      "name": "SLICE",
+      "parameters": ["item", "count"],
+      "implementation": "slice",
+      "description": "Physical transformation: cuts an entity or object into N discrete slices/parts."
+    },
+    {
+      "name": "FIBONACCI",
+      "parameters": ["n"],
+      "code_lines": [
+        "n_val = int(n)",
+        "if n_val <= 0:",
+        "    return 0",
+        "if n_val == 1:",
+        "    return 1",
+        "a, b = 0, 1",
+        "for _ in range(n_val):",
+        "    a, b = b, a + b",
+        "return a"
+      ],
+      "description": "Exact computation of the n-th Fibonacci number: Fib(n)"
+    },
+    {
+      "name": "IS_PRIME",
+      "parameters": ["n"],
+      "code_lines": [
+        "num = int(n)",
+        "if num < 2:",
+        "    return False",
+        "if num in (2, 3):",
+        "    return True",
+        "if num % 2 == 0 or num % 3 == 0:",
+        "    return False",
+        "i = 5",
+        "while i * i <= num:",
+        "    if num % i == 0 or num % (i + 2) == 0:",
+        "        return False",
+        "    i += 6",
+        "return True"
+      ],
+      "description": "Deterministic primality test for integer n"
+    },
+    {
+      "name": "REVERSE_STRING",
+      "parameters": ["text"],
+      "code": "str(text)[::-1]",
+      "description": "Reverse a string exactly: text[::-1]"
+    },
+    {
+      "name": "PALINDROME",
+      "parameters": ["text"],
+      "code_lines": [
+        "cleaned = ''.join(c.lower() for c in str(text) if c.isalnum())",
+        "return cleaned == cleaned[::-1]"
+      ],
+      "description": "Verify whether a given string is a palindrome"
+    },
+    {
+      "name": "NTH_PRIME",
+      "parameters": ["n"],
+      "code_lines": [
+        "n_val = int(n)",
+        "if n_val < 1:",
+        "    return 2",
+        "primes = [2]",
+        "cand = 3",
+        "while len(primes) < n_val:",
+        "    is_p = True",
+        "    for p in primes:",
+        "        if p * p > cand:",
+        "            break",
+        "        if cand % p == 0:",
+        "            is_p = False",
+        "            break",
+        "    if is_p:",
+        "        primes.append(cand)",
+        "    cand += 2",
+        "return primes[-1]"
+      ],
+      "description": "Exact computation of the n-th prime number (e.g. 1st prime=2, 1000th prime=7919)"
+    },
+    {
+      "name": "SQRT",
+      "parameters": ["n"],
+      "code_lines": [
+        "n_val = float(n)",
+        "if n_val < 0:",
+        "    return 'undefined'",
+        "if n_val.is_integer() and math.isqrt(int(n_val)) ** 2 == int(n_val):",
+        "    return math.isqrt(int(n_val))",
+        "return round(math.sqrt(n_val), 6)"
+      ],
+      "description": "Exact computation of the square root of non-negative number n"
+    },
+    {
+      "name": "GCD",
+      "parameters": ["a", "b"],
+      "code": "math.gcd(int(a), int(b))",
+      "description": "Exact computation of the greatest common divisor of a and b: gcd(a, b)"
+    },
+    {
+      "name": "LCM",
+      "parameters": ["a", "b"],
+      "code": "math.lcm(int(a), int(b))",
+      "description": "Exact computation of the least common multiple of a and b: lcm(a, b)"
+    },
+    {
+      "name": "PERCENT",
+      "parameters": ["percent", "total"],
+      "code_lines": [
+        "p = float(percent)",
+        "t = float(total)",
+        "res = (p / 100.0) * t",
+        "if res.is_integer():",
+        "    return int(res)",
+        "return round(res, 6)"
+      ],
+      "description": "Exact computation of percentage: (percent / 100) * total"
+    },
+    {
+      "name": "AVERAGE",
+      "parameters": ["numbers"],
+      "code_lines": [
+        "if isinstance(numbers, str):",
+        "    nums = [float(x.strip()) for x in numbers.replace(',', ' ').split() if x.strip()]",
+        "else:",
+        "    nums = [float(x) for x in numbers]",
+        "if not nums:",
+        "    return 0",
+        "res = sum(nums) / len(nums)",
+        "if res.is_integer():",
+        "    return int(res)",
+        "return round(res, 6)"
+      ],
+      "description": "Exact computation of arithmetic mean: sum(numbers) / len(numbers)"
+    },
+    {
+      "name": "SOLVE_LINEAR",
+      "parameters": ["a", "b", "c"],
+      "code_lines": [
+        "a_val = float(a)",
+        "b_val = float(b)",
+        "c_val = float(c)",
+        "if a_val == 0:",
+        "    return 'undefined (division by zero)'",
+        "res = (c_val - b_val) / a_val",
+        "if res.is_integer():",
+        "    return int(res)",
+        "return round(res, 6)"
+      ],
+      "description": "Exact linear equation solver for a*x + b = c"
+    },
+    {
+      "name": "EVAL_EXPR",
+      "parameters": ["expression"],
+      "code_lines": [
+        "operators = {",
+        "    ast.Add: operator.add,",
+        "    ast.Sub: operator.sub,",
+        "    ast.Mult: operator.mul,",
+        "    ast.Div: operator.truediv,",
+        "    ast.FloorDiv: operator.floordiv,",
+        "    ast.Mod: operator.mod,",
+        "    ast.Pow: operator.pow,",
+        "    ast.USub: operator.neg,",
+        "    ast.UAdd: operator.pos,",
+        "}",
+        "",
+        "def eval_node(node):",
+        "    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):",
+        "        return node.value",
+        "    elif isinstance(node, ast.BinOp) and type(node.op) in operators:",
+        "        left = eval_node(node.left)",
+        "        right = eval_node(node.right)",
+        "        return operators[type(node.op)](left, right)",
+        "    elif isinstance(node, ast.UnaryOp) and type(node.op) in operators:",
+        "        operand = eval_node(node.operand)",
+        "        return operators[type(node.op)](operand)",
+        "    else:",
+        "        raise ValueError(f'Unsupported AST node: {type(node).__name__}')",
+        "",
+        "tree = ast.parse(str(expression).strip(), mode='eval')",
+        "res = eval_node(tree.body)",
+        "if isinstance(res, float) and res.is_integer():",
+        "    return int(res)",
+        "return round(res, 6) if isinstance(res, float) else res"
+      ],
+      "description": "Safe deterministic arithmetic AST evaluator"
+    },
+    {
+      "name": "SOLVE_QUADRATIC",
+      "parameters": ["equation"],
+      "code_lines": [
+        "clean = str(equation).strip()",
+        "x = sympy.Symbol('x')",
+        "if '=' in clean:",
+        "    lhs, rhs = clean.split('=', 1)",
+        "    lhs_p = parse_expr(lhs.strip(), transformations=sympy_transformations)",
+        "    rhs_p = parse_expr(rhs.strip(), transformations=sympy_transformations)",
+        "    eq = lhs_p - rhs_p",
+        "else:",
+        "    eq = parse_expr(clean, transformations=sympy_transformations)",
+        "sols = sympy.solve(eq, x)",
+        "formatted = []",
+        "for s in sols:",
+        "    if s.is_real:",
+        "        if s.is_integer:",
+        "            formatted.append(int(s))",
+        "        else:",
+        "            val = float(s)",
+        "            formatted.append(int(val) if val.is_integer() else round(val, 4))",
+        "    else:",
+        "        formatted.append(str(s).replace('**', '^'))",
+        "return formatted"
+      ],
+      "description": "Solves quadratic and polynomial equations in x using SymPy"
+    },
+    {
+      "name": "CALCULUS_DERIVATIVE",
+      "parameters": ["expression"],
+      "code_lines": [
+        "clean = str(expression).strip()",
+        "x = sympy.Symbol('x')",
+        "parsed = parse_expr(clean, transformations=sympy_transformations)",
+        "deriv = sympy.diff(parsed, x)",
+        "return str(deriv).replace('**', '^')"
+      ],
+      "description": "Calculates exact symbolic derivative d/dx using SymPy"
+    },
+    {
+      "name": "SIMPLIFY_EXPR",
+      "parameters": ["expression"],
+      "code_lines": [
+        "clean = str(expression).strip()",
+        "parsed = parse_expr(clean, transformations=sympy_transformations)",
+        "simplified = sympy.simplify(parsed)",
+        "return str(simplified).replace('**', '^')"
+      ],
+      "description": "Symbolically simplifies algebraic expressions using SymPy"
+    },
+    {
+      "name": "UNIT_CONVERT",
+      "parameters": ["value", "from_unit", "to_unit"],
+      "implementation": "unit_conversion",
+      "description": "Exact deterministic unit conversion across temperature, distance, mass, and time"
+    }
+  ]
+}
