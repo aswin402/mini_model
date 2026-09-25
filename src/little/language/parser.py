@@ -33,6 +33,7 @@ from little.inference.engine import InferenceEngine
 from little.inference.invariant_gates import DeepSeekInvariantVerifier
 from little.language.construction import ConstructionEngine
 from little.language.dialogue import DialogueContext
+from little.language.math_policy import MathCapture
 from little.language.parser_policy import ParserPolicy
 from little.language.perception import DeterministicPerceptionAdapter, PerceptionAdapter
 from little.memory.store import MemoryStore
@@ -429,6 +430,34 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         return float(value) if "." in value else int(value)
 
     @classmethod
+    def _parse_math_value(cls, value: str, value_type: str) -> Any:
+        if value_type == "text":
+            return value.strip()
+        if value_type == "numbers":
+            raw_numbers = re.split(
+                r"\s*(?:,|\band\b)\s*|\s+",
+                value.strip(),
+                flags=re.IGNORECASE,
+            )
+            return [
+                cls._parse_math_number(number)
+                for number in raw_numbers
+                if number
+            ]
+        return cls._parse_math_number(value)
+
+    @staticmethod
+    def _normalize_math_value(value: Any, normalizers: tuple[str, ...]) -> Any:
+        for normalizer in normalizers:
+            if normalizer == "lower" and isinstance(value, str):
+                value = value.lower()
+            elif normalizer == "float":
+                value = float(value)
+            elif normalizer == "caret_to_power" and isinstance(value, str):
+                value = value.replace("^", "**")
+        return value
+
+    @classmethod
     def _parse_configured_math(
         cls, text: str
     ) -> tuple[str, str, dict[str, Any]] | None:
@@ -438,24 +467,29 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             if match is None:
                 continue
             try:
-                raw_values = [match.group(group) for group in pattern.argument_groups]
-                if pattern.value_type == "text":
-                    values: list[Any] = [raw_values[0].strip()]
-                elif pattern.value_type == "numbers":
-                    raw_numbers = re.split(
-                        r"\s*(?:,|\band\b)\s*|\s+",
-                        raw_values[0].strip(),
-                        flags=re.IGNORECASE,
+                captures = pattern.captures or tuple(
+                    MathCapture(
+                        group=group,
+                        name=name,
+                        value_type=pattern.value_type,
                     )
-                    values = [
-                        [
-                            cls._parse_math_number(value)
-                            for value in raw_numbers
-                            if value
-                        ]
-                    ]
-                else:
-                    values = [cls._parse_math_number(value) for value in raw_values]
+                    for group, name in zip(
+                        pattern.argument_groups, pattern.argument_names
+                    )
+                )
+                arguments: dict[str, Any] = dict(pattern.fixed_arguments)
+                for capture in captures:
+                    value = cls._parse_math_value(
+                        match.group(capture.group), capture.value_type
+                    )
+                    value = cls._normalize_math_value(value, capture.normalizers)
+                    if (
+                        capture.sign_group is not None
+                        and match.group(capture.sign_group).strip() == "-"
+                    ):
+                        value = -value
+                    if capture.include:
+                        arguments[capture.name] = value
             except (IndexError, ValueError):
                 continue
 
@@ -466,10 +500,12 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             if skill is None:
                 continue
 
-            if pattern.reverse_arguments and len(values) == 2:
-                values.reverse()
-            arguments = dict(pattern.fixed_arguments)
-            arguments.update(zip(pattern.argument_names, values))
+            if pattern.reverse_arguments:
+                first_name, second_name = pattern.argument_names[:2]
+                arguments[first_name], arguments[second_name] = (
+                    arguments[second_name],
+                    arguments[first_name],
+                )
             return (skill, "__math__", arguments)
         return None
 
@@ -531,87 +567,6 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             return (skill_name, "__math__", args)
 
         # 1. Arithmetic and text calculations are defined by the versioned math catalog.
-
-        m_lin = re.match(
-            r"^(?:solve\s+)?(-?\d+(?:\.\d+)?)\s*\*?\s*x\s*([+-])\s*(\d+(?:\.\d+)?)\s*=\s*(-?\d+(?:\.\d+)?)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_lin:
-            a_v = float(m_lin.group(1))
-            sign = m_lin.group(2)
-            b_raw = float(m_lin.group(3))
-            b_v = -b_raw if sign == "-" else b_raw
-            c_v = float(m_lin.group(4))
-            return ("SOLVE_LINEAR", "__math__", {"a": a_v, "b": b_v, "c": c_v})
-
-        # Quadratic & polynomial equations: "Solve x^2 - 5x + 6 = 0", "Solve 2x^2 + 5x - 3 = 0"
-        m_quad = re.match(r"^solve\s+(.+)$", q, re.IGNORECASE)
-        if m_quad:
-            body = m_quad.group(1).strip()
-            if any(term in body for term in ("x^2", "x**2", "x ^ 2", "x * * 2")):
-                return (
-                    "SOLVE_QUADRATIC",
-                    "__math__",
-                    {"equation": body},
-                )
-
-        # Calculus derivatives: "What is the derivative of x^3 + 2x?", "Derivative of x^2 + 3x"
-        m_diff = re.match(
-            r"^(?:(?:what\s+is\s+)?(?:the\s+)?derivative\s+of|diff(?:erentiate)?)\s+([x0-9\s+\-*/^.()]+)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_diff:
-            return (
-                "CALCULUS_DERIVATIVE",
-                "__math__",
-                {"expression": m_diff.group(1).strip()},
-            )
-
-        # Algebraic simplification: "Simplify 2x + 3x + 5"
-        m_simp = re.match(
-            r"^(?:(?:can\s+you\s+)?simplify)\s+([x0-9\s+\-*/^.()]+)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_simp:
-            return (
-                "SIMPLIFY_EXPR",
-                "__math__",
-                {"expression": m_simp.group(1).strip()},
-            )
-
-        # Unit conversion: "Convert 100 km to miles", "Convert 25 celsius to fahrenheit"
-        m_conv = re.match(
-            r"^(?:convert\s+)?(\d+(?:\.\d+)?)\s+([a-zA-Z]+)\s+(?:to|in|into)\s+([a-zA-Z]+)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_conv:
-            val = (
-                float(m_conv.group(1))
-                if "." in m_conv.group(1)
-                else int(m_conv.group(1))
-            )
-            return (
-                "UNIT_CONVERT",
-                "__math__",
-                {
-                    "value": val,
-                    "from_unit": m_conv.group(2).lower(),
-                    "to_unit": m_conv.group(3).lower(),
-                },
-            )
-
-        m_expr = re.match(
-            r"^(?:(?:what\s+is|calculate|compute|evaluate)\s+)?\s*(\(?\s*\d+(?:\.\d+)?\s*(?:[+\-*/^]|(?:\*\*))\s*[-+*/()0-9\s.^]+)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_expr:
-            clean_expr = m_expr.group(1).strip().replace("^", "**")
-            return ("EVAL_EXPR", "__math__", {"expression": clean_expr})
 
         # 2. Temporal Continuous-Time queries: "What color is the apple slice after 2 hours?"
         m_temp_color = re.match(

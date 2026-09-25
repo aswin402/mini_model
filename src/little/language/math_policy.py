@@ -12,6 +12,18 @@ from little.core.runtime_paths import RuntimePaths
 
 
 @dataclass(frozen=True)
+class MathCapture:
+    """Declarative conversion for one regular-expression capture."""
+
+    group: int
+    name: str
+    value_type: str = "number"
+    normalizers: tuple[str, ...] = ()
+    sign_group: int | None = None
+    include: bool = True
+
+
+@dataclass(frozen=True)
 class MathPattern:
     """Declarative arithmetic pattern, capture conversion, and argument mapping."""
 
@@ -25,6 +37,7 @@ class MathPattern:
     argument_names: tuple[str, ...] = ("a", "b")
     value_type: str = "number"
     fixed_arguments: Mapping[str, int | float] = MappingProxyType({})
+    captures: tuple[MathCapture, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -60,34 +73,112 @@ class MathPatternPolicy:
                     )
                 return value.strip()
 
-            raw_groups = raw.get("argument_groups")
-            if (
-                not isinstance(raw_groups, list)
-                or not raw_groups
-                or not all(isinstance(value, int) and value > 0 for value in raw_groups)
-            ):
-                raise TypeError(
-                    f"{path} patterns[{index}] argument_groups must contain positive integers"
-                )
-
-            raw_names = raw.get("argument_names")
-            if raw_names is None:
-                if len(raw_groups) != 2:
+            raw_captures = raw.get("captures")
+            captures: tuple[MathCapture, ...] = ()
+            if raw_captures is not None:
+                if not isinstance(raw_captures, list) or not raw_captures:
                     raise TypeError(
-                        f"{path} patterns[{index}] argument_names is required for non-binary patterns"
+                        f"{path} patterns[{index}] captures must be a non-empty list"
                     )
-                argument_names = ("a", "b")
-            elif (
-                not isinstance(raw_names, list)
-                or len(raw_names) != len(raw_groups)
-                or not all(isinstance(value, str) and value.strip() for value in raw_names)
-                or len({value.strip() for value in raw_names}) != len(raw_names)
-            ):
-                raise TypeError(
-                    f"{path} patterns[{index}] argument_names must contain unique non-empty strings matching argument_groups"
-                )
+
+                parsed_captures: list[MathCapture] = []
+                capture_names: set[str] = set()
+                for capture_index, raw_capture in enumerate(raw_captures):
+                    if not isinstance(raw_capture, dict):
+                        raise TypeError(
+                            f"{path} patterns[{index}] captures[{capture_index}] must be an object"
+                        )
+                    group = raw_capture.get("group")
+                    name = raw_capture.get("name")
+                    value_type = raw_capture.get("value_type", "number")
+                    normalizers = raw_capture.get("normalizers", [])
+                    sign_group = raw_capture.get("sign_group")
+                    include = raw_capture.get("include", True)
+                    if not isinstance(group, int) or group <= 0:
+                        raise TypeError(
+                            f"{path} patterns[{index}] captures[{capture_index}] group must be a positive integer"
+                        )
+                    if not isinstance(name, str) or not name.strip():
+                        raise TypeError(
+                            f"{path} patterns[{index}] captures[{capture_index}] name must be a non-empty string"
+                        )
+                    name = name.strip()
+                    if name in capture_names:
+                        raise ValueError(
+                            f"{path} patterns[{index}] capture names must be unique"
+                        )
+                    capture_names.add(name)
+                    if value_type not in {"number", "text", "numbers"}:
+                        raise ValueError(
+                            f"{path} patterns[{index}] captures[{capture_index}] value_type must be number, text, or numbers"
+                        )
+                    if not isinstance(normalizers, list) or not all(
+                        isinstance(value, str) and value.strip()
+                        for value in normalizers
+                    ):
+                        raise TypeError(
+                            f"{path} patterns[{index}] captures[{capture_index}] normalizers must be strings"
+                        )
+                    if sign_group is not None and (
+                        not isinstance(sign_group, int) or sign_group <= 0
+                    ):
+                        raise TypeError(
+                            f"{path} patterns[{index}] captures[{capture_index}] sign_group must be a positive integer"
+                        )
+                    if not isinstance(include, bool):
+                        raise TypeError(
+                            f"{path} patterns[{index}] captures[{capture_index}] include must be boolean"
+                        )
+                    parsed_captures.append(
+                        MathCapture(
+                            group=group,
+                            name=name,
+                            value_type=value_type,
+                            normalizers=tuple(
+                                value.strip().lower() for value in normalizers
+                            ),
+                            sign_group=sign_group,
+                            include=include,
+                        )
+                    )
+
+                captures = tuple(parsed_captures)
+                raw_groups = [capture.group for capture in captures]
+                argument_names = tuple(capture.name for capture in captures)
             else:
-                argument_names = tuple(value.strip() for value in raw_names)
+                raw_groups = raw.get("argument_groups")
+                if (
+                    not isinstance(raw_groups, list)
+                    or not raw_groups
+                    or not all(
+                        isinstance(value, int) and value > 0 for value in raw_groups
+                    )
+                ):
+                    raise TypeError(
+                        f"{path} patterns[{index}] argument_groups must contain positive integers"
+                    )
+
+                raw_names = raw.get("argument_names")
+                if raw_names is None:
+                    if len(raw_groups) != 2:
+                        raise TypeError(
+                            f"{path} patterns[{index}] argument_names is required for non-binary patterns"
+                        )
+                    argument_names = ("a", "b")
+                elif (
+                    not isinstance(raw_names, list)
+                    or len(raw_names) != len(raw_groups)
+                    or not all(
+                        isinstance(value, str) and value.strip()
+                        for value in raw_names
+                    )
+                    or len({value.strip() for value in raw_names}) != len(raw_names)
+                ):
+                    raise TypeError(
+                        f"{path} patterns[{index}] argument_names must contain unique non-empty strings matching argument_groups"
+                    )
+                else:
+                    argument_names = tuple(value.strip() for value in raw_names)
 
             value_type = raw.get("value_type", "number")
             if value_type not in {"number", "text", "numbers"}:
@@ -167,6 +258,7 @@ class MathPatternPolicy:
                     argument_names=argument_names,
                     value_type=value_type,
                     fixed_arguments=MappingProxyType(fixed_arguments),
+                    captures=captures,
                 )
             )
 

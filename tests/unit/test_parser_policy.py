@@ -153,6 +153,54 @@ def test_parser_uses_injected_unary_math_pattern_catalog(tmp_path: Path, monkeyp
     )
 
 
+def test_parser_uses_injected_math_capture_normalizer(tmp_path: Path, monkeypatch):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_math_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_math_policy.v1",
+                "patterns": [
+                    {
+                        "name": "custom_expression",
+                        "pattern": r"^calculate\s+(.+)$",
+                        "skill": "EVAL_EXPR",
+                        "captures": [
+                            {
+                                "group": 1,
+                                "name": "expression",
+                                "value_type": "text",
+                                "normalizers": ["caret_to_power"],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    assert SimpleParser.parse_question("calculate 2^3?") == (
+        "EVAL_EXPR",
+        "__math__",
+        {"expression": "2**3"},
+    )
+
+
+def test_linear_math_capture_uses_sign_as_metadata_only():
+    assert SimpleParser.parse_question("solve 2x - 3 = 7") == (
+        "SOLVE_LINEAR",
+        "__math__",
+        {"a": 2.0, "b": -3.0, "c": 7.0},
+    )
+
+
 def test_statement_parser_uses_an_injected_construction_catalog(monkeypatch):
     custom = Construction.create(
         name="custom_gliding_relation",
