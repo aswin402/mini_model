@@ -51,6 +51,40 @@ def test_parser_uses_injected_action_vocabulary(tmp_path: Path, monkeypatch):
     assert parsed[0].object_ == "glide"
 
 
+def test_parser_uses_injected_special_question_catalog(tmp_path: Path, monkeypatch):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_question_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_question_policy.v1",
+                "patterns": [
+                    {
+                        "name": "secret_question",
+                        "pattern": "^what is the secret$",
+                        "subject": "vault",
+                        "predicate": "__secret__",
+                        "target": "?",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    assert SimpleParser.parse_question("What is the secret?") == (
+        "vault",
+        "__secret__",
+        "?",
+    )
+
+
 def test_statement_parser_uses_an_injected_construction_catalog(monkeypatch):
     custom = Construction.create(
         name="custom_gliding_relation",

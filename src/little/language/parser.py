@@ -62,6 +62,8 @@ class _ParserPolicyCompatibilityMeta(type):
             return UnitConversionGraph()
         if name == "CONSTRUCTION_ENGINE":
             return ConstructionEngine
+        if name == "QUESTION_PATTERNS":
+            return ParserPolicy.default().question_patterns
         raise AttributeError(name)
 
 
@@ -73,6 +75,16 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         """Resolve a bound or legacy policy without storing a base global default."""
         configured = getattr(cls, "POLICY", None)
         return configured if configured is not None else ParserPolicy.default()
+
+    @classmethod
+    def _question_patterns(cls):
+        """Resolve explicitly bound or policy-owned special question patterns."""
+        configured = cls.__dict__.get("QUESTION_PATTERNS")
+        return (
+            configured
+            if configured is not None
+            else cls._policy().question_patterns
+        )
 
     @classmethod
     def normalize_text(cls, text: str) -> str:
@@ -446,74 +458,9 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
                 if sub_parsed:
                     return sub_parsed
 
-        # 0. Identity / Capability query: "who are you", "what can you do", "what are the things u can do"
-        if re.match(
-            r"^(?:who|what)\s+(?:are|is)\s+(?:you|little|mivi|mivi_model)(?:\s+model|\s+ai)?$",
-            q,
-            re.IGNORECASE,
-        ) or re.match(
-            r"^(?:(?:tell\s+me\s+)?what(?:\s+are)?\s+(?:all\s+)?(?:the\s+)?(?:things\s+)?(?:you|u)\s+can\s+do(?:\s+for\s+me)?|"
-            r"what\s+can\s+(?:you|u)\s+do(?:\s+for\s+me)?|"
-            r"what\s+do\s+(?:you|u)\s+do|"
-            r"what\s+are\s+(?:your|ur)\s+(?:capabilities|features|skills|functions)|"
-            r"what\s+is\s+(?:your|ur)\s+purpose|"
-            r"how\s+can\s+(?:you|u)\s+help(?:\s+me)?)$",
-            q,
-            re.IGNORECASE,
-        ):
-            return ("little", "__identity__", None)
-
-        # 0c. User Identity queries: "what is my name", "who am i", "do you know my name"
-        if re.match(
-            r"^(?:what\s+is\s+my\s+name|what['’]s\s+my\s+name|who\s+am\s+i|do\s+you\s+know\s+my\s+name|tell\s+me\s+my\s+name)$",
-            q,
-            re.IGNORECASE,
-        ):
-            return ("user", "__user_name__", None)
-
-        # 0d. Bot Name queries: "what is your name", "what's your name", "tell me your name"
-        if re.match(
-            r"^(?:what\s+is\s+(?:your|ur|you)\s+name|what['’]s\s+(?:your|ur|you)\s+name|tell\s+me\s+(?:your|ur|you)\s+name)$",
-            q,
-            re.IGNORECASE,
-        ):
-            return ("little", "__identity_name__", None)
-
-        # 0b. Conversational Chitchat & Polite Greetings
-        if re.match(
-            r"^(?:hello|hi|hii|hey|heyy|greetings|good\s+morning|good\s+afternoon|good\s+evening|howdy|yo)(?:\s+little|\s+there)?$",
-            q,
-            re.IGNORECASE,
-        ):
-            return ("little", "__chitchat_greeting__", None)
-
-        if re.match(
-            r"^(?:thank\s+you(?:\s+so\s+much|\s+very\s+much)?|thanks(?:\s+so\s+much|\s+a\s+lot|\s+a\s+bunch|\s+very\s+much)?|thx|ty|many\s+thanks|i\s+appreciate\s+it)$",
-            q,
-            re.IGNORECASE,
-        ):
-            return ("little", "__chitchat_thanks__", None)
-
-        if re.match(
-            r"^(?:how\s+are\s+you(?:\s+doing)?|how\s+r\s+u|how\s+do\s+you\s+do|how\s+is\s+it\s+going|how\s+are\s+things)$",
-            q,
-            re.IGNORECASE,
-        ):
-            return ("little", "__chitchat_how_are_you__", None)
-
-        if re.match(
-            r"^(?:good\s+job|great\s+job|well\s+done|nice\s+work|awesome|amazing|cool|nice|you\s+are\s+smart|you\s+are\s+great|you\s+did\s+great)$",
-            q,
-            re.IGNORECASE,
-        ):
-            return ("little", "__chitchat_praise__", None)
-
-        if re.match(
-            r"^(?:(?:tell\s+me\s+)?a\s+fact|(?:tell\s+me\s+)?something(?:\s+cool|\s+interesting|\s+you\s+know)?|give\s+me\s+a\s+fact|what\s+do\s+you\s+know)$",
-            q,
-            re.IGNORECASE,
-        ):
-            return ("little", "__chitchat_fact__", None)
+        for pattern in cls._question_patterns().patterns:
+            if re.match(pattern.pattern, q, re.IGNORECASE):
+                return (pattern.subject, pattern.predicate, pattern.target)
 
         procedural = cls.CONSTRUCTION_ENGINE.parse_procedural_from_catalog(
             q, cls.CONSTRUCTIONS
@@ -1246,6 +1193,7 @@ def configured_parser(
             ),
             "UNIT_CONVERSIONS": unit_conversions or UnitConversionGraph(),
             "CONSTRUCTION_ENGINE": construction_engine,
+            "QUESTION_PATTERNS": active_policy.question_patterns,
         },
     )
 

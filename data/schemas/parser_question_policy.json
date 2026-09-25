@@ -1,0 +1,59 @@
+{
+  "format": "little.parser_question_policy.v1",
+  "patterns": [
+    {
+      "name": "identity",
+      "pattern": "^(?:who|what)\\s+(?:are|is)\\s+(?:you|little|mivi|mivi_model)(?:\\s+model|\\s+ai)?$",
+      "subject": "little",
+      "predicate": "__identity__"
+    },
+    {
+      "name": "capability",
+      "pattern": "^(?:(?:tell\\s+me\\s+)?what(?:\\s+are)?\\s+(?:all\\s+)?(?:the\\s+)?(?:things\\s+)?(?:you|u)\\s+can\\s+do(?:\\s+for\\s+me)?|what\\s+can\\s+(?:you|u)\\s+do(?:\\s+for\\s+me)?|what\\s+do\\s+(?:you|u)\\s+do|what\\s+are\\s+(?:your|ur)\\s+(?:capabilities|features|skills|functions)|what\\s+is\\s+(?:your|ur)\\s+purpose|how\\s+can\\s+(?:you|u)\\s+help(?:\\s+me)?)$",
+      "subject": "little",
+      "predicate": "__identity__"
+    },
+    {
+      "name": "user_name",
+      "pattern": "^(?:what\\s+is\\s+my\\s+name|what['’]s\\s+my\\s+name|who\\s+am\\s+i|do\\s+you\\s+know\\s+my\\s+name|tell\\s+me\\s+my\\s+name)$",
+      "subject": "user",
+      "predicate": "__user_name__"
+    },
+    {
+      "name": "identity_name",
+      "pattern": "^(?:what\\s+is\\s+(?:your|ur|you)\\s+name|what['’]s\\s+(?:your|ur|you)\\s+name|tell\\s+me\\s+(?:your|ur|you)\\s+name)$",
+      "subject": "little",
+      "predicate": "__identity_name__"
+    },
+    {
+      "name": "greeting",
+      "pattern": "^(?:hello|hi|hii|hey|heyy|greetings|good\\s+morning|good\\s+afternoon|good\\s+evening|howdy|yo)(?:\\s+little|\\s+there)?$",
+      "subject": "little",
+      "predicate": "__chitchat_greeting__"
+    },
+    {
+      "name": "thanks",
+      "pattern": "^(?:thank\\s+you(?:\\s+so\\s+much|\\s+very\\s+much)?|thanks(?:\\s+so\\s+much|\\s+a\\s+lot|\\s+a\\s+bunch|\\s+very\\s+much)?|thx|ty|many\\s+thanks|i\\s+appreciate\\s+it)$",
+      "subject": "little",
+      "predicate": "__chitchat_thanks__"
+    },
+    {
+      "name": "how_are_you",
+      "pattern": "^(?:how\\s+are\\s+you(?:\\s+doing)?|how\\s+r\\s+u|how\\s+do\\s+you\\s+do|how\\s+is\\s+it\\s+going|how\\s+are\\s+things)$",
+      "subject": "little",
+      "predicate": "__chitchat_how_are_you__"
+    },
+    {
+      "name": "praise",
+      "pattern": "^(?:good\\s+job|great\\s+job|well\\s+done|nice\\s+work|awesome|amazing|cool|nice|you\\s+are\\s+smart|you\\s+are\\s+great|you\\s+did\\s+great)$",
+      "subject": "little",
+      "predicate": "__chitchat_praise__"
+    },
+    {
+      "name": "fact",
+      "pattern": "^(?:(?:tell\\s+me\\s+)?a\\s+fact|(?:tell\\s+me\\s+)?something(?:\\s+cool|\\s+interesting|\\s+you\\s+know)?|give\\s+me\\s+a\\s+fact|what\\s+do\\s+you\\s+know)$",
+      "subject": "little",
+      "predicate": "__chitchat_fact__"
+    }
+  ]
+}

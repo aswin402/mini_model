@@ -8,6 +8,7 @@ from pathlib import Path
 from little.core.runtime_paths import RuntimePaths
 
 from little.language.parser_confidence_policy import ParserConfidencePolicy
+from little.language.question_policy import QuestionPatternPolicy
 from little.core.semantic_predicate_policy import SemanticPredicatePolicy
 
 
@@ -46,6 +47,9 @@ class ParserPolicy:
     )
     semantic: SemanticPredicatePolicy = field(
         default_factory=SemanticPredicatePolicy.default
+    )
+    question_patterns: QuestionPatternPolicy = field(
+        default_factory=QuestionPatternPolicy.default
     )
 
     @classmethod
@@ -108,6 +112,12 @@ class ParserPolicy:
             if semantic_path.exists()
             else SemanticPredicatePolicy.default()
         )
+        question_policy_path = Path(directory) / "parser_question_policy.json"
+        question_patterns = (
+            QuestionPatternPolicy.load(directory)
+            if question_policy_path.exists()
+            else QuestionPatternPolicy.default()
+        )
 
         return cls(
             leading_articles=words("leading_articles"),
@@ -148,6 +158,7 @@ class ParserPolicy:
             clause_delimiter_pattern=clause_delimiter_pattern,
             confidence=ParserConfidencePolicy.default(),
             semantic=semantic,
+            question_patterns=question_patterns,
         )
 
     @classmethod
