@@ -617,6 +617,8 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
 
         # 3. Direct semantic question routes are defined by the versioned catalog.
         for pattern in cls._semantic_patterns().patterns:
+            if pattern.split_strategy is not None:
+                continue
             match = re.match(pattern.pattern, q, re.IGNORECASE)
             if match is None:
                 continue
@@ -804,49 +806,47 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             ):
                 return (target_noun, pattern.predicate, None)
 
-        # 5. Taxonomic queries: "Is a dog an animal?" / "Is an rtx 4090 hardware?" / "Are dogs animals?"
-        m_tax = re.match(r"^(?:is|are)\s+(.+)$", q, re.IGNORECASE)
-        if m_tax:
-            body = m_tax.group(1).strip()
-
-            # If an explicit article boundary exists in the middle: "is [a dog] [an animal]"
-            # Consume optional leading article first so it doesn't match the middle article
-            m_two_arts = re.match(
-                r"^(?:(?:a|an|the)\s+)?(.+?)\s+(?:a|an|the)\s+(.+)$",
-                body,
-                re.IGNORECASE,
-            )
-            if m_two_arts:
-                s = cls.clean_noun(m_two_arts.group(1))
-                o = cls.clean_noun(m_two_arts.group(2))
-                return (s, cls._policy().semantic.taxonomy, o)
-
-            # If known_concepts is provided, find the optimal boundary
-            if known_concepts:
-                tokens = body.split()
-                best_split = None
-                for i in range(len(tokens) - 1, 0, -1):
-                    cand_s = cls.clean_noun(" ".join(tokens[:i]))
-                    cand_o = cls.clean_noun(" ".join(tokens[i:]))
-                    if cand_s in known_concepts and cand_o in known_concepts:
-                        best_split = (cand_s, cand_o)
-                        break
-                    elif cand_s in known_concepts or cand_o in known_concepts:
-                        if not best_split:
-                            best_split = (cand_s, cand_o)
-                if best_split:
-                    return (
-                        best_split[0],
-                        cls._policy().semantic.taxonomy,
-                        best_split[1],
-                    )
-
-            # Fallback: predicate nominal (category) is the last token or tokens
+        # 5. Taxonomic boundary strategies are selected by the semantic catalog.
+        for pattern in cls._semantic_patterns().patterns:
+            if pattern.split_strategy is None:
+                continue
+            match = re.match(pattern.pattern, q, re.IGNORECASE)
+            if match is None or pattern.body_group is None:
+                continue
+            body = match.group(pattern.body_group).strip()
             tokens = body.split()
-            if len(tokens) >= 2:
-                s = cls.clean_noun(" ".join(tokens[:-1]))
-                o = cls.clean_noun(tokens[-1])
-                return (s, cls._policy().semantic.taxonomy, o)
+            best_split = None
+            if pattern.split_strategy == "known_concepts_or_last_token":
+                if known_concepts:
+                    for i in range(len(tokens) - 1, 0, -1):
+                        candidate_subject = cls.clean_noun(" ".join(tokens[:i]))
+                        candidate_target = cls.clean_noun(" ".join(tokens[i:]))
+                        if (
+                            candidate_subject in known_concepts
+                            and candidate_target in known_concepts
+                        ):
+                            best_split = (candidate_subject, candidate_target)
+                            break
+                        if (
+                            best_split is None
+                            and (
+                                candidate_subject in known_concepts
+                                or candidate_target in known_concepts
+                            )
+                        ):
+                            best_split = (candidate_subject, candidate_target)
+                if best_split is None and len(tokens) >= 2:
+                    best_split = (
+                        cls.clean_noun(" ".join(tokens[:-1])),
+                        cls.clean_noun(tokens[-1]),
+                    )
+            if best_split is None:
+                continue
+            predicate = pattern.predicate
+            if predicate is None and pattern.predicate_role is not None:
+                predicate = getattr(cls._policy().semantic, pattern.predicate_role)
+            if predicate is not None:
+                return (best_split[0], predicate, best_split[1])
 
         return None
 

@@ -106,6 +106,22 @@
       "predicate": "__why_is_a__",
       "subject_groups": [1],
       "target_groups": [2]
+    },
+    {
+      "name": "taxonomy_article",
+      "pattern": "^(?:is|are)\\s+(?:(?:a|an|the)\\s+)?(.+?)\\s+(?:a|an|the)\\s+(.+)$",
+      "predicate_role": "taxonomy",
+      "subject_groups": [1],
+      "target_groups": [2],
+      "validate_subject": false,
+      "validate_target": false
+    },
+    {
+      "name": "taxonomy_boundary",
+      "pattern": "^(?:is|are)\\s+(.+)$",
+      "predicate_role": "taxonomy",
+      "split_strategy": "known_concepts_or_last_token",
+      "body_group": 1
     }
   ]
 }

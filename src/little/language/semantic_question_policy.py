@@ -24,6 +24,8 @@ class SemanticQuestionPattern:
     target_literal: str | None
     validate_subject: bool
     validate_target: bool
+    split_strategy: str | None = None
+    body_group: int | None = None
 
 
 @dataclass(frozen=True)
@@ -94,7 +96,27 @@ class SemanticQuestionPolicy:
                 raise TypeError(
                     f"{path} patterns[{index}] target_literal must be a string or null"
                 )
-            if (bool(subject_groups) == (subject_literal is not None)) or (
+            split_strategy = raw.get("split_strategy")
+            body_group = raw.get("body_group")
+            if split_strategy is not None:
+                if split_strategy != "known_concepts_or_last_token":
+                    raise ValueError(
+                        f"{path} patterns[{index}] has an unsupported split_strategy"
+                    )
+                if not isinstance(body_group, int) or body_group <= 0:
+                    raise TypeError(
+                        f"{path} patterns[{index}] body_group must be a positive integer"
+                    )
+                if (
+                    subject_groups
+                    or target_groups
+                    or subject_literal is not None
+                    or target_literal is not None
+                ):
+                    raise ValueError(
+                        f"{path} patterns[{index}] split strategies cannot define subject or target sources"
+                    )
+            elif (bool(subject_groups) == (subject_literal is not None)) or (
                 bool(target_groups) == (target_literal is not None)
             ):
                 raise ValueError(
@@ -102,9 +124,13 @@ class SemanticQuestionPolicy:
                 )
 
             validate_subject = raw.get(
-                "validate_subject", subject_literal != "?"
+                "validate_subject",
+                False if split_strategy is not None else subject_literal != "?",
             )
-            validate_target = raw.get("validate_target", target_literal != "?")
+            validate_target = raw.get(
+                "validate_target",
+                False if split_strategy is not None else target_literal != "?",
+            )
             if not isinstance(validate_subject, bool) or not isinstance(
                 validate_target, bool
             ):
@@ -132,6 +158,8 @@ class SemanticQuestionPolicy:
                     ),
                     validate_subject=validate_subject,
                     validate_target=validate_target,
+                    split_strategy=split_strategy,
+                    body_group=body_group,
                 )
             )
 
