@@ -300,6 +300,40 @@ def test_parser_does_not_use_hardcoded_comparative_and_why_routes(
     assert why_not is not None and why_not[1] != "__why_not__"
 
 
+def test_parser_uses_injected_definition_question_catalog(tmp_path: Path, monkeypatch):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_definition_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_definition_policy.v1",
+                "patterns": [
+                    {
+                        "name": "custom_definition",
+                        "pattern": r"^define\s+([a-z0-9_\s-]+)$",
+                        "predicate": "__custom_definition__",
+                        "subject_group": 1,
+                        "exclude_non_concept": False,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    assert SimpleParser.parse_question("Define moon?") == (
+        "moon",
+        "__custom_definition__",
+        None,
+    )
+
+
 def test_statement_parser_uses_an_injected_construction_catalog(monkeypatch):
     custom = Construction.create(
         name="custom_gliding_relation",

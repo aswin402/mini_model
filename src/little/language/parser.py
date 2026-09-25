@@ -71,6 +71,8 @@ class _ParserPolicyCompatibilityMeta(type):
             return ParserPolicy.default().temporal_patterns
         if name == "SEMANTIC_PATTERNS":
             return ParserPolicy.default().semantic_patterns
+        if name == "DEFINITION_PATTERNS":
+            return ParserPolicy.default().definition_patterns
         raise AttributeError(name)
 
 
@@ -117,6 +119,16 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             configured
             if configured is not None
             else cls._policy().semantic_patterns
+        )
+
+    @classmethod
+    def _definition_patterns(cls):
+        """Resolve concept-definition patterns from the active policy."""
+        configured = cls.__dict__.get("DEFINITION_PATTERNS")
+        return (
+            configured
+            if configured is not None
+            else cls._policy().definition_patterns
         )
 
     @classmethod
@@ -777,22 +789,20 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         if catalog_question:
             return catalog_question
 
-        # 6. Concept definition query: "What is an apple?", "Who is Alice?", "Tell me about a dog"
-        m_def = re.match(
-            r"^(?:what|who)\s+(?:is|are)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s-]+)$",
-            q,
-            re.IGNORECASE,
-        )
-        if not m_def:
-            m_def = re.match(
-                r"^tell\s+me\s+about\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s-]+)$",
-                q,
-                re.IGNORECASE,
-            )
-        if m_def:
-            target_noun = cls.clean_noun(m_def.group(1))
-            if target_noun and target_noun not in cls._policy().non_concept_words:
-                return (target_noun, "__definition__", None)
+        # 6. Concept-definition routes are defined by the versioned catalog.
+        for pattern in cls._definition_patterns().patterns:
+            match = re.match(pattern.pattern, q, re.IGNORECASE)
+            if match is None:
+                continue
+            target_noun = cls.clean_noun(match.group(pattern.subject_group))
+            if (
+                target_noun
+                and (
+                    not pattern.exclude_non_concept
+                    or target_noun not in cls._policy().non_concept_words
+                )
+            ):
+                return (target_noun, pattern.predicate, None)
 
         # 5. Taxonomic queries: "Is a dog an animal?" / "Is an rtx 4090 hardware?" / "Are dogs animals?"
         m_tax = re.match(r"^(?:is|are)\s+(.+)$", q, re.IGNORECASE)
@@ -931,6 +941,7 @@ def configured_parser(
             "MATH_PATTERNS": active_policy.math_patterns,
             "TEMPORAL_PATTERNS": active_policy.temporal_patterns,
             "SEMANTIC_PATTERNS": active_policy.semantic_patterns,
+            "DEFINITION_PATTERNS": active_policy.definition_patterns,
         },
     )
 

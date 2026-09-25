@@ -1,0 +1,19 @@
+{
+  "format": "little.parser_definition_policy.v1",
+  "patterns": [
+    {
+      "name": "what_or_who_is",
+      "pattern": "^(?:what|who)\\s+(?:is|are)\\s+(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_\\s-]+)$",
+      "predicate": "__definition__",
+      "subject_group": 1,
+      "exclude_non_concept": true
+    },
+    {
+      "name": "tell_about",
+      "pattern": "^tell\\s+me\\s+about\\s+(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_\\s-]+)$",
+      "predicate": "__definition__",
+      "subject_group": 1,
+      "exclude_non_concept": true
+    }
+  ]
+}

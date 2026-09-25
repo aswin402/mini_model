@@ -10,6 +10,7 @@ from little.core.runtime_paths import RuntimePaths
 from little.language.parser_confidence_policy import ParserConfidencePolicy
 from little.language.math_policy import MathPatternPolicy
 from little.language.question_policy import QuestionPatternPolicy
+from little.language.definition_policy import DefinitionQuestionPolicy
 from little.language.semantic_question_policy import SemanticQuestionPolicy
 from little.language.temporal_policy import TemporalQuestionPolicy
 from little.core.semantic_predicate_policy import SemanticPredicatePolicy
@@ -62,6 +63,9 @@ class ParserPolicy:
     )
     semantic_patterns: SemanticQuestionPolicy = field(
         default_factory=SemanticQuestionPolicy.default
+    )
+    definition_patterns: DefinitionQuestionPolicy = field(
+        default_factory=DefinitionQuestionPolicy.default
     )
 
     @classmethod
@@ -148,6 +152,12 @@ class ParserPolicy:
             if semantic_policy_path.exists()
             else SemanticQuestionPolicy.default()
         )
+        definition_policy_path = Path(directory) / "parser_definition_policy.json"
+        definition_patterns = (
+            DefinitionQuestionPolicy.load(directory)
+            if definition_policy_path.exists()
+            else DefinitionQuestionPolicy.default()
+        )
 
         return cls(
             leading_articles=words("leading_articles"),
@@ -192,6 +202,7 @@ class ParserPolicy:
             math_patterns=math_patterns,
             temporal_patterns=temporal_patterns,
             semantic_patterns=semantic_patterns,
+            definition_patterns=definition_patterns,
         )
 
     @classmethod
