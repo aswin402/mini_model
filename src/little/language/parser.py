@@ -431,15 +431,31 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
     @classmethod
     def _parse_configured_math(
         cls, text: str
-    ) -> tuple[str, str, dict[str, int | float]] | None:
-        """Apply the configured binary arithmetic pattern catalog."""
+    ) -> tuple[str, str, dict[str, Any]] | None:
+        """Apply configured arithmetic patterns and convert their captures."""
         for pattern in cls._math_patterns().patterns:
             match = re.match(pattern.pattern, text, re.IGNORECASE)
             if match is None:
                 continue
             try:
-                first = cls._parse_math_number(match.group(pattern.argument_groups[0]))
-                second = cls._parse_math_number(match.group(pattern.argument_groups[1]))
+                raw_values = [match.group(group) for group in pattern.argument_groups]
+                if pattern.value_type == "text":
+                    values: list[Any] = [raw_values[0].strip()]
+                elif pattern.value_type == "numbers":
+                    raw_numbers = re.split(
+                        r"\s*(?:,|\band\b)\s*|\s+",
+                        raw_values[0].strip(),
+                        flags=re.IGNORECASE,
+                    )
+                    values = [
+                        [
+                            cls._parse_math_number(value)
+                            for value in raw_numbers
+                            if value
+                        ]
+                    ]
+                else:
+                    values = [cls._parse_math_number(value) for value in raw_values]
             except (IndexError, ValueError):
                 continue
 
@@ -450,9 +466,11 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             if skill is None:
                 continue
 
-            if pattern.reverse_arguments:
-                first, second = second, first
-            return (skill, "__math__", {"a": first, "b": second})
+            if pattern.reverse_arguments and len(values) == 2:
+                values.reverse()
+            arguments = dict(pattern.fixed_arguments)
+            arguments.update(zip(pattern.argument_names, values))
+            return (skill, "__math__", arguments)
         return None
 
     @classmethod
@@ -512,98 +530,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             skill_name, args = procedural
             return (skill_name, "__math__", args)
 
-        # 1. Arithmetic calculations: "4+4", "4 + 4", "What is 123 + 456?", "whats 4+4", "50 * 25"
-
-        # Natural language arithmetic word forms:
-
-        m_fact = re.match(
-            r"^(?:(?:what\s+is|calculate)\s+)?(?:the\s+)?factorial\s+(?:of\s+)?(\d+)$",
-            q,
-            re.IGNORECASE,
-        )
-        if not m_fact:
-            m_fact = re.match(
-                r"^(?:(?:what\s+is|calculate)\s+)?(\d+)!$",
-                q,
-                re.IGNORECASE,
-            )
-        if m_fact:
-            n = int(m_fact.group(1))
-            return ("FACTORIAL", "__math__", {"n": n})
-
-        m_fib = re.match(
-            r"^(?:(?:what\s+is|calculate)\s+)?(?:the\s+)?(?:fibonacci|fib)\s+(?:number\s+)?(?:of\s+|for\s+)?(\d+)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_fib:
-            return ("FIBONACCI", "__math__", {"n": int(m_fib.group(1))})
-
-        m_prime = re.match(r"^(?:is\s+)?(\d+)\s+prime$", q, re.IGNORECASE)
-        if not m_prime:
-            m_prime = re.match(r"^prime\s+(\d+)$", q, re.IGNORECASE)
-        if m_prime:
-            return ("IS_PRIME", "__math__", {"n": int(m_prime.group(1))})
-
-        m_nth_prime = re.match(
-            r"^(?:(?:what\s+is|calculate|find)\s+)?(?:the\s+)?(\d+)(?:st|nd|rd|th)\s+prime(?:\s+number)?$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_nth_prime:
-            return ("NTH_PRIME", "__math__", {"n": int(m_nth_prime.group(1))})
-
-        m_rev = re.match(
-            r"^(?:(?:what\s+is|calculate)\s+)?(?:the\s+)?reverse\s+(?:of\s+)?['\"]?([^'\"]+)['\"]?$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_rev:
-            return ("REVERSE_STRING", "__math__", {"text": m_rev.group(1).strip()})
-
-        m_pal = re.match(
-            r"^(?:is\s+)?['\"]?([^'\"]+?)['\"]?\s+(?:a\s+)?palindrome$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_pal:
-            return ("PALINDROME", "__math__", {"text": m_pal.group(1).strip()})
-
-        m_sq = re.match(
-            r"^(?:(?:what\s+is|calculate|find)\s+)?(?:the\s+)?square\s+of\s+(\d+(?:\.\d+)?)$",
-            q,
-            re.IGNORECASE,
-        )
-        if not m_sq:
-            m_sq = re.match(r"^(\d+(?:\.\d+)?)\s+squared$", q, re.IGNORECASE)
-        if m_sq:
-            num = float(m_sq.group(1)) if "." in m_sq.group(1) else int(m_sq.group(1))
-            return ("POWER", "__math__", {"a": num, "b": 2})
-
-        m_cb = re.match(
-            r"^(?:(?:what\s+is|calculate|find)\s+)?(?:the\s+)?cube\s+of\s+(\d+(?:\.\d+)?)$",
-            q,
-            re.IGNORECASE,
-        )
-        if not m_cb:
-            m_cb = re.match(r"^(\d+(?:\.\d+)?)\s+cubed$", q, re.IGNORECASE)
-        if m_cb:
-            num = float(m_cb.group(1)) if "." in m_cb.group(1) else int(m_cb.group(1))
-            return ("POWER", "__math__", {"a": num, "b": 3})
-
-        m_avg = re.match(
-            r"^(?:(?:what\s+is|calculate|find)\s+)?(?:the\s+)?(?:average|mean)\s+(?:of\s+)?((?:\d+(?:\.\d+)?(?:,\s*|\s+and\s+|\s+))+\d+(?:\.\d+)?)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_avg:
-            raw_nums = m_avg.group(1).replace("and", ",")
-            nums = [
-                float(x.strip()) if "." in x.strip() else int(x.strip())
-                for x in raw_nums.split(",")
-                if x.strip()
-            ]
-            return ("AVERAGE", "__math__", {"numbers": nums})
+        # 1. Arithmetic and text calculations are defined by the versioned math catalog.
 
         m_lin = re.match(
             r"^(?:solve\s+)?(-?\d+(?:\.\d+)?)\s*\*?\s*x\s*([+-])\s*(\d+(?:\.\d+)?)\s*=\s*(-?\d+(?:\.\d+)?)$",

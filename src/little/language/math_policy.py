@@ -13,15 +13,18 @@ from little.core.runtime_paths import RuntimePaths
 
 @dataclass(frozen=True)
 class MathPattern:
-    """Declarative binary arithmetic pattern and capture mapping."""
+    """Declarative arithmetic pattern, capture conversion, and argument mapping."""
 
     name: str
     pattern: str
-    argument_groups: tuple[int, int]
+    argument_groups: tuple[int, ...]
     skill: str | None = None
     skill_by_operator: Mapping[str, str] = MappingProxyType({})
     operator_group: int | None = None
     reverse_arguments: bool = False
+    argument_names: tuple[str, ...] = ("a", "b")
+    value_type: str = "number"
+    fixed_arguments: Mapping[str, int | float] = MappingProxyType({})
 
 
 @dataclass(frozen=True)
@@ -60,12 +63,52 @@ class MathPatternPolicy:
             raw_groups = raw.get("argument_groups")
             if (
                 not isinstance(raw_groups, list)
-                or len(raw_groups) != 2
+                or not raw_groups
                 or not all(isinstance(value, int) and value > 0 for value in raw_groups)
             ):
                 raise TypeError(
-                    f"{path} patterns[{index}] argument_groups must contain two positive integers"
+                    f"{path} patterns[{index}] argument_groups must contain positive integers"
                 )
+
+            raw_names = raw.get("argument_names")
+            if raw_names is None:
+                if len(raw_groups) != 2:
+                    raise TypeError(
+                        f"{path} patterns[{index}] argument_names is required for non-binary patterns"
+                    )
+                argument_names = ("a", "b")
+            elif (
+                not isinstance(raw_names, list)
+                or len(raw_names) != len(raw_groups)
+                or not all(isinstance(value, str) and value.strip() for value in raw_names)
+                or len({value.strip() for value in raw_names}) != len(raw_names)
+            ):
+                raise TypeError(
+                    f"{path} patterns[{index}] argument_names must contain unique non-empty strings matching argument_groups"
+                )
+            else:
+                argument_names = tuple(value.strip() for value in raw_names)
+
+            value_type = raw.get("value_type", "number")
+            if value_type not in {"number", "text", "numbers"}:
+                raise ValueError(
+                    f"{path} patterns[{index}] value_type must be number, text, or numbers"
+                )
+
+            raw_fixed_arguments = raw.get("fixed_arguments", {})
+            if not isinstance(raw_fixed_arguments, dict) or not all(
+                isinstance(key, str)
+                and key.strip()
+                and isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                for key, value in raw_fixed_arguments.items()
+            ):
+                raise TypeError(
+                    f"{path} patterns[{index}] fixed_arguments must map names to numbers"
+                )
+            fixed_arguments = {
+                key.strip(): value for key, value in raw_fixed_arguments.items()
+            }
 
             raw_skill = raw.get("skill")
             skill = None
@@ -116,11 +159,14 @@ class MathPatternPolicy:
                 MathPattern(
                     name=text("name"),
                     pattern=text("pattern"),
-                    argument_groups=(raw_groups[0], raw_groups[1]),
+                    argument_groups=tuple(raw_groups),
                     skill=skill,
                     skill_by_operator=MappingProxyType(operator_map),
                     operator_group=operator_group,
                     reverse_arguments=reverse_arguments,
+                    argument_names=argument_names,
+                    value_type=value_type,
+                    fixed_arguments=MappingProxyType(fixed_arguments),
                 )
             )
 

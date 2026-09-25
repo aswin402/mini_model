@@ -118,6 +118,41 @@ def test_parser_uses_injected_math_pattern_catalog(tmp_path: Path, monkeypatch):
     )
 
 
+def test_parser_uses_injected_unary_math_pattern_catalog(tmp_path: Path, monkeypatch):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_math_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_math_policy.v1",
+                "patterns": [
+                    {
+                        "name": "custom_unary",
+                        "pattern": r"^double\s+(\d+)$",
+                        "skill": "CUSTOM",
+                        "argument_groups": [1],
+                        "argument_names": ["value"],
+                        "value_type": "number",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    assert SimpleParser.parse_question("double 7?") == (
+        "CUSTOM",
+        "__math__",
+        {"value": 7},
+    )
+
+
 def test_statement_parser_uses_an_injected_construction_catalog(monkeypatch):
     custom = Construction.create(
         name="custom_gliding_relation",

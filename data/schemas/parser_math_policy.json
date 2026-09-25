@@ -65,6 +65,104 @@
       "skill": "SUBTRACT",
       "argument_groups": [1, 2],
       "reverse_arguments": true
+    },
+    {
+      "name": "factorial_word",
+      "pattern": "^(?:(?:what\\s+is|calculate)\\s+)?(?:the\\s+)?factorial\\s+(?:of\\s+)?(\\d+)$",
+      "skill": "FACTORIAL",
+      "argument_groups": [1],
+      "argument_names": ["n"]
+    },
+    {
+      "name": "factorial_symbol",
+      "pattern": "^(?:(?:what\\s+is|calculate)\\s+)?(\\d+)!$",
+      "skill": "FACTORIAL",
+      "argument_groups": [1],
+      "argument_names": ["n"]
+    },
+    {
+      "name": "fibonacci",
+      "pattern": "^(?:(?:what\\s+is|calculate)\\s+)?(?:the\\s+)?(?:fibonacci|fib)\\s+(?:number\\s+)?(?:of\\s+|for\\s+)?(\\d+)$",
+      "skill": "FIBONACCI",
+      "argument_groups": [1],
+      "argument_names": ["n"]
+    },
+    {
+      "name": "prime_check_subject",
+      "pattern": "^(?:is\\s+)?(\\d+)\\s+prime$",
+      "skill": "IS_PRIME",
+      "argument_groups": [1],
+      "argument_names": ["n"]
+    },
+    {
+      "name": "prime_check_prefix",
+      "pattern": "^prime\\s+(\\d+)$",
+      "skill": "IS_PRIME",
+      "argument_groups": [1],
+      "argument_names": ["n"]
+    },
+    {
+      "name": "nth_prime",
+      "pattern": "^(?:(?:what\\s+is|calculate|find)\\s+)?(?:the\\s+)?(\\d+)(?:st|nd|rd|th)\\s+prime(?:\\s+number)?$",
+      "skill": "NTH_PRIME",
+      "argument_groups": [1],
+      "argument_names": ["n"]
+    },
+    {
+      "name": "reverse_string",
+      "pattern": "^(?:(?:what\\s+is|calculate)\\s+)?(?:the\\s+)?reverse\\s+(?:of\\s+)?['\"]?([^'\"]+)['\"]?$",
+      "skill": "REVERSE_STRING",
+      "argument_groups": [1],
+      "argument_names": ["text"],
+      "value_type": "text"
+    },
+    {
+      "name": "palindrome_check",
+      "pattern": "^(?:is\\s+)?['\"]?([^'\"]+?)['\"]?\\s+(?:a\\s+)?palindrome$",
+      "skill": "PALINDROME",
+      "argument_groups": [1],
+      "argument_names": ["text"],
+      "value_type": "text"
+    },
+    {
+      "name": "square_named",
+      "pattern": "^(?:(?:what\\s+is|calculate|find)\\s+)?(?:the\\s+)?square\\s+of\\s+(\\d+(?:\\.\\d+)?)$",
+      "skill": "POWER",
+      "argument_groups": [1],
+      "argument_names": ["a"],
+      "fixed_arguments": {"b": 2}
+    },
+    {
+      "name": "square_suffix",
+      "pattern": "^(\\d+(?:\\.\\d+)?)\\s+squared$",
+      "skill": "POWER",
+      "argument_groups": [1],
+      "argument_names": ["a"],
+      "fixed_arguments": {"b": 2}
+    },
+    {
+      "name": "cube_named",
+      "pattern": "^(?:(?:what\\s+is|calculate|find)\\s+)?(?:the\\s+)?cube\\s+of\\s+(\\d+(?:\\.\\d+)?)$",
+      "skill": "POWER",
+      "argument_groups": [1],
+      "argument_names": ["a"],
+      "fixed_arguments": {"b": 3}
+    },
+    {
+      "name": "cube_suffix",
+      "pattern": "^(\\d+(?:\\.\\d+)?)\\s+cubed$",
+      "skill": "POWER",
+      "argument_groups": [1],
+      "argument_names": ["a"],
+      "fixed_arguments": {"b": 3}
+    },
+    {
+      "name": "average",
+      "pattern": "^(?:(?:what\\s+is|calculate|find)\\s+)?(?:the\\s+)?(?:average|mean)\\s+(?:of\\s+)?((?:\\d+(?:\\.\\d+)?(?:,\\s*|\\s+and\\s+|\\s+))+\\d+(?:\\.\\d+)?)$",
+      "skill": "AVERAGE",
+      "argument_groups": [1],
+      "argument_names": ["numbers"],
+      "value_type": "numbers"
     }
   ]
 }
