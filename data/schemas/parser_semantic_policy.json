@@ -78,6 +78,34 @@
       "predicate_role": "property",
       "subject_groups": [1],
       "target_literal": "?"
+    },
+    {
+      "name": "comparative",
+      "pattern": "^(?:is|are)\\s+(.+?)\\s+(?:bigger\\s+than|larger\\s+than|greater\\s+than)\\s+(.+)$",
+      "predicate": "larger_than",
+      "subject_groups": [1],
+      "target_groups": [2]
+    },
+    {
+      "name": "why_not_is",
+      "pattern": "^why\\s+(?:is|are)\\s+(.+?)\\s+not\\s+(?:(?:a|an|the)\\s+)?(.+)$",
+      "predicate": "__why_not__",
+      "subject_groups": [1],
+      "target_groups": [2]
+    },
+    {
+      "name": "why_not_cant",
+      "pattern": "^why\\s+can['’]?t\\s+(.+?)\\s+be\\s+(?:(?:a|an|the)\\s+)?(.+)$",
+      "predicate": "__why_not__",
+      "subject_groups": [1],
+      "target_groups": [2]
+    },
+    {
+      "name": "why_is_a_direct",
+      "pattern": "^why\\s+(?:is|are)\\s+(?:(?:a|an|the)\\s+)?(.+?)\\s+(?:a|an|the)\\s+(.+)$",
+      "predicate": "__why_is_a__",
+      "subject_groups": [1],
+      "target_groups": [2]
     }
   ]
 }

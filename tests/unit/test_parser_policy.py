@@ -271,6 +271,35 @@ def test_parser_uses_injected_semantic_question_catalog(tmp_path: Path, monkeypa
     )
 
 
+def test_parser_does_not_use_hardcoded_comparative_and_why_routes(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_semantic_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_semantic_policy.v1",
+                "patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+    monkeypatch.setattr(SimpleParser, "CONSTRUCTIONS", [])
+
+    comparison = SimpleParser.parse_question("Is an eagle larger than a bird?")
+    why_not = SimpleParser.parse_question("Why is water not a solid?")
+
+    assert comparison is not None and comparison[1] != "larger_than"
+    assert why_not is not None and why_not[1] != "__why_not__"
+
+
 def test_statement_parser_uses_an_injected_construction_catalog(monkeypatch):
     custom = Construction.create(
         name="custom_gliding_relation",

@@ -647,51 +647,12 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             if predicate is not None:
                 return (subject, predicate, target)
 
-        # Comparatives: "Is an elephant bigger than a mouse?", "Is the sun larger than the earth?"
-        m_comp = re.match(
-            r"^(?:is|are)\s+(.+?)\s+(?:bigger\s+than|larger\s+than|greater\s+than)\s+(.+)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_comp:
-            s = cls.clean_noun(m_comp.group(1))
-            o = cls.clean_noun(m_comp.group(2))
-            if cls.is_valid_concept(s) and cls.is_valid_concept(o):
-                return (s, "larger_than", o)
-
-        # Why-Questions:
-        # 1. Why is X not a Y? "Why is water not a solid?", "Why can't an animal be a vehicle?"
-        m_why_not = re.match(
-            r"^why\s+(?:is|are)\s+(.+?)\s+not\s+(?:(?:a|an|the)\s+)?(.+)$",
-            q,
-            re.IGNORECASE,
-        )
-        if not m_why_not:
-            m_why_not = re.match(
-                r"^why\s+can['’]?t\s+(.+?)\s+be\s+(?:(?:a|an|the)\s+)?(.+)$",
-                q,
-                re.IGNORECASE,
-            )
-        if m_why_not:
-            s = cls.clean_noun(m_why_not.group(1))
-            target = cls.clean_noun(m_why_not.group(2))
-            if cls.is_valid_concept(s) and cls.is_valid_concept(target):
-                return (s, "__why_not__", target)
+        # Comparative and negative why routes are defined by the semantic catalog.
 
         # 3. Why is X a Y? "Why is an eagle an animal?"
         m_why_is = re.match(r"^why\s+(?:is|are)\s+(.+)$", q, re.IGNORECASE)
         if m_why_is:
             body = m_why_is.group(1).strip()
-            m_two_arts = re.match(
-                r"^(?:(?:a|an|the)\s+)?(.+?)\s+(?:a|an|the)\s+(.+)$",
-                body,
-                re.IGNORECASE,
-            )
-            if m_two_arts:
-                s = cls.clean_noun(m_two_arts.group(1))
-                target = cls.clean_noun(m_two_arts.group(2))
-                if cls.is_valid_concept(s) and cls.is_valid_concept(target):
-                    return (s, "__why_is_a__", target)
 
             if known_concepts:
                 tokens = body.split()
