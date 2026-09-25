@@ -15,6 +15,17 @@
       "skin_key": "skin_intact",
       "exposed_value": true,
       "skin_value": false
+    },
+    "execution": {
+      "builtins": [
+        "abs", "round", "min", "max", "len", "sum", "int", "float",
+        "str", "bool", "list", "dict", "set", "tuple", "range",
+        "enumerate", "all", "any", "sorted", "reversed", "chr", "ord",
+        "isinstance", "type", "ValueError", "TypeError", "KeyError",
+        "IndexError"
+      ],
+      "modules": ["math", "ast", "operator", "sympy"],
+      "helpers": ["parse_expr", "sympy_transformations"]
     }
   }
 }

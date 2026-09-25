@@ -122,6 +122,32 @@ def test_builtin_skill_catalog_can_be_restricted_by_policy(tmp_path: Path):
     assert [skill.name for skill in skills] == ["ADD"]
 
 
+def test_skill_runner_uses_injected_execution_policy(tmp_path: Path):
+    payload = json.loads(
+        Path("data/schemas/procedural_skill_policy.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    payload["procedural_skill_policy"]["execution"] = {
+        "builtins": ["abs"],
+        "modules": [],
+        "helpers": [],
+    }
+    policy_path = tmp_path / "procedural_skill_policy.json"
+    policy_path.write_text(json.dumps(payload), encoding="utf-8")
+    policy = ProceduralSkillPolicy.load(tmp_path)
+    skill = Skill.create(
+        name="DISABLED_MATH",
+        parameters=["value"],
+        code_body="math.sqrt(value)",
+    )
+
+    result = SkillRunner.execute(skill, policy=policy, value=9)
+
+    assert result.success is False
+    assert "NameError" in result.error
+
+
 def test_skill_execution_uses_a_fresh_builtin_namespace_per_run():
     mutating_skill = Skill.create(
         name="MUTATE_BUILTINS",

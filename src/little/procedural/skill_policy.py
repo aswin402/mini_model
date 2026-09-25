@@ -17,6 +17,9 @@ class ProceduralSkillPolicy:
     slice_skin_key: str
     slice_exposed_value: bool
     slice_skin_value: bool
+    execution_builtins: tuple[str, ...]
+    execution_modules: tuple[str, ...]
+    execution_helpers: tuple[str, ...]
 
     @classmethod
     def load(cls, directory: Path) -> ProceduralSkillPolicy:
@@ -35,6 +38,17 @@ class ProceduralSkillPolicy:
             isinstance(value, str) and value.strip() for value in enabled
         ):
             raise TypeError(f"{path} enabled_skills must be a list of strings")
+        execution = data.get("execution")
+        if not isinstance(execution, dict):
+            raise TypeError(f"{path} execution must be an object")
+
+        def names(container: dict[str, object], name: str) -> tuple[str, ...]:
+            values = container.get(name)
+            if not isinstance(values, list) or not all(
+                isinstance(value, str) and value.strip() for value in values
+            ):
+                raise TypeError(f"{path} execution field {name!r} must be a list of strings")
+            return tuple(value.strip() for value in values)
 
         def text(name: str) -> str:
             value = slice_output.get(name)
@@ -58,6 +72,9 @@ class ProceduralSkillPolicy:
             slice_skin_key=text("skin_key"),
             slice_exposed_value=boolean("exposed_value"),
             slice_skin_value=boolean("skin_value"),
+            execution_builtins=names(execution, "builtins"),
+            execution_modules=names(execution, "modules"),
+            execution_helpers=names(execution, "helpers"),
         )
 
     @classmethod

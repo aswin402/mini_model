@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import ast
+import builtins as python_builtins
 import math
 import operator
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 import sympy
@@ -22,6 +24,7 @@ SYMPY_TRANSFORMATIONS = standard_transformations + (
 )
 
 from little.core.models import Skill
+from little.procedural.skill_policy import ProceduralSkillPolicy
 
 
 @dataclass
@@ -35,52 +38,56 @@ class ExecutionResult:
     trace: list[str] | None = None
 
 
-def _safe_builtins() -> dict[str, Any]:
-    """Return an isolated namespace for one procedural execution."""
-    return {
-        "abs": abs,
-        "round": round,
-        "min": min,
-        "max": max,
-        "len": len,
-        "sum": sum,
-        "int": int,
-        "float": float,
-        "str": str,
-        "bool": bool,
-        "list": list,
-        "dict": dict,
-        "set": set,
-        "tuple": tuple,
-        "range": range,
-        "enumerate": enumerate,
+_EXECUTION_MODULES = MappingProxyType(
+    {
         "math": math,
         "ast": ast,
         "operator": operator,
-        "all": all,
-        "any": any,
-        "sorted": sorted,
-        "reversed": reversed,
-        "chr": chr,
-        "ord": ord,
-        "isinstance": isinstance,
-        "type": type,
-        "ValueError": ValueError,
-        "TypeError": TypeError,
-        "KeyError": KeyError,
-        "IndexError": IndexError,
         "sympy": sympy,
+    }
+)
+_EXECUTION_HELPERS = MappingProxyType(
+    {
         "parse_expr": parse_expr,
         "sympy_transformations": SYMPY_TRANSFORMATIONS,
     }
+)
+
+
+def _safe_builtins(policy: ProceduralSkillPolicy) -> dict[str, Any]:
+    """Return an isolated namespace from the configured execution policy."""
+    namespace: dict[str, Any] = {}
+    for name in policy.execution_builtins:
+        try:
+            namespace[name] = getattr(python_builtins, name)
+        except AttributeError as ex:
+            raise ValueError(f"Unsupported procedural builtin {name!r}") from ex
+    for name in policy.execution_modules:
+        try:
+            namespace[name] = _EXECUTION_MODULES[name]
+        except KeyError as ex:
+            raise ValueError(f"Unsupported procedural module {name!r}") from ex
+    for name in policy.execution_helpers:
+        try:
+            namespace[name] = _EXECUTION_HELPERS[name]
+        except KeyError as ex:
+            raise ValueError(f"Unsupported procedural helper {name!r}") from ex
+    return namespace
 
 
 class SkillRunner:
     """Safely executes procedural algorithms with parameter verification and sandboxing."""
 
     @classmethod
-    def execute(cls, skill: Skill, **kwargs: Any) -> ExecutionResult:
+    def execute(
+        cls,
+        skill: Skill,
+        *,
+        policy: ProceduralSkillPolicy | None = None,
+        **kwargs: Any,
+    ) -> ExecutionResult:
         """Execute a skill with keyword arguments."""
+        active_policy = policy or ProceduralSkillPolicy.default()
         trace = [f"Preparing execution of skill '{skill.name}' with inputs: {kwargs}"]
 
         # 1. Parameter validation
@@ -99,7 +106,7 @@ class SkillRunner:
 
         # 2. Execution environment
         local_scope = dict(kwargs)
-        global_scope = {"__builtins__": _safe_builtins()}
+        global_scope = {"__builtins__": _safe_builtins(active_policy)}
 
         # 3. Execution
         try:
