@@ -158,29 +158,24 @@ class LayaSystem1Gatekeeper:
         text = user_input.strip()
         lower = text.lower()
 
-        # Deterministic Math intent check
-        math_markers = self.policy.math_markers
-        if any(m in lower for m in math_markers) and any(
-            c.isdigit() for c in text
-        ):
-            return QueryIntent.MATH
-
-        # Curiosity / Meta inquiry check
-        curiosity_markers = self.policy.curiosity_markers
-        if any(m in lower for m in curiosity_markers):
-            return QueryIntent.CURIOSITY
-
-        # Action command check (imperative verbs)
-        action_prefixes = self.policy.action_prefixes
-        if any(lower.startswith(p) for p in action_prefixes):
-            return QueryIntent.ACTION
-
-        # Question check
-        question_starters = self.policy.question_prefixes
-        if text.endswith("?") or any(
-            lower.startswith(q) for q in question_starters
-        ):
-            return QueryIntent.QUESTION
+        checks = {
+            "math": lambda: any(m in lower for m in self.policy.math_markers)
+            and any(c.isdigit() for c in text),
+            "curiosity": lambda: any(
+                marker in lower for marker in self.policy.curiosity_markers
+            ),
+            "action": lambda: any(
+                lower.startswith(prefix) for prefix in self.policy.action_prefixes
+            ),
+            "question": lambda: text.endswith("?")
+            or any(
+                lower.startswith(prefix) for prefix in self.policy.question_prefixes
+            ),
+            "statement": lambda: True,
+        }
+        for intent in self.policy.intent_priority:
+            if checks[intent]():
+                return QueryIntent(intent)
 
         return QueryIntent.STATEMENT
 

@@ -15,6 +15,7 @@ class LanguagePolicy:
     action_prefixes: tuple[str, ...]
     question_prefixes: tuple[str, ...]
     concept_associations: dict[str, frozenset[str]]
+    intent_priority: tuple[str, ...] = ()
     greetings: tuple[str, ...] = ()
     help_commands: tuple[str, ...] = ()
     identity_commands: tuple[str, ...] = ()
@@ -64,12 +65,23 @@ class LanguagePolicy:
                 value.strip().lower() for value in values if value.strip()
             )
 
+        intent_priority = read_words("intent_priority")
+        allowed_intents = {"math", "curiosity", "action", "question", "statement"}
+        if (
+            len(intent_priority) != len(allowed_intents)
+            or set(intent_priority) != allowed_intents
+        ):
+            raise ValueError(
+                f"{path} intent_priority must contain each supported intent exactly once"
+            )
+
         return cls(
             math_markers=read_words("math_markers"),
             curiosity_markers=read_words("curiosity_markers"),
             action_prefixes=read_words("action_prefixes"),
             question_prefixes=read_words("question_prefixes"),
             concept_associations=associations,
+            intent_priority=intent_priority,
             greetings=read_words("greetings"),
             help_commands=read_words("help_commands"),
             identity_commands=read_words("identity_commands"),

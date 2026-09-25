@@ -17,6 +17,7 @@
       "how ", "can ", "does ", "do ", "could ", "did ", "has ",
       "have ", "when ", "tell me ", "describe ", "calculate "
     ],
+    "intent_priority": ["math", "curiosity", "action", "question", "statement"],
     "greetings": [
       "hi", "hii", "hiii", "hello", "hey", "heyy", "howdy",
       "greetings", "good morning", "good afternoon", "good evening",

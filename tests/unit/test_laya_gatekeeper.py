@@ -39,6 +39,26 @@ def test_gatekeeper_intent_classification():
     assert gatekeeper.classify_intent("What are you uncertain about?") == QueryIntent.CURIOSITY
 
 
+def test_gatekeeper_uses_configured_intent_priority(tmp_path: Path):
+    payload = json.loads(
+        Path("data/schemas/language_policy.json").read_text(encoding="utf-8")
+    )
+    payload["language_policy"]["intent_priority"] = [
+        "question",
+        "math",
+        "curiosity",
+        "action",
+        "statement",
+    ]
+    (tmp_path / "language_policy.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    policy = LanguagePolicy.load(tmp_path)
+    gatekeeper = LayaSystem1Gatekeeper(policy=policy)
+
+    assert gatekeeper.classify_intent("Calculate 2 + 2?") == QueryIntent.QUESTION
+
+
 def test_gatekeeper_calibrated_choice_and_entropy_gating():
     gatekeeper = LayaSystem1Gatekeeper()
 
