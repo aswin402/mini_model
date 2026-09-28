@@ -421,6 +421,65 @@ def test_parser_uses_injected_question_prefix_vocabulary(
     assert parsed == ("little", "__identity_name__", None)
 
 
+def test_parser_does_not_use_hardcoded_compound_question_splitter(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_compound_question_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_compound_question_policy.v1",
+                "patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    text = "What is 10 + 10 and what is 5 * 5?"
+
+    assert SimpleParser.split_compound_question(text) == [text]
+
+
+def test_parser_uses_injected_compound_question_splitter(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_compound_question_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_compound_question_policy.v1",
+                "patterns": [
+                    {
+                        "name": "custom_plus_boundary",
+                        "strategy": "delimiter",
+                        "pattern": r"\s+plus\s+(?=what\b)",
+                        "case_insensitive": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    assert SimpleParser.split_compound_question(
+        "What is 10 plus what is 5?"
+    ) == ["What is 10", "what is 5?"]
+
+
 def test_parser_does_not_use_hardcoded_indirect_question_fallback(
     tmp_path: Path, monkeypatch
 ):

@@ -1,0 +1,18 @@
+{
+  "format": "little.parser_compound_question_policy.v1",
+  "patterns": [
+    {
+      "name": "question_mark_boundary",
+      "strategy": "delimiter",
+      "pattern": "\\?\\s*",
+      "case_insensitive": false,
+      "terminal_suffix": "?"
+    },
+    {
+      "name": "conjoined_question_boundary",
+      "strategy": "delimiter",
+      "pattern": ",?\\s+and\\s+(?=(?:is|are|was|were|do|does|did|can|could|will|would|has|have|what|who|where|how|why)\\b)",
+      "case_insensitive": true
+    }
+  ]
+}

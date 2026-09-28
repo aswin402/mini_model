@@ -81,6 +81,8 @@ class _ParserPolicyCompatibilityMeta(type):
             return ParserPolicy.default().indirect_question_patterns
         if name == "QUESTION_PREFIX_PATTERNS":
             return ParserPolicy.default().question_prefix_patterns
+        if name == "COMPOUND_QUESTION_PATTERNS":
+            return ParserPolicy.default().compound_question_patterns
         raise AttributeError(name)
 
 
@@ -173,6 +175,16 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             configured
             if configured is not None
             else cls._policy().question_prefix_patterns
+        )
+
+    @classmethod
+    def _compound_question_patterns(cls):
+        """Resolve compound-question boundary patterns from the active policy."""
+        configured = cls.__dict__.get("COMPOUND_QUESTION_PATTERNS")
+        return (
+            configured
+            if configured is not None
+            else cls._policy().compound_question_patterns
         )
 
     @classmethod
@@ -981,17 +993,23 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
     def split_compound_question(cls, text: str) -> list[str]:
         """Split a conjoined question into ordered question clauses."""
         clean = text.strip()
-        if "?" in clean[:-1]:
-            return [part.strip() for part in re.split(r"\?\s*", clean) if part.strip()]
-        return [
-            part.strip()
-            for part in re.split(
-                r",?\s+and\s+(?=(?:is|are|was|were|do|does|did|can|could|will|would|has|have|what|who|where|how|why)\b)",
-                clean,
-                flags=re.IGNORECASE,
-            )
-            if part.strip()
-        ]
+        for pattern in cls._compound_question_patterns().patterns:
+            if pattern.strategy != "delimiter":
+                continue
+            flags = re.IGNORECASE if pattern.case_insensitive else 0
+            source = clean
+            if pattern.terminal_suffix and source.endswith(pattern.terminal_suffix):
+                source = source[: -len(pattern.terminal_suffix)]
+            if re.search(pattern.pattern, source, flags=flags) is None:
+                continue
+            parts = [
+                part.strip()
+                for part in re.split(pattern.pattern, clean, flags=flags)
+                if part.strip()
+            ]
+            if len(parts) > 1:
+                return parts
+        return [clean] if clean else []
 
     @classmethod
     def parse_compound_question(

@@ -9,6 +9,7 @@ from pathlib import Path
 from little.core.runtime_paths import RuntimePaths
 from little.core.semantic_predicate_policy import SemanticPredicatePolicy
 from little.language.action_policy import ActionPolicy
+from little.language.compound_question_policy import CompoundQuestionPolicy
 from little.language.definition_policy import DefinitionQuestionPolicy
 from little.language.indirect_question_policy import IndirectQuestionPolicy
 from little.language.math_policy import MathPatternPolicy
@@ -79,6 +80,9 @@ class ParserPolicy:
     )
     question_prefix_patterns: QuestionPrefixPolicy = field(
         default_factory=QuestionPrefixPolicy.default
+    )
+    compound_question_patterns: CompoundQuestionPolicy = field(
+        default_factory=CompoundQuestionPolicy.default
     )
     action_patterns: ActionPolicy = field(default_factory=ActionPolicy.default)
 
@@ -200,6 +204,14 @@ class ParserPolicy:
             if question_prefix_policy_path.exists()
             else QuestionPrefixPolicy.default()
         )
+        compound_question_policy_path = (
+            Path(directory) / "parser_compound_question_policy.json"
+        )
+        compound_question_patterns = (
+            CompoundQuestionPolicy.load(directory)
+            if compound_question_policy_path.exists()
+            else CompoundQuestionPolicy.default()
+        )
 
         return cls(
             leading_articles=words("leading_articles"),
@@ -249,6 +261,7 @@ class ParserPolicy:
             action_patterns=action_patterns,
             indirect_question_patterns=indirect_question_patterns,
             question_prefix_patterns=question_prefix_patterns,
+            compound_question_patterns=compound_question_patterns,
         )
 
     @classmethod
