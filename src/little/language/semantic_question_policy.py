@@ -24,6 +24,7 @@ class SemanticQuestionPattern:
     target_literal: str | None
     validate_subject: bool
     validate_target: bool
+    target_lexicon: str | None = None
     split_strategy: str | None = None
     body_group: int | None = None
     phase: str = "direct"
@@ -85,6 +86,7 @@ class SemanticQuestionPolicy:
             target_groups = groups("target_groups")
             subject_literal = raw.get("subject_literal")
             target_literal = raw.get("target_literal")
+            target_lexicon = raw.get("target_lexicon")
             if subject_literal is not None and (
                 not isinstance(subject_literal, str) or not subject_literal.strip()
             ):
@@ -98,6 +100,20 @@ class SemanticQuestionPolicy:
                     f"{path} patterns[{index}] target_literal must be a string or null"
                 )
             split_strategy = raw.get("split_strategy")
+            if target_lexicon is not None:
+                if not isinstance(target_lexicon, str) or target_lexicon not in {
+                    "colors",
+                    "known_properties",
+                }:
+                    raise ValueError(
+                        f"{path} patterns[{index}] has an unsupported target_lexicon"
+                    )
+                if target_literal is not None or (
+                    split_strategy is None and not target_groups
+                ):
+                    raise ValueError(
+                        f"{path} patterns[{index}] target_lexicon requires target_groups"
+                    )
             body_group = raw.get("body_group")
             phase = raw.get("phase", "direct")
             if not isinstance(phase, str) or not phase.strip():
@@ -111,6 +127,7 @@ class SemanticQuestionPolicy:
                         "known_subject_or_tail",
                         "action_verb_tail",
                         "known_concepts_or_valid_last_token",
+                        "target_lexicon_tail",
                     }:
                         raise ValueError(
                             f"{path} patterns[{index}] has an unsupported split_strategy"
@@ -170,6 +187,7 @@ class SemanticQuestionPolicy:
                     ),
                     validate_subject=validate_subject,
                     validate_target=validate_target,
+                    target_lexicon=target_lexicon,
                     split_strategy=split_strategy,
                     body_group=body_group,
                     phase=phase,

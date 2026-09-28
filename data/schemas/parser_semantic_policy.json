@@ -54,6 +54,26 @@
       "phase": "capability"
     },
     {
+      "name": "color_boolean",
+      "pattern": "^(?:is|are)\\s+(?:(?:a|an|the)\\s+)?(.+)$",
+      "predicate_role": "color",
+      "split_strategy": "target_lexicon_tail",
+      "body_group": 1,
+      "target_lexicon": "colors",
+      "validate_subject": false,
+      "phase": "property"
+    },
+    {
+      "name": "property_boolean",
+      "pattern": "^(?:is|are)\\s+(?:(?:a|an|the)\\s+)?(.+)$",
+      "predicate_role": "property",
+      "target_lexicon": "known_properties",
+      "split_strategy": "target_lexicon_tail",
+      "body_group": 1,
+      "validate_subject": true,
+      "phase": "property"
+    },
+    {
       "name": "composition",
       "pattern": "^what\\s+(?:is|are)\\s+(.+?)\\s+made\\s+of$",
       "predicate_role": "composition",

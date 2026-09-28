@@ -416,6 +416,43 @@ def test_parser_does_not_use_hardcoded_learned_why_fallback(
     assert parsed is None or parsed[1] != "__why_is_a__"
 
 
+def test_parser_does_not_use_hardcoded_property_boolean_fallback(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_semantic_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_semantic_policy.v1",
+                "patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+    monkeypatch.setattr(SimpleParser, "CONSTRUCTIONS", [])
+
+    color = SimpleParser.parse_question("Is an apple red?")
+    property_query = SimpleParser.parse_question("Is glass transparent?")
+
+    assert color is None or color[1] != policy.semantic.color
+    assert property_query is None or property_query[1] != policy.semantic.property
+
+
+def test_property_boolean_catalog_preserves_multiword_subjects():
+    assert SimpleParser.parse_question("Is warm milk hot?") == (
+        "warm milk",
+        SimpleParser.POLICY.semantic.property,
+        "hot",
+    )
+
+
 def test_statement_parser_uses_an_injected_construction_catalog(monkeypatch):
     custom = Construction.create(
         name="custom_gliding_relation",

@@ -618,6 +618,19 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
                 if cls.is_valid_concept(subject) and cls.is_valid_concept(target):
                     split = (subject, target)
 
+        elif pattern.split_strategy == "target_lexicon_tail":
+            if pattern.target_lexicon is not None:
+                target_lexicon = getattr(cls._policy(), pattern.target_lexicon)
+                for index in range(1, len(tokens)):
+                    subject = cls.clean_noun(" ".join(tokens[:index]))
+                    target = cls.clean_noun(" ".join(tokens[index:]))
+                    if target.casefold() not in target_lexicon:
+                        continue
+                    if pattern.validate_subject and not cls.is_valid_concept(subject):
+                        continue
+                    split = (subject, target)
+                    break
+
         if split is None or not split[0] or not split[1]:
             return None
         predicate = pattern.predicate
@@ -736,6 +749,10 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
                 continue
             if pattern.validate_target and not cls.is_valid_concept(target):
                 continue
+            if pattern.target_lexicon is not None:
+                target_lexicon = getattr(cls._policy(), pattern.target_lexicon)
+                if target.casefold() not in target_lexicon:
+                    continue
 
             predicate = pattern.predicate
             if predicate is None and pattern.predicate_role is not None:
@@ -765,15 +782,15 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             if parsed is not None:
                 return parsed
 
-        # 11. Property boolean query: "Is the apple red?", "Is it red?"
-        colors = sorted(cls._policy().colors)
-        m_is_color = re.match(
-            r"^(?:is|are)\s+(.*?)\s+(" + "|".join(colors) + r")$", q, re.IGNORECASE
-        )
-        if m_is_color:
-            s = cls.clean_noun(m_is_color.group(1))
-            val = m_is_color.group(2).lower()
-            return (s, cls._policy().semantic.color, val)
+        # Lexicon-backed property boundaries are selected by the semantic catalog.
+        for pattern in cls._semantic_patterns().patterns:
+            if pattern.phase != "property":
+                continue
+            parsed = cls._parse_split_semantic_pattern(
+                pattern, q, known_concepts
+            )
+            if parsed is not None:
+                return parsed
 
         # 13b. General transitive action questions: "Does a falcon hunt rodents?", "Does X verb Y?"
         m_does_trans = re.match(
@@ -801,19 +818,6 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
                             best_split = (cand_s, cand_v, cand_o)
                 if best_split:
                     return best_split
-
-        # 14. Property boolean query: "Is glass transparent?", "Is metal hard?", "Is ice cold?"
-        known_props = sorted(cls._policy().known_properties)
-        m_is_prop = re.match(
-            r"^(?:is|are)\s+(.+?)\s+(" + "|".join(known_props) + r")$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_is_prop:
-            s = cls.clean_noun(m_is_prop.group(1))
-            prop = m_is_prop.group(2).lower()
-            if cls.is_valid_concept(s):
-                return (s, cls._policy().semantic.property, prop)
 
         catalog_question = cls.CONSTRUCTION_ENGINE.parse_question_from_catalog(
             q, cls.CONSTRUCTIONS
