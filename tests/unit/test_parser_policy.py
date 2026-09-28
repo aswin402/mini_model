@@ -195,6 +195,80 @@ def test_parser_uses_injected_coordinate_statement_pattern(
     ]
 
 
+def test_parser_does_not_use_hardcoded_subject_relative_fallback(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_statement_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_statement_policy.v1",
+                "patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+    monkeypatch.setattr(
+        SimpleParser,
+        "CONSTRUCTIONS",
+        [
+            construction
+            for construction in GrammarRegistry.default()
+            if construction.name == "cxn_is_a"
+        ],
+    )
+
+    parsed = SimpleParser.parse_statement(
+        "The animal that has gills and swims in water is a fish."
+    )
+
+    assert parsed == []
+
+
+def test_parser_does_not_use_hardcoded_object_relative_fallback(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_statement_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_statement_policy.v1",
+                "patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+    monkeypatch.setattr(
+        SimpleParser,
+        "CONSTRUCTIONS",
+        [
+            construction
+            for construction in GrammarRegistry.default()
+            if construction.name in {"cxn_is_a", "cxn_are_bare"}
+        ],
+    )
+
+    parsed = SimpleParser.parse_statement(
+        "Dolphins are mammals that live in the ocean and have fins."
+    )
+
+    assert parsed == []
+
+
 def test_parser_does_not_use_hardcoded_action_fallback(
     tmp_path: Path, monkeypatch
 ):

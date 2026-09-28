@@ -7,6 +7,24 @@
       "delimiter_pattern": ",?\\s+and\\s+(?=(?:it|they|he|she|this|that|these|those|(?:a|an|the)\\s+[a-z]+)\\s+[a-z]+)\\b"
     },
     {
+      "name": "subject_relative_clause",
+      "strategy": "subject_relative",
+      "pattern": "^(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_\\s-]+?)\\s+(?:that|which|who)\\s+(.+?)\\s+(?:is|are)\\s+(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_\\s-]+)$",
+      "clause_delimiter_pattern": ",\\s*(?:and\\s+)?|\\s+and\\s+",
+      "predicate_role": "taxonomy",
+      "category_group": 1,
+      "body_group": 2,
+      "concept_group": 3
+    },
+    {
+      "name": "object_relative_clause",
+      "strategy": "object_relative",
+      "pattern": "^(.*?\\s+(?:is|are)\\s+[^,]+?)\\s+(?:that|which|who)\\s+(.*)$",
+      "clause_delimiter_pattern": ",\\s*(?:and\\s+)?|\\s+and\\s+",
+      "main_group": 1,
+      "body_group": 2
+    },
+    {
       "name": "intransitive_capability",
       "strategy": "action_verb_tail",
       "predicate_role": "capability",

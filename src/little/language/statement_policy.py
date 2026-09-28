@@ -20,6 +20,12 @@ class StatementPattern:
     verb_source: str | None = None
     predicate_source: str | None = None
     delimiter_pattern: str | None = None
+    pattern: str | None = None
+    clause_delimiter_pattern: str | None = None
+    category_group: int | None = None
+    body_group: int | None = None
+    concept_group: int | None = None
+    main_group: int | None = None
 
 
 @dataclass(frozen=True)
@@ -60,11 +66,15 @@ class StatementPolicy:
             verb_source = raw.get("verb_source")
             predicate_source = raw.get("predicate_source")
             delimiter_pattern = raw.get("delimiter_pattern")
+            pattern = raw.get("pattern")
+            clause_delimiter_pattern = raw.get("clause_delimiter_pattern")
             optional_values = {
                 "predicate_role": predicate_role,
                 "verb_source": verb_source,
                 "predicate_source": predicate_source,
                 "delimiter_pattern": delimiter_pattern,
+                "pattern": pattern,
+                "clause_delimiter_pattern": clause_delimiter_pattern,
             }
             for field, value in optional_values.items():
                 if value is not None and (
@@ -76,10 +86,26 @@ class StatementPolicy:
                 if isinstance(value, str):
                     values[field] = value.strip()
 
+            numeric_values = {
+                "category_group": raw.get("category_group"),
+                "body_group": raw.get("body_group"),
+                "concept_group": raw.get("concept_group"),
+                "main_group": raw.get("main_group"),
+            }
+            for field, value in numeric_values.items():
+                if value is not None and (not isinstance(value, int) or value <= 0):
+                    raise TypeError(
+                        f"{path} patterns[{index}] field {field!r} must be a positive integer"
+                    )
+                if value is not None:
+                    values[field] = value
+
             if values["strategy"] not in {
                 "action_verb_tail",
                 "novel_transitive",
                 "coordinate_compound",
+                "subject_relative",
+                "object_relative",
             }:
                 raise ValueError(
                     f"{path} patterns[{index}] has an unsupported statement strategy"
@@ -114,6 +140,46 @@ class StatementPolicy:
             ):
                 raise ValueError(
                     f"{path} patterns[{index}] delimiter_pattern is only valid for coordinate_compound"
+                )
+            if values["strategy"] in {"subject_relative", "object_relative"} and (
+                values.get("pattern") is None
+                or values.get("clause_delimiter_pattern") is None
+                or values.get("body_group") is None
+            ):
+                raise ValueError(
+                    f"{path} patterns[{index}] relative strategies require pattern, clause_delimiter_pattern, and body_group"
+                )
+            if values["strategy"] == "subject_relative" and (
+                values.get("predicate_role") is None
+                or values.get("category_group") is None
+                or values.get("concept_group") is None
+                or values.get("main_group") is not None
+            ):
+                raise ValueError(
+                    f"{path} patterns[{index}] subject_relative requires predicate_role, category_group, and concept_group"
+                )
+            if values["strategy"] == "object_relative" and (
+                values.get("main_group") is None
+                or values.get("predicate_role") is not None
+                or values.get("category_group") is not None
+                or values.get("concept_group") is not None
+            ):
+                raise ValueError(
+                    f"{path} patterns[{index}] object_relative requires main_group"
+                )
+            if values["strategy"] not in {"subject_relative", "object_relative"} and any(
+                values.get(field) is not None
+                for field in (
+                    "pattern",
+                    "clause_delimiter_pattern",
+                    "category_group",
+                    "body_group",
+                    "concept_group",
+                    "main_group",
+                )
+            ):
+                raise ValueError(
+                    f"{path} patterns[{index}] relative fields are only valid for relative strategies"
                 )
 
             patterns.append(StatementPattern(**values))

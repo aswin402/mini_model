@@ -352,6 +352,68 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
                         triples.append(triple)
             return triples or None
 
+        if pattern.strategy in {"subject_relative", "object_relative"}:
+            if (
+                pattern.pattern is None
+                or pattern.clause_delimiter_pattern is None
+                or pattern.body_group is None
+            ):
+                return None
+            match = re.match(pattern.pattern, text, re.IGNORECASE)
+            if match is None:
+                return None
+
+            if pattern.strategy == "subject_relative":
+                if (
+                    pattern.category_group is None
+                    or pattern.concept_group is None
+                    or pattern.predicate_role is None
+                ):
+                    return None
+                category = cls.clean_noun(match.group(pattern.category_group))
+                concept = cls.clean_noun(match.group(pattern.concept_group))
+                if not (
+                    cls.is_valid_concept(concept)
+                    and cls.is_valid_concept(category)
+                ):
+                    return None
+                triples = [
+                    ParsedTriple(
+                        subject=concept,
+                        predicate=getattr(
+                            cls._policy().semantic, pattern.predicate_role
+                        ),
+                        object_=category,
+                    )
+                ]
+                clause_subject = concept
+            else:
+                if pattern.main_group is None:
+                    return None
+                main_triples = cls.parse_statement(
+                    match.group(pattern.main_group).strip()
+                )
+                if not main_triples:
+                    return None
+                triples = list(main_triples)
+                clause_subject = main_triples[0].subject
+
+            clauses = [
+                clause.strip()
+                for clause in re.split(
+                    pattern.clause_delimiter_pattern,
+                    match.group(pattern.body_group).strip(),
+                    flags=re.IGNORECASE,
+                )
+                if clause.strip()
+            ]
+            for clause in clauses:
+                sub_triples = cls.parse_statement(f"{clause_subject} {clause}")
+                for triple in sub_triples:
+                    if triple not in triples:
+                        triples.append(triple)
+            return triples
+
         if pattern.strategy == "action_verb_tail":
             if len(tokens) < 2:
                 return None
@@ -384,66 +446,6 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
     def parse_statement(cls, text: str) -> list[ParsedTriple]:
         clean = cls.normalize_text(text).rstrip(".").strip()
         triples: list[ParsedTriple] = []
-
-        # Subject-level Restrictive Relative Clauses:
-        # "The animal that has gills and swims in water is a fish"
-        # "An animal that eats meat is a carnivore"
-        m_subj_rel = re.match(
-            r"^(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s-]+?)\s+(?:that|which|who)\s+(.+?)\s+(?:is|are)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s-]+)$",
-            clean,
-            re.IGNORECASE,
-        )
-        if m_subj_rel:
-            category = cls.clean_noun(m_subj_rel.group(1))
-            rel_body = m_subj_rel.group(2).strip()
-            concept = cls.clean_noun(m_subj_rel.group(3))
-
-            if cls.is_valid_concept(concept) and cls.is_valid_concept(category):
-                triples.append(
-                    ParsedTriple(
-                        subject=concept,
-                        predicate=cls._policy().semantic.taxonomy,
-                        object_=category,
-                    )
-                )
-                sub_clauses = [
-                    c.strip()
-                    for c in re.split(r",\s*(?:and\s+)?|\s+and\s+", rel_body)
-                    if c.strip()
-                ]
-                for sc in sub_clauses:
-                    sub_stmt = f"{concept} {sc}"
-                    sub_triples = cls.parse_statement(sub_stmt)
-                    for st in sub_triples:
-                        if st not in triples:
-                            triples.append(st)
-                return triples
-
-        # Object-level Relative Clauses: "Whales are mammals that live in the ocean and have fins"
-        m_rel = re.match(
-            r"^(.*?\s+(?:is|are)\s+[^,]+?)\s+(?:that|which|who)\s+(.*)$",
-            clean,
-            re.IGNORECASE,
-        )
-        if m_rel:
-            main_part = m_rel.group(1).strip()
-            sub_part = m_rel.group(2).strip()
-            main_triples = cls.parse_statement(main_part)
-            if main_triples:
-                subj = main_triples[0].subject
-                triples.extend(main_triples)
-                sub_clauses = [
-                    c.strip()
-                    for c in re.split(r",\s*(?:and\s+)?|\s+and\s+", sub_part)
-                    if c.strip()
-                ]
-                for sc in sub_clauses:
-                    sub_stmt = f"{subj} {sc}"
-                    sub_triples = cls.parse_statement(sub_stmt)
-                    for st in sub_triples:
-                        if st not in triples:
-                            triples.append(st)
-                return triples
 
         # Prefer the versioned construction catalog for ordinary statements.
         # Compatibility regexes below remain only for grammar not yet captured
