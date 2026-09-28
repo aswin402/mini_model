@@ -445,6 +445,36 @@ def test_parser_does_not_use_hardcoded_property_boolean_fallback(
     assert property_query is None or property_query[1] != policy.semantic.property
 
 
+def test_parser_does_not_use_hardcoded_transitive_action_fallback(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_semantic_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_semantic_policy.v1",
+                "patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+    monkeypatch.setattr(SimpleParser, "CONSTRUCTIONS", [])
+
+    parsed = SimpleParser.parse_question(
+        "Does a falcon hunt rodents?",
+        known_concepts={"falcon", "rodent"},
+    )
+
+    assert parsed is None or parsed[1] != "hunt"
+
+
 def test_property_boolean_catalog_preserves_multiword_subjects():
     assert SimpleParser.parse_question("Is warm milk hot?") == (
         "warm milk",

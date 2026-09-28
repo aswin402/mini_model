@@ -18,6 +18,7 @@ class SemanticQuestionPattern:
     pattern: str
     predicate: str | None
     predicate_role: str | None
+    predicate_source: str | None
     subject_groups: tuple[int, ...]
     subject_literal: str | None
     target_groups: tuple[int, ...]
@@ -75,11 +76,17 @@ class SemanticQuestionPolicy:
 
             raw_predicate = raw.get("predicate")
             raw_role = raw.get("predicate_role")
+            raw_source = raw.get("predicate_source")
             has_predicate = isinstance(raw_predicate, str) and bool(raw_predicate.strip())
             has_role = isinstance(raw_role, str) and bool(raw_role.strip())
-            if has_predicate == has_role:
+            has_source = isinstance(raw_source, str) and bool(raw_source.strip())
+            if sum((has_predicate, has_role, has_source)) != 1:
                 raise ValueError(
-                    f"{path} patterns[{index}] must define exactly one of predicate or predicate_role"
+                    f"{path} patterns[{index}] must define exactly one predicate source"
+                )
+            if has_source and raw_source.strip() not in {"middle_token"}:
+                raise ValueError(
+                    f"{path} patterns[{index}] has an unsupported predicate_source"
                 )
 
             subject_groups = groups("subject_groups")
@@ -128,6 +135,7 @@ class SemanticQuestionPolicy:
                         "action_verb_tail",
                         "known_concepts_or_valid_last_token",
                         "target_lexicon_tail",
+                        "transitive_action",
                     }:
                         raise ValueError(
                             f"{path} patterns[{index}] has an unsupported split_strategy"
@@ -173,6 +181,7 @@ class SemanticQuestionPolicy:
                     pattern=text("pattern"),
                     predicate=raw_predicate.strip() if has_predicate else None,
                     predicate_role=raw_role.strip().lower() if has_role else None,
+                    predicate_source=raw_source.strip().lower() if has_source else None,
                     subject_groups=subject_groups,
                     subject_literal=(
                         subject_literal.strip()

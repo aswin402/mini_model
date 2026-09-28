@@ -74,6 +74,14 @@
       "phase": "property"
     },
     {
+      "name": "transitive_action",
+      "pattern": "^(?:does|do)\\s+(.+)$",
+      "predicate_source": "middle_token",
+      "split_strategy": "transitive_action",
+      "body_group": 1,
+      "phase": "transitive_action"
+    },
+    {
       "name": "composition",
       "pattern": "^what\\s+(?:is|are)\\s+(.+?)\\s+made\\s+of$",
       "predicate_role": "composition",

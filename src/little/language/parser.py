@@ -558,6 +558,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         body = (match.group(pattern.body_group) or "").strip()
         tokens = body.split()
         split: tuple[str, str] | None = None
+        predicate_override: str | None = None
 
         if pattern.split_strategy == "known_concepts_or_last_token":
             if known_concepts:
@@ -631,9 +632,37 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
                     split = (subject, target)
                     break
 
+        elif pattern.split_strategy == "transitive_action":
+            selected: tuple[str, str, str] | None = None
+            if len(tokens) >= 3:
+                for index in range(1, len(tokens) - 1):
+                    subject = cls.clean_noun(" ".join(tokens[:index]))
+                    predicate = tokens[index].lower()
+                    target = cls.clean_noun(" ".join(tokens[index + 1 :]))
+                    if not (
+                        subject
+                        and target
+                        and cls.is_valid_concept(subject)
+                        and cls.is_valid_concept(target)
+                    ):
+                        continue
+                    candidate = (subject, predicate, target)
+                    if known_concepts and subject in known_concepts:
+                        selected = candidate
+                        break
+                    if selected is None:
+                        selected = candidate
+            if selected is not None:
+                split = (selected[0], selected[2])
+                predicate_override = selected[1]
+
         if split is None or not split[0] or not split[1]:
             return None
-        predicate = pattern.predicate
+        predicate = predicate_override
+        if predicate is None and pattern.predicate_source is not None:
+            return None
+        if predicate is None:
+            predicate = pattern.predicate
         if predicate is None and pattern.predicate_role is not None:
             predicate = getattr(cls._policy().semantic, pattern.predicate_role)
         if predicate is None:
@@ -792,32 +821,15 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             if parsed is not None:
                 return parsed
 
-        # 13b. General transitive action questions: "Does a falcon hunt rodents?", "Does X verb Y?"
-        m_does_trans = re.match(
-            r"^(?:does|do)\s+(.+)$", q, re.IGNORECASE
-        )
-        if m_does_trans:
-            body = m_does_trans.group(1).strip()
-            tokens = body.split()
-            if len(tokens) >= 2:
-                best_split = None
-                for i in range(1, len(tokens)):
-                    cand_s = cls.clean_noun(" ".join(tokens[:i]))
-                    cand_v = tokens[i].lower()
-                    cand_o = cls.clean_noun(" ".join(tokens[i + 1 :]))
-                    if (
-                        cand_s
-                        and cand_o
-                        and cls.is_valid_concept(cand_s)
-                        and cls.is_valid_concept(cand_o)
-                    ):
-                        if known_concepts and cand_s in known_concepts:
-                            best_split = (cand_s, cand_v, cand_o)
-                            break
-                        if not best_split:
-                            best_split = (cand_s, cand_v, cand_o)
-                if best_split:
-                    return best_split
+        # Transitive-action boundaries are selected by the semantic catalog.
+        for pattern in cls._semantic_patterns().patterns:
+            if pattern.phase != "transitive_action":
+                continue
+            parsed = cls._parse_split_semantic_pattern(
+                pattern, q, known_concepts
+            )
+            if parsed is not None:
+                return parsed
 
         catalog_question = cls.CONSTRUCTION_ENGINE.parse_question_from_catalog(
             q, cls.CONSTRUCTIONS
