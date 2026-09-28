@@ -318,18 +318,33 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
     ) -> ParsedTriple | None:
         """Apply one data-defined statement fallback strategy."""
         tokens = text.split()
-        if pattern.strategy != "action_verb_tail" or len(tokens) < 2:
-            return None
+        if pattern.strategy == "action_verb_tail":
+            if len(tokens) < 2:
+                return None
+            verb_table = getattr(cls._policy(), pattern.verb_source)
+            verb = verb_table.get(tokens[-1].lower())
+            if verb is None:
+                return None
+            subject = cls.clean_noun(" ".join(tokens[:-1]))
+            if not cls.is_valid_concept(subject):
+                return None
+            predicate = getattr(cls._policy().semantic, pattern.predicate_role)
+            return ParsedTriple(subject=subject, predicate=predicate, object_=verb)
 
-        verb_table = getattr(cls._policy(), pattern.verb_source)
-        verb = verb_table.get(tokens[-1].lower())
-        if verb is None:
-            return None
-        subject = cls.clean_noun(" ".join(tokens[:-1]))
-        if not cls.is_valid_concept(subject):
-            return None
-        predicate = getattr(cls._policy().semantic, pattern.predicate_role)
-        return ParsedTriple(subject=subject, predicate=predicate, object_=verb)
+        if pattern.strategy == "novel_transitive":
+            if pattern.predicate_source != "middle_token":
+                return None
+            for index in range(1, len(tokens) - 1):
+                subject = cls.clean_noun(" ".join(tokens[:index]))
+                predicate = tokens[index].lower()
+                object_ = cls.clean_noun(" ".join(tokens[index + 1 :]))
+                if cls.is_valid_concept(subject) and cls.is_valid_concept(object_):
+                    return ParsedTriple(
+                        subject=subject,
+                        predicate=predicate,
+                        object_=object_,
+                    )
+        return None
 
     @classmethod
     def parse_statement(cls, text: str) -> list[ParsedTriple]:
@@ -445,19 +460,6 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             parsed = cls._parse_statement_pattern(pattern, clean)
             if parsed is not None:
                 return [parsed]
-
-        # Fallback: split on a novel verb when no construction has been learned yet.
-        m_verb = re.match(
-            r"^(?:(?:a|an|the)\s+)?(.*?)\s+([a-z_]+)\s+(.*?)$",
-            clean,
-            re.IGNORECASE,
-        )
-        if m_verb:
-            s = cls.clean_noun(m_verb.group(1))
-            p = m_verb.group(2).lower()
-            o = cls.clean_noun(m_verb.group(3))
-            if cls.is_valid_concept(s) and cls.is_valid_concept(o):
-                triples.append(ParsedTriple(subject=s, predicate=p, object_=o))
 
         return triples
 

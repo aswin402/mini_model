@@ -16,8 +16,9 @@ class StatementPattern:
 
     name: str
     strategy: str
-    predicate_role: str
-    verb_source: str
+    predicate_role: str | None = None
+    verb_source: str | None = None
+    predicate_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -46,7 +47,7 @@ class StatementPolicy:
                 raise TypeError(f"{path} patterns[{index}] must be an object")
 
             values: dict[str, str] = {}
-            for field in ("name", "strategy", "predicate_role", "verb_source"):
+            for field in ("name", "strategy"):
                 value = raw.get(field)
                 if not isinstance(value, str) or not value.strip():
                     raise TypeError(
@@ -54,13 +55,43 @@ class StatementPolicy:
                     )
                 values[field] = value.strip()
 
-            if values["strategy"] != "action_verb_tail":
+            predicate_role = raw.get("predicate_role")
+            verb_source = raw.get("verb_source")
+            predicate_source = raw.get("predicate_source")
+            optional_values = {
+                "predicate_role": predicate_role,
+                "verb_source": verb_source,
+                "predicate_source": predicate_source,
+            }
+            for field, value in optional_values.items():
+                if value is not None and (
+                    not isinstance(value, str) or not value.strip()
+                ):
+                    raise TypeError(
+                        f"{path} patterns[{index}] field {field!r} must be a non-empty string"
+                    )
+                if isinstance(value, str):
+                    values[field] = value.strip()
+
+            if values["strategy"] not in {"action_verb_tail", "novel_transitive"}:
                 raise ValueError(
                     f"{path} patterns[{index}] has an unsupported statement strategy"
                 )
-            if values["verb_source"] != "action_verbs":
+            if values["strategy"] == "action_verb_tail" and (
+                values.get("predicate_role") is None
+                or values.get("verb_source") != "action_verbs"
+                or values.get("predicate_source") is not None
+            ):
                 raise ValueError(
-                    f"{path} patterns[{index}] has an unsupported verb source"
+                    f"{path} patterns[{index}] action_verb_tail requires predicate_role and action_verbs"
+                )
+            if values["strategy"] == "novel_transitive" and (
+                values.get("predicate_source") != "middle_token"
+                or values.get("predicate_role") is not None
+                or values.get("verb_source") is not None
+            ):
+                raise ValueError(
+                    f"{path} patterns[{index}] novel_transitive requires middle_token predicate_source"
                 )
 
             patterns.append(StatementPattern(**values))

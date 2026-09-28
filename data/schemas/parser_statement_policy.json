@@ -6,6 +6,11 @@
       "strategy": "action_verb_tail",
       "predicate_role": "capability",
       "verb_source": "action_verbs"
+    },
+    {
+      "name": "novel_transitive",
+      "strategy": "novel_transitive",
+      "predicate_source": "middle_token"
     }
   ]
 }
