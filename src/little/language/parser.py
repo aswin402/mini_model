@@ -533,11 +533,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         if value_type == "text":
             return value.strip()
         if value_type == "numbers":
-            raw_numbers = re.split(
-                r"\s*(?:,|\band\b)\s*|\s+",
-                value.strip(),
-                flags=re.IGNORECASE,
-            )
+            raw_numbers = cls._policy().number_tokens.split(value.strip())
             return [
                 cls._parse_math_number(number)
                 for number in raw_numbers

@@ -15,6 +15,7 @@ from little.language.conjunction_policy import ConjunctionPolicy
 from little.language.definition_policy import DefinitionQuestionPolicy
 from little.language.indirect_question_policy import IndirectQuestionPolicy
 from little.language.math_policy import MathPatternPolicy
+from little.language.number_policy import NumberTokenPolicy
 from little.language.parser_confidence_policy import ParserConfidencePolicy
 from little.language.plural_policy import PluralizationPolicy
 from little.language.question_policy import QuestionPatternPolicy
@@ -54,6 +55,7 @@ class ParserPolicy:
     plural_es_suffixes: tuple[str, ...]
     plural_s_exceptions: tuple[str, ...]
     clause_delimiter_pattern: str
+    number_tokens: NumberTokenPolicy = field(default_factory=NumberTokenPolicy.default)
     pluralization: PluralizationPolicy = field(
         default_factory=PluralizationPolicy.default
     )
@@ -166,6 +168,12 @@ class ParserPolicy:
             if math_policy_path.exists()
             else MathPatternPolicy.default()
         )
+        number_policy_path = Path(directory) / "parser_number_policy.json"
+        number_tokens = (
+            NumberTokenPolicy.load(directory)
+            if number_policy_path.exists()
+            else NumberTokenPolicy.default()
+        )
         temporal_policy_path = Path(directory) / "parser_temporal_policy.json"
         temporal_patterns = (
             TemporalQuestionPolicy.load(directory)
@@ -276,6 +284,7 @@ class ParserPolicy:
             plural_es_suffixes=words("plural_es_suffixes"),
             plural_s_exceptions=words("plural_s_exceptions"),
             clause_delimiter_pattern=clause_delimiter_pattern,
+            number_tokens=number_tokens,
             pluralization=pluralization,
             confidence=ParserConfidencePolicy.default(),
             semantic=semantic,

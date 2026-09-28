@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from little.core.grammar_registry import GrammarRegistry
 from little.core.models import Construction
 from little.language.construction import ConstructionEngine
@@ -188,6 +190,61 @@ def test_conjunction_splitting_uses_injected_pattern(
         construction, {"X": "truck", "Y": "wheels plus engine"}
     )
     assert [triple.object_ for triple in triples] == ["wheel", "engine"]
+
+
+def test_numeric_tokenization_does_not_use_hardcoded_fallback(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_number_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_number_policy.v1",
+                "patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    with pytest.raises(ValueError):
+        SimpleParser._parse_math_value("10 and 20", "numbers")
+
+
+def test_numeric_tokenization_uses_injected_pattern(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_number_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_number_policy.v1",
+                "patterns": [
+                    {
+                        "name": "plus_separator",
+                        "pattern": r"\s+plus\s+",
+                        "case_insensitive": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    assert SimpleParser._parse_math_value("10 plus 20", "numbers") == [10, 20]
 
 
 def test_parser_uses_injected_action_vocabulary(tmp_path: Path, monkeypatch):

@@ -1,0 +1,10 @@
+{
+  "format": "little.parser_number_policy.v1",
+  "patterns": [
+    {
+      "name": "comma_and_whitespace",
+      "pattern": "\\s*(?:,|\\band\\b)\\s*|\\s+",
+      "case_insensitive": true
+    }
+  ]
+}
