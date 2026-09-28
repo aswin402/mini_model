@@ -5,17 +5,18 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from little.core.runtime_paths import RuntimePaths
 
+from little.core.runtime_paths import RuntimePaths
+from little.core.semantic_predicate_policy import SemanticPredicatePolicy
 from little.language.action_policy import ActionPolicy
-from little.language.parser_confidence_policy import ParserConfidencePolicy
-from little.language.math_policy import MathPatternPolicy
-from little.language.question_policy import QuestionPatternPolicy
 from little.language.definition_policy import DefinitionQuestionPolicy
+from little.language.indirect_question_policy import IndirectQuestionPolicy
+from little.language.math_policy import MathPatternPolicy
+from little.language.parser_confidence_policy import ParserConfidencePolicy
+from little.language.question_policy import QuestionPatternPolicy
 from little.language.semantic_question_policy import SemanticQuestionPolicy
 from little.language.statement_policy import StatementPolicy
 from little.language.temporal_policy import TemporalQuestionPolicy
-from little.core.semantic_predicate_policy import SemanticPredicatePolicy
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,9 @@ class ParserPolicy:
     )
     definition_patterns: DefinitionQuestionPolicy = field(
         default_factory=DefinitionQuestionPolicy.default
+    )
+    indirect_question_patterns: IndirectQuestionPolicy = field(
+        default_factory=IndirectQuestionPolicy.default
     )
     action_patterns: ActionPolicy = field(default_factory=ActionPolicy.default)
 
@@ -176,6 +180,14 @@ class ParserPolicy:
             if action_policy_path.exists()
             else ActionPolicy.default()
         )
+        indirect_question_policy_path = (
+            Path(directory) / "parser_indirect_question_policy.json"
+        )
+        indirect_question_patterns = (
+            IndirectQuestionPolicy.load(directory)
+            if indirect_question_policy_path.exists()
+            else IndirectQuestionPolicy.default()
+        )
 
         return cls(
             leading_articles=words("leading_articles"),
@@ -223,6 +235,7 @@ class ParserPolicy:
             statement_patterns=statement_patterns,
             definition_patterns=definition_patterns,
             action_patterns=action_patterns,
+            indirect_question_patterns=indirect_question_patterns,
         )
 
     @classmethod

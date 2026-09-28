@@ -77,6 +77,8 @@ class _ParserPolicyCompatibilityMeta(type):
             return ParserPolicy.default().definition_patterns
         if name == "ACTION_PATTERNS":
             return ParserPolicy.default().action_patterns
+        if name == "INDIRECT_QUESTION_PATTERNS":
+            return ParserPolicy.default().indirect_question_patterns
         raise AttributeError(name)
 
 
@@ -150,6 +152,16 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         """Resolve procedural action patterns from the active policy."""
         configured = cls.__dict__.get("ACTION_PATTERNS")
         return configured if configured is not None else cls._policy().action_patterns
+
+    @classmethod
+    def _indirect_question_patterns(cls):
+        """Resolve embedded polar-question patterns from the active policy."""
+        configured = cls.__dict__.get("INDIRECT_QUESTION_PATTERNS")
+        return (
+            configured
+            if configured is not None
+            else cls._policy().indirect_question_patterns
+        )
 
     @classmethod
     def normalize_text(cls, text: str) -> str:
@@ -766,22 +778,33 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             if sub_parsed:
                 return sub_parsed
 
-        # Indirect / embedded polar questions: "if Paris is in Europe", "whether Paris is in Europe"
-        m_if = re.match(r"^(?:if|whether)\s+(.+)$", q, re.IGNORECASE)
-        if m_if and not re.search(r"\b(?:then|it\s+is|they\s+are)\b", q, re.IGNORECASE):
-            inner = m_if.group(1).strip()
+        for pattern in cls._indirect_question_patterns().patterns:
+            if pattern.strategy != "embedded_polar":
+                continue
+            match = re.match(pattern.pattern, q, re.IGNORECASE)
+            if match is None or re.search(
+                pattern.exclusion_pattern, q, re.IGNORECASE
+            ):
+                continue
+            inner = match.group(pattern.body_group).strip()
             stmt_triples = cls.parse_statement(inner)
             if stmt_triples:
-                t = stmt_triples[0]
-                return (t.subject, t.predicate, t.object_)
-            m_inv = re.match(
-                r"^(.+?)\s+(is|are|can|has|have|does|do)\s+(.+)$",
-                inner,
-                re.IGNORECASE,
+                triple = stmt_triples[0]
+                return (triple.subject, triple.predicate, triple.object_)
+            inverse_match = re.match(
+                pattern.inverse_pattern, inner, re.IGNORECASE
             )
-            if m_inv:
-                inv_q = f"{m_inv.group(2)} {m_inv.group(1)} {m_inv.group(3)}"
-                sub_parsed = cls.parse_question(inv_q, known_concepts=known_concepts)
+            if inverse_match:
+                inv_q = " ".join(
+                    (
+                        inverse_match.group(pattern.inverse_auxiliary_group),
+                        inverse_match.group(pattern.inverse_subject_group),
+                        inverse_match.group(pattern.inverse_object_group),
+                    )
+                )
+                sub_parsed = cls.parse_question(
+                    inv_q, known_concepts=known_concepts
+                )
                 if sub_parsed:
                     return sub_parsed
 

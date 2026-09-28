@@ -1,0 +1,16 @@
+{
+  "format": "little.parser_indirect_question_policy.v1",
+  "patterns": [
+    {
+      "name": "embedded_polar_question",
+      "strategy": "embedded_polar",
+      "pattern": "^(?:if|whether)\\s+(.+)$",
+      "body_group": 1,
+      "exclusion_pattern": "\\b(?:then|it\\s+is|they\\s+are)\\b",
+      "inverse_pattern": "^(.+?)\\s+(is|are|can|has|have|does|do)\\s+(.+)$",
+      "inverse_subject_group": 1,
+      "inverse_auxiliary_group": 2,
+      "inverse_object_group": 3
+    }
+  ]
+}

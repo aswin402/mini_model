@@ -369,6 +369,88 @@ def test_parser_uses_injected_special_question_catalog(tmp_path: Path, monkeypat
     )
 
 
+def test_parser_does_not_use_hardcoded_indirect_question_fallback(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_indirect_question_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_indirect_question_policy.v1",
+                "patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+    monkeypatch.setattr(
+        SimpleParser,
+        "CONSTRUCTIONS",
+        [
+            construction
+            for construction in GrammarRegistry.default()
+            if construction.name == "cxn_is_in_statement"
+        ],
+    )
+
+    parsed = SimpleParser.parse_question("if Paris is in Europe")
+
+    assert parsed is None
+
+
+def test_parser_uses_injected_indirect_question_pattern(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_indirect_question_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_indirect_question_policy.v1",
+                "patterns": [
+                    {
+                        "name": "custom_embedded",
+                        "strategy": "embedded_polar",
+                        "pattern": r"^provided\s+(.+)$",
+                        "body_group": 1,
+                        "exclusion_pattern": r"$^",
+                        "inverse_pattern": r"^(.+?)\s+(is)\s+(.+)$",
+                        "inverse_subject_group": 1,
+                        "inverse_auxiliary_group": 2,
+                        "inverse_object_group": 3,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+    monkeypatch.setattr(
+        SimpleParser,
+        "CONSTRUCTIONS",
+        [
+            construction
+            for construction in GrammarRegistry.default()
+            if construction.name == "cxn_is_in_statement"
+        ],
+    )
+
+    parsed = SimpleParser.parse_question("provided Paris is in Europe")
+
+    assert parsed == ("paris", "located_in", "europe")
+
+
 def test_parser_uses_injected_math_pattern_catalog(tmp_path: Path, monkeypatch):
     parser_payload = json.loads(
         Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
