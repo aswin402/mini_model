@@ -35,6 +35,21 @@ def test_parser_policy_loads_shared_lexical_tables():
     assert "wives" in policy.plural_f_to_fe_words
 
 
+def test_clean_noun_uses_injected_article_catalog(tmp_path: Path, monkeypatch):
+    payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    payload["parser_policy"]["leading_articles"] = []
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    assert SimpleParser.clean_noun("a") == "a"
+    assert SimpleParser.clean_noun("the") == "the"
+
+
 def test_parser_uses_injected_action_vocabulary(tmp_path: Path, monkeypatch):
     payload = json.loads(
         Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")

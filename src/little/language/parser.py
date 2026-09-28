@@ -267,7 +267,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
     @classmethod
     def clean_noun(cls, text: str) -> str:
         raw_lower = text.strip().lower()
-        if raw_lower in ("a", "an", "the", "this", "that", "these", "those"):
+        if raw_lower in cls._policy().leading_articles:
             return ""
         articles = "|".join(
             re.escape(article) for article in cls._policy().leading_articles
