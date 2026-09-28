@@ -19,6 +19,7 @@ class StatementPattern:
     predicate_role: str | None = None
     verb_source: str | None = None
     predicate_source: str | None = None
+    delimiter_pattern: str | None = None
 
 
 @dataclass(frozen=True)
@@ -58,10 +59,12 @@ class StatementPolicy:
             predicate_role = raw.get("predicate_role")
             verb_source = raw.get("verb_source")
             predicate_source = raw.get("predicate_source")
+            delimiter_pattern = raw.get("delimiter_pattern")
             optional_values = {
                 "predicate_role": predicate_role,
                 "verb_source": verb_source,
                 "predicate_source": predicate_source,
+                "delimiter_pattern": delimiter_pattern,
             }
             for field, value in optional_values.items():
                 if value is not None and (
@@ -73,7 +76,11 @@ class StatementPolicy:
                 if isinstance(value, str):
                     values[field] = value.strip()
 
-            if values["strategy"] not in {"action_verb_tail", "novel_transitive"}:
+            if values["strategy"] not in {
+                "action_verb_tail",
+                "novel_transitive",
+                "coordinate_compound",
+            }:
                 raise ValueError(
                     f"{path} patterns[{index}] has an unsupported statement strategy"
                 )
@@ -92,6 +99,21 @@ class StatementPolicy:
             ):
                 raise ValueError(
                     f"{path} patterns[{index}] novel_transitive requires middle_token predicate_source"
+                )
+            if values["strategy"] == "coordinate_compound" and (
+                values.get("delimiter_pattern") is None
+                or values.get("predicate_role") is not None
+                or values.get("verb_source") is not None
+                or values.get("predicate_source") is not None
+            ):
+                raise ValueError(
+                    f"{path} patterns[{index}] coordinate_compound requires delimiter_pattern only"
+                )
+            if values["strategy"] != "coordinate_compound" and (
+                values.get("delimiter_pattern") is not None
+            ):
+                raise ValueError(
+                    f"{path} patterns[{index}] delimiter_pattern is only valid for coordinate_compound"
                 )
 
             patterns.append(StatementPattern(**values))

@@ -323,9 +323,35 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
     @classmethod
     def _parse_statement_pattern(
         cls, pattern: Any, text: str
-    ) -> ParsedTriple | None:
+    ) -> ParsedTriple | list[ParsedTriple] | None:
         """Apply one data-defined statement fallback strategy."""
         tokens = text.split()
+        if pattern.strategy == "coordinate_compound":
+            if pattern.delimiter_pattern is None:
+                return None
+            clauses = [
+                clause.strip()
+                for clause in re.split(
+                    pattern.delimiter_pattern, text, flags=re.IGNORECASE
+                )
+                if clause.strip()
+            ]
+            if len(clauses) <= 1:
+                return None
+
+            triples: list[ParsedTriple] = []
+            current_subject: str | None = None
+            for clause in clauses:
+                resolved_clause = cls.resolve_anaphora(clause, current_subject)
+                clause_triples = cls.parse_statement(resolved_clause)
+                if not clause_triples:
+                    continue
+                current_subject = clause_triples[0].subject
+                for triple in clause_triples:
+                    if triple not in triples:
+                        triples.append(triple)
+            return triples or None
+
         if pattern.strategy == "action_verb_tail":
             if len(tokens) < 2:
                 return None
@@ -359,29 +385,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         clean = cls.normalize_text(text).rstrip(".").strip()
         triples: list[ParsedTriple] = []
 
-        # 0a. Coordinate compound sentences: "A dog is an animal and it has fur", "A falcon is a bird and it hunts rodents"
-        coord_pattern = r",?\s+and\s+(?=(?:it|they|he|she|this|that|these|those|(?:a|an|the)\s+[a-z]+)\s+[a-z]+)\b"
-        m_coord = re.search(coord_pattern, clean, flags=re.IGNORECASE)
-        if m_coord:
-            coord_parts = [
-                p.strip()
-                for p in re.split(coord_pattern, clean, flags=re.IGNORECASE)
-                if p.strip()
-            ]
-            if len(coord_parts) > 1:
-                curr_subject = None
-                for cp in coord_parts:
-                    cp_resolved = cls.resolve_anaphora(cp, curr_subject)
-                    cp_triples = cls.parse_statement(cp_resolved)
-                    if cp_triples:
-                        curr_subject = cp_triples[0].subject
-                        for ct in cp_triples:
-                            if ct not in triples:
-                                triples.append(ct)
-                if triples:
-                    return triples
-
-        # 0b. Subject-level Restrictive Relative Clauses:
+        # Subject-level Restrictive Relative Clauses:
         # "The animal that has gills and swims in water is a fish"
         # "An animal that eats meat is a carnivore"
         m_subj_rel = re.match(
@@ -415,7 +419,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
                             triples.append(st)
                 return triples
 
-        # 0c. Object-level Relative Clauses: "Whales are mammals that live in the ocean and have fins"
+        # Object-level Relative Clauses: "Whales are mammals that live in the ocean and have fins"
         m_rel = re.match(
             r"^(.*?\s+(?:is|are)\s+[^,]+?)\s+(?:that|which|who)\s+(.*)$",
             clean,
@@ -467,7 +471,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         for pattern in cls._statement_patterns().patterns:
             parsed = cls._parse_statement_pattern(pattern, clean)
             if parsed is not None:
-                return [parsed]
+                return parsed if isinstance(parsed, list) else [parsed]
 
         return triples
 

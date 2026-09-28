@@ -2,6 +2,11 @@
   "format": "little.parser_statement_policy.v1",
   "patterns": [
     {
+      "name": "coordinate_compound",
+      "strategy": "coordinate_compound",
+      "delimiter_pattern": ",?\\s+and\\s+(?=(?:it|they|he|she|this|that|these|those|(?:a|an|the)\\s+[a-z]+)\\s+[a-z]+)\\b"
+    },
+    {
       "name": "intransitive_capability",
       "strategy": "action_verb_tail",
       "predicate_role": "capability",

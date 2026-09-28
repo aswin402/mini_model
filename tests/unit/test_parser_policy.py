@@ -105,6 +105,96 @@ def test_parser_does_not_use_hardcoded_novel_transitive_statement_fallback(
     assert parsed == [] or parsed[0].predicate != "hunts"
 
 
+def test_parser_does_not_use_hardcoded_coordinate_statement_fallback(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_statement_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_statement_policy.v1",
+                "patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+    monkeypatch.setattr(
+        SimpleParser,
+        "CONSTRUCTIONS",
+        [
+            construction
+            for construction in GrammarRegistry.default()
+            if construction.name == "cxn_is_a"
+        ],
+    )
+
+    parsed = SimpleParser.parse_statement(
+        "A falcon is a bird and it hunts rodents."
+    )
+
+    assert parsed == []
+
+
+def test_parser_uses_injected_coordinate_statement_pattern(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_statement_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_statement_policy.v1",
+                "patterns": [
+                    {
+                        "name": "custom_coordinate",
+                        "strategy": "coordinate_compound",
+                        "delimiter_pattern": r"\s+plus\s+",
+                    },
+                    {
+                        "name": "custom_transitive",
+                        "strategy": "novel_transitive",
+                        "predicate_source": "middle_token",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+    monkeypatch.setattr(
+        SimpleParser,
+        "CONSTRUCTIONS",
+        [
+            construction
+            for construction in GrammarRegistry.default()
+            if construction.name == "cxn_is_a"
+        ],
+    )
+
+    parsed = SimpleParser.parse_statement(
+        "A falcon is a bird plus it hunts rodents."
+    )
+
+    assert [
+        (triple.subject, triple.predicate, triple.object_) for triple in parsed
+    ] == [
+        ("falcon", "is_a", "bird"),
+        ("falcon", "hunts", "rodent"),
+    ]
+
+
 def test_parser_does_not_use_hardcoded_action_fallback(
     tmp_path: Path, monkeypatch
 ):
