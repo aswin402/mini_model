@@ -51,6 +51,33 @@ def test_parser_uses_injected_action_vocabulary(tmp_path: Path, monkeypatch):
     assert parsed[0].object_ == "glide"
 
 
+def test_parser_does_not_use_hardcoded_intransitive_statement_fallback(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_statement_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_statement_policy.v1",
+                "patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+    monkeypatch.setattr(SimpleParser, "CONSTRUCTIONS", [])
+
+    parsed = SimpleParser.parse_statement("A dolphin swims.")
+
+    assert parsed == [] or parsed[0].predicate != policy.semantic.capability
+
+
 def test_parser_uses_injected_special_question_catalog(tmp_path: Path, monkeypatch):
     parser_payload = json.loads(
         Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")

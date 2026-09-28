@@ -71,6 +71,8 @@ class _ParserPolicyCompatibilityMeta(type):
             return ParserPolicy.default().temporal_patterns
         if name == "SEMANTIC_PATTERNS":
             return ParserPolicy.default().semantic_patterns
+        if name == "STATEMENT_PATTERNS":
+            return ParserPolicy.default().statement_patterns
         if name == "DEFINITION_PATTERNS":
             return ParserPolicy.default().definition_patterns
         raise AttributeError(name)
@@ -119,6 +121,16 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             configured
             if configured is not None
             else cls._policy().semantic_patterns
+        )
+
+    @classmethod
+    def _statement_patterns(cls):
+        """Resolve statement fallback patterns from the active policy."""
+        configured = cls.__dict__.get("STATEMENT_PATTERNS")
+        return (
+            configured
+            if configured is not None
+            else cls._policy().statement_patterns
         )
 
     @classmethod
@@ -301,6 +313,25 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         )
 
     @classmethod
+    def _parse_statement_pattern(
+        cls, pattern: Any, text: str
+    ) -> ParsedTriple | None:
+        """Apply one data-defined statement fallback strategy."""
+        tokens = text.split()
+        if pattern.strategy != "action_verb_tail" or len(tokens) < 2:
+            return None
+
+        verb_table = getattr(cls._policy(), pattern.verb_source)
+        verb = verb_table.get(tokens[-1].lower())
+        if verb is None:
+            return None
+        subject = cls.clean_noun(" ".join(tokens[:-1]))
+        if not cls.is_valid_concept(subject):
+            return None
+        predicate = getattr(cls._policy().semantic, pattern.predicate_role)
+        return ParsedTriple(subject=subject, predicate=predicate, object_=verb)
+
+    @classmethod
     def parse_statement(cls, text: str) -> list[ParsedTriple]:
         clean = cls.normalize_text(text).rstrip(".").strip()
         triples: list[ParsedTriple] = []
@@ -409,24 +440,11 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
                 for triple in catalog_triples
             ]
 
-        # 8c. Intransitive capability verbs: "Dolphins swim", "An eagle flies", "It swims"
-        m_act = re.match(
-            r"^(.*?)\s+(" + "|".join(sorted(cls._policy().action_verbs)) + r")$",
-            clean,
-            re.IGNORECASE,
-        )
-        if m_act:
-            s = cls.clean_noun(m_act.group(1))
-            verb = cls._policy().action_verbs[m_act.group(2).lower()]
-            if cls.is_valid_concept(s):
-                triples.append(
-                    ParsedTriple(
-                        subject=s,
-                        predicate=cls._policy().semantic.capability,
-                        object_=verb,
-                    )
-                )
-                return triples
+        # Statement fallback strategies are selected by the versioned catalog.
+        for pattern in cls._statement_patterns().patterns:
+            parsed = cls._parse_statement_pattern(pattern, clean)
+            if parsed is not None:
+                return [parsed]
 
         # Fallback: split on a novel verb when no construction has been learned yet.
         m_verb = re.match(
