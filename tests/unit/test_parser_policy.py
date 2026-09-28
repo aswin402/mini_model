@@ -110,6 +110,86 @@ def test_noun_pluralization_uses_injected_rule_catalog(
     assert ConstructionEngine.clean_noun("fizz") == "fi"
 
 
+def test_conjunction_splitting_does_not_use_hardcoded_fallback(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_conjunction_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_conjunction_policy.v1",
+                "patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+    monkeypatch.setattr(ConstructionEngine, "_POLICY", policy, raising=False)
+
+    construction = Construction.create(
+        name="test_has_part",
+        pattern_tokens=["{x}", "has", "{y}"],
+        slot_roles={"X": "subject", "Y": "object"},
+        predicate_template="has_part",
+    )
+
+    assert SimpleParser.split_conjoined_items("wheels and engine") == []
+    assert ConstructionEngine._triples_from_catalog_match(
+        construction, {"X": "truck", "Y": "wheels and engine"}
+    ) == []
+
+
+def test_conjunction_splitting_uses_injected_pattern(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_conjunction_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_conjunction_policy.v1",
+                "patterns": [
+                    {
+                        "name": "plus_separator",
+                        "pattern": r"\s+plus\s+",
+                        "case_insensitive": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+    monkeypatch.setattr(ConstructionEngine, "_POLICY", policy, raising=False)
+
+    construction = Construction.create(
+        name="test_has_part",
+        pattern_tokens=["{x}", "has", "{y}"],
+        slot_roles={"X": "subject", "Y": "object"},
+        predicate_template="has_part",
+    )
+
+    assert SimpleParser.split_conjoined_items("wheels plus engine") == [
+        "wheel",
+        "engine",
+    ]
+    triples = ConstructionEngine._triples_from_catalog_match(
+        construction, {"X": "truck", "Y": "wheels plus engine"}
+    )
+    assert [triple.object_ for triple in triples] == ["wheel", "engine"]
+
+
 def test_parser_uses_injected_action_vocabulary(tmp_path: Path, monkeypatch):
     payload = json.loads(
         Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")

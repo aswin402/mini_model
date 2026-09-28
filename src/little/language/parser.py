@@ -292,7 +292,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         """Split conjoined list: 'wheels, an engine, and doors' -> ['wheel', 'engine', 'door']."""
         raw = text.strip()
         parts = [
-            p.strip() for p in re.split(r",\s*(?:and\s+)?|\s+and\s+", raw) if p.strip()
+            p.strip() for p in cls._policy().conjunction.split(raw) if p.strip()
         ]
         results = []
         for p in parts:

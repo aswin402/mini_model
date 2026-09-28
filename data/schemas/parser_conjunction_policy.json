@@ -1,0 +1,10 @@
+{
+  "format": "little.parser_conjunction_policy.v1",
+  "patterns": [
+    {
+      "name": "comma_or_and",
+      "pattern": ",\\s*(?:and\\s+)?|\\s+and\\s+",
+      "case_insensitive": false
+    }
+  ]
+}

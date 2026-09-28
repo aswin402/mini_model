@@ -11,6 +11,7 @@ from little.core.semantic_predicate_policy import SemanticPredicatePolicy
 from little.language.action_policy import ActionPolicy
 from little.language.anaphora_policy import AnaphoraPolicy
 from little.language.compound_question_policy import CompoundQuestionPolicy
+from little.language.conjunction_policy import ConjunctionPolicy
 from little.language.definition_policy import DefinitionQuestionPolicy
 from little.language.indirect_question_policy import IndirectQuestionPolicy
 from little.language.math_policy import MathPatternPolicy
@@ -89,6 +90,7 @@ class ParserPolicy:
     compound_question_patterns: CompoundQuestionPolicy = field(
         default_factory=CompoundQuestionPolicy.default
     )
+    conjunction: ConjunctionPolicy = field(default_factory=ConjunctionPolicy.default)
     action_patterns: ActionPolicy = field(default_factory=ActionPolicy.default)
     anaphora: AnaphoraPolicy = field(default_factory=AnaphoraPolicy.default)
 
@@ -218,6 +220,12 @@ class ParserPolicy:
             if compound_question_policy_path.exists()
             else CompoundQuestionPolicy.default()
         )
+        conjunction_policy_path = Path(directory) / "parser_conjunction_policy.json"
+        conjunction = (
+            ConjunctionPolicy.load(directory)
+            if conjunction_policy_path.exists()
+            else ConjunctionPolicy.default()
+        )
         plural_policy_path = Path(directory) / "parser_plural_policy.json"
         pluralization = (
             PluralizationPolicy.load(directory)
@@ -281,6 +289,7 @@ class ParserPolicy:
             indirect_question_patterns=indirect_question_patterns,
             question_prefix_patterns=question_prefix_patterns,
             compound_question_patterns=compound_question_patterns,
+            conjunction=conjunction,
             anaphora=anaphora,
         )
 

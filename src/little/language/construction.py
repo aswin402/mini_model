@@ -311,7 +311,7 @@ class ConstructionEngine:
         is_property = construction.is_property
         conjoined = [
             cls.clean_noun(part)
-            for part in re.split(r",\s*(?:and\s+)?|\s+and\s+", object_raw)
+            for part in cls._policy().conjunction.split(object_raw)
             if part.strip()
         ]
         if len(conjoined) > 1:
