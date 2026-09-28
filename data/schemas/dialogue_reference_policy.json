@@ -1,0 +1,20 @@
+{
+  "format": "little.dialogue_reference_policy.v1",
+  "former_references": ["the former", "former"],
+  "latter_references": ["the latter", "latter"],
+  "plural_pronouns": ["they", "them", "their", "theirs", "these", "those"],
+  "person_pronouns": ["he", "him", "his", "she", "her", "hers"],
+  "singular_nonhuman_pronouns": ["it", "its", "that", "this"],
+  "text_pronouns": ["it", "they", "them", "that", "these", "those"],
+  "relative_pronouns": ["that", "these", "those"],
+  "relative_prefix_exclusions": [
+    "is", "are", "was", "were", "do", "does", "did",
+    "if", "and", "or", "but", "so", "than", "as", "like"
+  ],
+  "relative_suffix_exclusions": [
+    "is", "are", "was", "were", "has", "have", "can",
+    "will", "would", "do", "does", "did", "in", "on", "at", "?", "."
+  ],
+  "person_categories": ["person", "human", "character"],
+  "conditional_guard_pattern": "^if\\s+"
+}

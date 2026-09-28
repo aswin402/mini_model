@@ -9,7 +9,8 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+
+from little.language.dialogue_policy import DialogueReferencePolicy
 
 
 @dataclass
@@ -18,7 +19,7 @@ class SalientEntity:
 
     name: str
     raw_text: str = ""
-    category: Optional[str] = None
+    category: str | None = None
     is_animate: bool = False
     is_person: bool = False
     is_plural: bool = False
@@ -35,25 +36,26 @@ class DialogueTurn:
     turn_index: int
     speaker: str  # "user" | "little"
     text: str
-    entities: List[str] = field(default_factory=list)
+    entities: list[str] = field(default_factory=list)
     timestamp: float = field(default_factory=time.time)
 
 
 class DialogueContext:
     """Manages conversational dialogue state and deterministic pronoun resolution."""
 
-    def __init__(self) -> None:
-        self.turns: List[DialogueTurn] = []
-        self.entity_stack: List[SalientEntity] = []
-        self.active_subject: Optional[str] = None
-        self.active_object: Optional[str] = None
+    def __init__(self, policy: DialogueReferencePolicy | None = None) -> None:
+        self.policy = policy if policy is not None else DialogueReferencePolicy.default()
+        self.turns: list[DialogueTurn] = []
+        self.entity_stack: list[SalientEntity] = []
+        self.active_subject: str | None = None
+        self.active_object: str | None = None
         self.current_turn_index: int = 0
 
     def record_turn(
         self,
         speaker: str,
         text: str,
-        entities: Optional[List[str]] = None,
+        entities: list[str] | None = None,
     ) -> DialogueTurn:
         """Log a dialogue turn and advance conversation index."""
         self.current_turn_index += 1
@@ -70,7 +72,7 @@ class DialogueContext:
         self,
         name: str,
         raw_text: str = "",
-        category: Optional[str] = None,
+        category: str | None = None,
         is_animate: bool = False,
         is_person: bool = False,
         is_plural: bool = False,
@@ -102,13 +104,12 @@ class DialogueContext:
             self.active_object = clean_name
 
         # Associate with the active turn if present
-        if self.turns:
-            if clean_name not in self.turns[-1].entities:
-                self.turns[-1].entities.append(clean_name)
+        if self.turns and clean_name not in self.turns[-1].entities:
+            self.turns[-1].entities.append(clean_name)
 
         return entity
 
-    def get_salient_subject(self) -> Optional[str]:
+    def get_salient_subject(self) -> str | None:
         """Return the most salient subject concept."""
         if self.active_subject:
             return self.active_subject
@@ -117,12 +118,12 @@ class DialogueContext:
                 return e.name
         return self.entity_stack[-1].name if self.entity_stack else None
 
-    def resolve_pronoun(self, pronoun: str) -> Optional[str]:
+    def resolve_pronoun(self, pronoun: str) -> str | None:
         """Deterministically resolve a pronoun or referring expression to its salient antecedent."""
         p_clean = pronoun.strip().lower()
 
         # 1. Structural references: 'the former', 'the latter'
-        if p_clean in ("the former", "former"):
+        if p_clean in self.policy.former_references:
             # Find the most recent turn with at least 2 distinct entities
             for turn in reversed(self.turns):
                 if len(turn.entities) >= 2:
@@ -137,7 +138,7 @@ class DialogueContext:
                 return self.entity_stack[-2].name
             return None
 
-        if p_clean in ("the latter", "latter"):
+        if p_clean in self.policy.latter_references:
             for turn in reversed(self.turns):
                 if len(turn.entities) >= 2:
                     return turn.entities[-1]
@@ -146,7 +147,7 @@ class DialogueContext:
             return None
 
         # 2. Plural pronouns: 'they', 'them', 'their', 'theirs', 'these', 'those'
-        if p_clean in ("they", "them", "their", "theirs", "these", "those"):
+        if p_clean in self.policy.plural_pronouns:
             for e in reversed(self.entity_stack):
                 if e.is_plural:
                     return e.name
@@ -156,17 +157,19 @@ class DialogueContext:
             return None
 
         # 3. Person-specific pronouns: 'he', 'him', 'his', 'she', 'her'
-        if p_clean in ("he", "him", "his", "she", "her", "hers"):
+        if p_clean in self.policy.person_pronouns:
             for e in reversed(self.entity_stack):
-                if e.role == "subject" and (e.is_person or e.category in ("person", "human", "character")):
+                if e.role == "subject" and (
+                    e.is_person or e.category in self.policy.person_categories
+                ):
                     return e.name
             for e in reversed(self.entity_stack):
-                if e.is_person or e.category in ("person", "human", "character"):
+                if e.is_person or e.category in self.policy.person_categories:
                     return e.name
             return None
 
         # 4. Singular non-human pronouns: 'it', 'its', 'that', 'this'
-        if p_clean in ("it", "its", "that", "this"):
+        if p_clean in self.policy.singular_nonhuman_pronouns:
             # Centering Theory: Prioritize subject role (topic) of the most recent turns
             for e in reversed(self.entity_stack):
                 if e.role == "subject" and not e.is_plural and not e.is_person:
@@ -185,23 +188,27 @@ class DialogueContext:
     def resolve_anaphora_in_text(self, text: str) -> str:
         """Replace referring pronouns in text with resolved antecedent nouns."""
         s = text.strip()
-        if re.match(r"^if\s+", s, re.IGNORECASE):
+        if re.match(self.policy.conditional_guard_pattern, s, re.IGNORECASE):
             return text
-
-        words = text.split()
-        resolved_words: List[str] = []
 
         # Multi-word referring expressions first
         t_mod = text
-        if "the former" in t_mod.lower():
-            resolved = self.resolve_pronoun("the former")
-            if resolved:
-                t_mod = re.sub(r"\bthe former\b", resolved, t_mod, flags=re.IGNORECASE)
-
-        if "the latter" in t_mod.lower():
-            resolved = self.resolve_pronoun("the latter")
-            if resolved:
-                t_mod = re.sub(r"\bthe latter\b", resolved, t_mod, flags=re.IGNORECASE)
+        for references in (
+            self.policy.former_references,
+            self.policy.latter_references,
+        ):
+            for reference in references:
+                reference_pattern = rf"\b{re.escape(reference)}\b"
+                if re.search(reference_pattern, t_mod, flags=re.IGNORECASE):
+                    resolved = self.resolve_pronoun(reference)
+                    if resolved:
+                        t_mod = re.sub(
+                            reference_pattern,
+                            resolved,
+                            t_mod,
+                            flags=re.IGNORECASE,
+                        )
+                    break
 
         # Single word pronoun replacement
         def replace_token(match: re.Match) -> str:
@@ -211,32 +218,31 @@ class DialogueContext:
             end = match.end()
 
             # Guard: Do not replace 'that', 'these', 'those' when acting as relative pronouns or determiners
-            if t_lower in ("that", "these", "those"):
+            if t_lower in self.policy.relative_pronouns:
                 prefix = t_mod[:start].strip()
                 if prefix:
                     last_word = prefix.split()[-1].lower()
-                    if last_word not in (
-                        "is", "are", "was", "were", "do", "does", "did",
-                        "if", "and", "or", "but", "so", "than", "as", "like",
-                    ):
+                    if last_word not in self.policy.relative_prefix_exclusions:
                         # Preceded by a content noun -> relative clause (e.g. "mammals that live")
                         return token
                 suffix = t_mod[end:].strip()
                 if suffix:
                     first_word = suffix.split()[0].lower()
-                    if first_word not in (
-                        "is", "are", "was", "were", "has", "have", "can",
-                        "will", "would", "do", "does", "did", "in", "on", "at", "?", ".",
-                    ):
+                    if first_word not in self.policy.relative_suffix_exclusions:
                         # Followed by a noun -> determiner (e.g. "that animal")
                         return token
 
-            if t_lower in ("it", "they", "them", "that", "these", "those"):
+            if t_lower in self.policy.text_pronouns:
                 res = self.resolve_pronoun(t_lower)
                 if res:
                     return res if token.islower() else res.capitalize()
             return token
 
-        pattern = r"\b(it|they|them|that|these|those)\b"
+        if not self.policy.text_pronouns:
+            return t_mod
+        pronouns = "|".join(
+            re.escape(pronoun) for pronoun in self.policy.text_pronouns
+        )
+        pattern = rf"\b(?:{pronouns})\b"
         resolved_text = re.sub(pattern, replace_token, t_mod, flags=re.IGNORECASE)
         return resolved_text
