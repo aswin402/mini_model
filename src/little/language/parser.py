@@ -75,6 +75,8 @@ class _ParserPolicyCompatibilityMeta(type):
             return ParserPolicy.default().statement_patterns
         if name == "DEFINITION_PATTERNS":
             return ParserPolicy.default().definition_patterns
+        if name == "ACTION_PATTERNS":
+            return ParserPolicy.default().action_patterns
         raise AttributeError(name)
 
 
@@ -142,6 +144,12 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             if configured is not None
             else cls._policy().definition_patterns
         )
+
+    @classmethod
+    def _action_patterns(cls):
+        """Resolve procedural action patterns from the active policy."""
+        configured = cls.__dict__.get("ACTION_PATTERNS")
+        return configured if configured is not None else cls._policy().action_patterns
 
     @classmethod
     def normalize_text(cls, text: str) -> str:
@@ -465,20 +473,60 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
 
     @classmethod
     def parse_action(cls, text: str) -> tuple[str, dict[str, Any]] | None:
-        """Parse procedural actions like 'slice apple into 4 pieces'."""
+        """Parse procedural actions using the active action-policy catalog."""
         clean = text.strip().rstrip(".").strip()
-        slice_verbs = "|".join(
-            re.escape(verb) for verb in cls._policy().slice_verbs
-        )
-        m_slice = re.match(
-            rf"^(?:{slice_verbs})\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s-]+?)\s+into\s+(\d+)\s+pieces?$",
-            clean,
-            re.IGNORECASE,
-        )
-        if m_slice:
-            obj = cls.clean_noun(m_slice.group(1))
-            count = int(m_slice.group(2))
-            return ("SLICE", {"object": obj, "count": count})
+        tokens = clean.split()
+        for pattern in cls._action_patterns().patterns:
+            if pattern.strategy != "verb_object_count":
+                continue
+
+            verb_source = getattr(cls._policy(), pattern.verb_source)
+            if isinstance(verb_source, dict):
+                if not tokens or tokens[0].lower() not in verb_source:
+                    continue
+            elif not tokens or tokens[0].lower() not in {
+                str(value).lower() for value in verb_source
+            }:
+                continue
+
+            connector_tokens = pattern.connector.split()
+            connector_start = len(connector_tokens)
+            connector_index = next(
+                (
+                    index
+                    for index in range(1, len(tokens) - connector_start)
+                    if [
+                        token.lower()
+                        for token in tokens[index : index + connector_start]
+                    ]
+                    == connector_tokens
+                ),
+                None,
+            )
+            if connector_index is None or connector_index <= 1:
+                continue
+
+            count_index = connector_index + connector_start
+            if count_index >= len(tokens) or not tokens[count_index].isdigit():
+                continue
+            unit_index = count_index + 1
+            if (
+                unit_index >= len(tokens)
+                or tokens[unit_index].lower() not in pattern.count_units
+                or unit_index + 1 != len(tokens)
+            ):
+                continue
+
+            obj = cls.clean_noun(" ".join(tokens[1:connector_index]))
+            if not obj:
+                continue
+            return (
+                pattern.skill,
+                {
+                    pattern.object_argument: obj,
+                    pattern.count_argument: int(tokens[count_index]),
+                },
+            )
         return None
 
     @staticmethod

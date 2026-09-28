@@ -105,6 +105,72 @@ def test_parser_does_not_use_hardcoded_novel_transitive_statement_fallback(
     assert parsed == [] or parsed[0].predicate != "hunts"
 
 
+def test_parser_does_not_use_hardcoded_action_fallback(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_action_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_action_policy.v1",
+                "patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+    monkeypatch.setattr(SimpleParser, "CONSTRUCTIONS", [])
+
+    parsed = SimpleParser.parse_action("Slice an apple into 4 pieces")
+
+    assert parsed is None
+
+
+def test_parser_uses_injected_action_pattern_catalog(tmp_path: Path, monkeypatch):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_action_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_action_policy.v1",
+                "patterns": [
+                    {
+                        "name": "custom_cut_pattern",
+                        "strategy": "verb_object_count",
+                        "skill": "CUT_CUSTOM",
+                        "verb_source": "slice_verbs",
+                        "connector": "through",
+                        "count_units": ["segment", "segments"],
+                        "object_argument": "target",
+                        "count_argument": "parts",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+    monkeypatch.setattr(SimpleParser, "CONSTRUCTIONS", [])
+
+    parsed = SimpleParser.parse_action("Cut an apple through 4 segments")
+
+    assert parsed == (
+        "CUT_CUSTOM",
+        {"target": "apple", "parts": 4},
+    )
+
+
 def test_parser_uses_injected_special_question_catalog(tmp_path: Path, monkeypatch):
     parser_payload = json.loads(
         Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")

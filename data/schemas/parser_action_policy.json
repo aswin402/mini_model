@@ -1,0 +1,15 @@
+{
+  "format": "little.parser_action_policy.v1",
+  "patterns": [
+    {
+      "name": "slice_into_pieces",
+      "strategy": "verb_object_count",
+      "skill": "SLICE",
+      "verb_source": "slice_verbs",
+      "connector": "into",
+      "count_units": ["piece", "pieces"],
+      "object_argument": "object",
+      "count_argument": "count"
+    }
+  ]
+}

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from little.core.runtime_paths import RuntimePaths
 
+from little.language.action_policy import ActionPolicy
 from little.language.parser_confidence_policy import ParserConfidencePolicy
 from little.language.math_policy import MathPatternPolicy
 from little.language.question_policy import QuestionPatternPolicy
@@ -71,6 +72,7 @@ class ParserPolicy:
     definition_patterns: DefinitionQuestionPolicy = field(
         default_factory=DefinitionQuestionPolicy.default
     )
+    action_patterns: ActionPolicy = field(default_factory=ActionPolicy.default)
 
     @classmethod
     def load(cls, directory: Path) -> ParserPolicy:
@@ -168,6 +170,12 @@ class ParserPolicy:
             if definition_policy_path.exists()
             else DefinitionQuestionPolicy.default()
         )
+        action_policy_path = Path(directory) / "parser_action_policy.json"
+        action_patterns = (
+            ActionPolicy.load(directory)
+            if action_policy_path.exists()
+            else ActionPolicy.default()
+        )
 
         return cls(
             leading_articles=words("leading_articles"),
@@ -214,6 +222,7 @@ class ParserPolicy:
             semantic_patterns=semantic_patterns,
             statement_patterns=statement_patterns,
             definition_patterns=definition_patterns,
+            action_patterns=action_patterns,
         )
 
     @classmethod
