@@ -1,0 +1,50 @@
+{
+  "format": "little.parser_plural_policy.v1",
+  "rules": [
+    {
+      "name": "ies_to_y",
+      "suffixes": ["ies"],
+      "minimum_length": 5,
+      "strip_length": 3,
+      "replacement": "y"
+    },
+    {
+      "name": "ves_to_fe",
+      "suffixes": ["ves"],
+      "minimum_length": 5,
+      "strip_length": 3,
+      "replacement": "fe",
+      "required_word_source": "plural_f_to_fe_words"
+    },
+    {
+      "name": "ves_to_f",
+      "suffixes": ["ves"],
+      "minimum_length": 5,
+      "strip_length": 3,
+      "replacement": "f"
+    },
+    {
+      "name": "es_special_to_base",
+      "suffixes": ["es"],
+      "minimum_length": 5,
+      "strip_length": 2,
+      "replacement": "",
+      "required_suffix_source": "plural_es_suffixes"
+    },
+    {
+      "name": "es_to_base",
+      "suffixes": ["es"],
+      "minimum_length": 5,
+      "strip_length": 1,
+      "replacement": ""
+    },
+    {
+      "name": "s_to_base",
+      "suffixes": ["s"],
+      "minimum_length": 4,
+      "strip_length": 1,
+      "replacement": "",
+      "excluded_suffix_source": "plural_s_exceptions"
+    }
+  ]
+}

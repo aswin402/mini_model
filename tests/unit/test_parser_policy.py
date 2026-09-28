@@ -50,6 +50,66 @@ def test_clean_noun_uses_injected_article_catalog(tmp_path: Path, monkeypatch):
     assert SimpleParser.clean_noun("the") == "the"
 
 
+def test_noun_pluralization_does_not_use_hardcoded_fallback(
+    tmp_path: Path, monkeypatch
+):
+    payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_plural_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_plural_policy.v1",
+                "rules": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+    monkeypatch.setattr(ConstructionEngine, "_POLICY", policy, raising=False)
+
+    assert SimpleParser.clean_noun("stories") == "stories"
+    assert ConstructionEngine.clean_noun("stories") == "stories"
+
+
+def test_noun_pluralization_uses_injected_rule_catalog(
+    tmp_path: Path, monkeypatch
+):
+    payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_plural_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_plural_policy.v1",
+                "rules": [
+                    {
+                        "name": "custom_suffix",
+                        "suffixes": ["zz"],
+                        "minimum_length": 4,
+                        "strip_length": 2,
+                        "replacement": "",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+    monkeypatch.setattr(ConstructionEngine, "_POLICY", policy, raising=False)
+
+    assert SimpleParser.clean_noun("fizz") == "fi"
+    assert ConstructionEngine.clean_noun("fizz") == "fi"
+
+
 def test_parser_uses_injected_action_vocabulary(tmp_path: Path, monkeypatch):
     payload = json.loads(
         Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")

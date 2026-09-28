@@ -85,26 +85,7 @@ class ConstructionEngine:
             last = cls.clean_noun(tokens[-1])
             return " ".join(tokens[:-1] + [last])
 
-        # Plural inflection normalization
-        if s.endswith("ies") and len(s) > 4:
-            s = s[:-3] + "y"
-        elif s.endswith("ves") and len(s) > 4:
-            if s in cls._policy().plural_f_to_fe_words:
-                s = s[:-3] + "fe"
-            else:
-                s = s[:-3] + "f"
-        elif s.endswith("es") and len(s) > 4:
-            if s.endswith(cls._policy().plural_es_suffixes):
-                s = s[:-2]
-            else:
-                s = s[:-1]
-        elif (
-            s.endswith("s")
-            and not s.endswith(cls._policy().plural_s_exceptions)
-            and len(s) > 3
-        ):
-            s = s[:-1]
-        return s
+        return cls._policy().pluralization.normalize(s, cls._policy())
 
     @classmethod
     def is_valid_concept(cls, c: str) -> bool:

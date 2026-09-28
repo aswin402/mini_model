@@ -15,6 +15,7 @@ from little.language.definition_policy import DefinitionQuestionPolicy
 from little.language.indirect_question_policy import IndirectQuestionPolicy
 from little.language.math_policy import MathPatternPolicy
 from little.language.parser_confidence_policy import ParserConfidencePolicy
+from little.language.plural_policy import PluralizationPolicy
 from little.language.question_policy import QuestionPatternPolicy
 from little.language.question_prefix_policy import QuestionPrefixPolicy
 from little.language.semantic_question_policy import SemanticQuestionPolicy
@@ -52,6 +53,9 @@ class ParserPolicy:
     plural_es_suffixes: tuple[str, ...]
     plural_s_exceptions: tuple[str, ...]
     clause_delimiter_pattern: str
+    pluralization: PluralizationPolicy = field(
+        default_factory=PluralizationPolicy.default
+    )
     confidence: ParserConfidencePolicy = field(
         default_factory=ParserConfidencePolicy.default
     )
@@ -214,6 +218,12 @@ class ParserPolicy:
             if compound_question_policy_path.exists()
             else CompoundQuestionPolicy.default()
         )
+        plural_policy_path = Path(directory) / "parser_plural_policy.json"
+        pluralization = (
+            PluralizationPolicy.load(directory)
+            if plural_policy_path.exists()
+            else PluralizationPolicy.default()
+        )
         anaphora_policy_path = Path(directory) / "parser_anaphora_policy.json"
         anaphora = (
             AnaphoraPolicy.load(directory)
@@ -258,6 +268,7 @@ class ParserPolicy:
             plural_es_suffixes=words("plural_es_suffixes"),
             plural_s_exceptions=words("plural_s_exceptions"),
             clause_delimiter_pattern=clause_delimiter_pattern,
+            pluralization=pluralization,
             confidence=ParserConfidencePolicy.default(),
             semantic=semantic,
             question_patterns=question_patterns,
