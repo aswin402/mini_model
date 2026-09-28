@@ -1,0 +1,38 @@
+{
+  "format": "little.parser_anaphora_policy.v1",
+  "guard_patterns": [
+    "^if\\s+"
+  ],
+  "patterns": [
+    {
+      "name": "possessive_color",
+      "pattern": "\\b(?:its|his|her|their)\\s+color\\b",
+      "replacement": "color of {subject}",
+      "case_insensitive": true
+    },
+    {
+      "name": "possessive_pronoun",
+      "pattern": "\\b(?:its|his|her|their)\\b",
+      "replacement": "{subject}",
+      "case_insensitive": true
+    },
+    {
+      "name": "personal_pronoun",
+      "pattern": "\\b(?:it|he|she|they)\\b",
+      "replacement": "{subject}",
+      "case_insensitive": true
+    },
+    {
+      "name": "leading_demonstrative",
+      "pattern": "^(?:this|that)\\s+",
+      "replacement": "{subject} ",
+      "case_insensitive": true
+    },
+    {
+      "name": "focus_demonstrative",
+      "pattern": "\\b(is|was|about)\\s+(?:this|that)\\b",
+      "replacement": "\\1 {subject}",
+      "case_insensitive": true
+    }
+  ]
+}

@@ -9,6 +9,7 @@ from pathlib import Path
 from little.core.runtime_paths import RuntimePaths
 from little.core.semantic_predicate_policy import SemanticPredicatePolicy
 from little.language.action_policy import ActionPolicy
+from little.language.anaphora_policy import AnaphoraPolicy
 from little.language.compound_question_policy import CompoundQuestionPolicy
 from little.language.definition_policy import DefinitionQuestionPolicy
 from little.language.indirect_question_policy import IndirectQuestionPolicy
@@ -85,6 +86,7 @@ class ParserPolicy:
         default_factory=CompoundQuestionPolicy.default
     )
     action_patterns: ActionPolicy = field(default_factory=ActionPolicy.default)
+    anaphora: AnaphoraPolicy = field(default_factory=AnaphoraPolicy.default)
 
     @classmethod
     def load(cls, directory: Path) -> ParserPolicy:
@@ -212,6 +214,12 @@ class ParserPolicy:
             if compound_question_policy_path.exists()
             else CompoundQuestionPolicy.default()
         )
+        anaphora_policy_path = Path(directory) / "parser_anaphora_policy.json"
+        anaphora = (
+            AnaphoraPolicy.load(directory)
+            if anaphora_policy_path.exists()
+            else AnaphoraPolicy.default()
+        )
 
         return cls(
             leading_articles=words("leading_articles"),
@@ -262,6 +270,7 @@ class ParserPolicy:
             indirect_question_patterns=indirect_question_patterns,
             question_prefix_patterns=question_prefix_patterns,
             compound_question_patterns=compound_question_patterns,
+            anaphora=anaphora,
         )
 
     @classmethod

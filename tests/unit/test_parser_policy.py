@@ -480,6 +480,65 @@ def test_parser_uses_injected_compound_question_splitter(
     ) == ["What is 10", "what is 5?"]
 
 
+def test_parser_does_not_use_hardcoded_anaphora_fallback(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_anaphora_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_anaphora_policy.v1",
+                "guard_patterns": [],
+                "patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    resolved = SimpleParser.resolve_anaphora("It is fast.", "falcon")
+
+    assert resolved == "It is fast."
+
+
+def test_parser_uses_injected_anaphora_pattern(tmp_path: Path, monkeypatch):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_anaphora_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_anaphora_policy.v1",
+                "guard_patterns": [],
+                "patterns": [
+                    {
+                        "name": "custom_pronoun",
+                        "pattern": r"\byon\b",
+                        "replacement": "{subject}",
+                        "case_insensitive": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    resolved = SimpleParser.resolve_anaphora("yon is fast", "falcon")
+
+    assert resolved == "falcon is fast"
+
+
 def test_parser_does_not_use_hardcoded_indirect_question_fallback(
     tmp_path: Path, monkeypatch
 ):

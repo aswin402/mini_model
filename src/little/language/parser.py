@@ -20,7 +20,6 @@ from little.core.contracts import (
     VerificationStatus,
 )
 from little.core.grammar_registry import GrammarRegistry
-from little.core.runtime_policy import RuntimePolicy
 from little.core.models import (
     BeliefStatus,
     Construction,
@@ -28,6 +27,7 @@ from little.core.models import (
     LearningResult,
     UpdateType,
 )
+from little.core.runtime_policy import RuntimePolicy
 from little.dynamics.cfc import ContinuousDynamicsEngine
 from little.inference.engine import InferenceEngine
 from little.inference.invariant_gates import DeepSeekInvariantVerifier
@@ -37,8 +37,8 @@ from little.language.math_policy import MathCapture
 from little.language.parser_policy import ParserPolicy
 from little.language.perception import DeterministicPerceptionAdapter, PerceptionAdapter
 from little.memory.store import MemoryStore
-from little.procedural.runner import SkillRunner
 from little.procedural.math_cas import UnitConversionGraph
+from little.procedural.runner import SkillRunner
 from little.procedural.skills import register_builtin_skills
 
 
@@ -83,6 +83,8 @@ class _ParserPolicyCompatibilityMeta(type):
             return ParserPolicy.default().question_prefix_patterns
         if name == "COMPOUND_QUESTION_PATTERNS":
             return ParserPolicy.default().compound_question_patterns
+        if name == "ANAPHORA":
+            return ParserPolicy.default().anaphora
         raise AttributeError(name)
 
 
@@ -248,49 +250,18 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
 
         s = text.strip()
 
-        # If sentence is a conditional with an internal antecedent (e.g. "If an animal is a canine, then it is..."),
-        # do not override the bound pronoun with the previous dialogue subject!
-        if re.match(r"^if\s+", s, re.IGNORECASE):
-            return s
+        anaphora = cls._policy().anaphora
+        for guard_pattern in anaphora.guard_patterns:
+            if re.match(guard_pattern, s, re.IGNORECASE):
+                return s
 
-        # 1. Possessive pronouns: "what is its color", "what color is it", "tell me about its parts"
-        s = re.sub(
-            r"\b(?:its|his|her|their)\s+color\b",
-            f"color of {last_subject}",
-            s,
-            flags=re.IGNORECASE,
-        )
-        s = re.sub(
-            r"\b(?:its|his|her|their)\b",
-            last_subject,
-            s,
-            flags=re.IGNORECASE,
-        )
-
-        # 2. Subject personal pronouns: "is it an animal", "does it have wings", "it is grey", "can it fly"
-        # Only replace personal pronouns: it, he, she, they.
-        # DO NOT replace "that" as a whole word because "that" is commonly a relative pronoun
-        # ("mammals that live in the ocean") or complementizer ("know that...").
-        s = re.sub(
-            r"\b(?:it|he|she|they)\b",
-            last_subject,
-            s,
-            flags=re.IGNORECASE,
-        )
-
-        # 3. Demonstrative pronouns at sentence start or question focus: "this is...", "what is this", "is that..."
-        s = re.sub(
-            r"^(?:this|that)\s+",
-            f"{last_subject} ",
-            s,
-            flags=re.IGNORECASE,
-        )
-        s = re.sub(
-            r"\b(is|was|about)\s+(?:this|that)\b",
-            rf"\1 {last_subject}",
-            s,
-            flags=re.IGNORECASE,
-        )
+        for pattern in anaphora.patterns:
+            flags = re.IGNORECASE if pattern.case_insensitive else 0
+            replacement = pattern.replacement.format(
+                subject=last_subject,
+                object=last_object or "",
+            )
+            s = re.sub(pattern.pattern, replacement, s, flags=flags)
         return s
 
     @classmethod
@@ -871,7 +842,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             if match is None:
                 continue
 
-            def captured(group: int) -> str:
+            def captured(group: int, *, match=match) -> str:
                 return match.group(group) or ""
 
             subject = (
