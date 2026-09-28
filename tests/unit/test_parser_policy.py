@@ -369,6 +369,58 @@ def test_parser_uses_injected_special_question_catalog(tmp_path: Path, monkeypat
     )
 
 
+def test_parser_does_not_use_hardcoded_question_prefix_fallback(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_question_prefix_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_question_prefix_policy.v1",
+                "patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    parsed = SimpleParser.parse_question("hello what is your name")
+
+    assert parsed is None
+
+
+def test_parser_uses_injected_question_prefix_vocabulary(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    parser_payload["parser_policy"]["greeting_prefixes"] = ["salutations"]
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    prefix_payload = json.loads(
+        Path("data/schemas/parser_question_prefix_policy.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    (tmp_path / "parser_question_prefix_policy.json").write_text(
+        json.dumps(prefix_payload), encoding="utf-8"
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    parsed = SimpleParser.parse_question("salutations what is your name")
+
+    assert parsed == ("little", "__identity_name__", None)
+
+
 def test_parser_does_not_use_hardcoded_indirect_question_fallback(
     tmp_path: Path, monkeypatch
 ):

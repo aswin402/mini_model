@@ -14,6 +14,7 @@ from little.language.indirect_question_policy import IndirectQuestionPolicy
 from little.language.math_policy import MathPatternPolicy
 from little.language.parser_confidence_policy import ParserConfidencePolicy
 from little.language.question_policy import QuestionPatternPolicy
+from little.language.question_prefix_policy import QuestionPrefixPolicy
 from little.language.semantic_question_policy import SemanticQuestionPolicy
 from little.language.statement_policy import StatementPolicy
 from little.language.temporal_policy import TemporalQuestionPolicy
@@ -75,6 +76,9 @@ class ParserPolicy:
     )
     indirect_question_patterns: IndirectQuestionPolicy = field(
         default_factory=IndirectQuestionPolicy.default
+    )
+    question_prefix_patterns: QuestionPrefixPolicy = field(
+        default_factory=QuestionPrefixPolicy.default
     )
     action_patterns: ActionPolicy = field(default_factory=ActionPolicy.default)
 
@@ -188,6 +192,14 @@ class ParserPolicy:
             if indirect_question_policy_path.exists()
             else IndirectQuestionPolicy.default()
         )
+        question_prefix_policy_path = (
+            Path(directory) / "parser_question_prefix_policy.json"
+        )
+        question_prefix_patterns = (
+            QuestionPrefixPolicy.load(directory)
+            if question_prefix_policy_path.exists()
+            else QuestionPrefixPolicy.default()
+        )
 
         return cls(
             leading_articles=words("leading_articles"),
@@ -236,6 +248,7 @@ class ParserPolicy:
             definition_patterns=definition_patterns,
             action_patterns=action_patterns,
             indirect_question_patterns=indirect_question_patterns,
+            question_prefix_patterns=question_prefix_patterns,
         )
 
     @classmethod

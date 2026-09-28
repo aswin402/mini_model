@@ -79,6 +79,8 @@ class _ParserPolicyCompatibilityMeta(type):
             return ParserPolicy.default().action_patterns
         if name == "INDIRECT_QUESTION_PATTERNS":
             return ParserPolicy.default().indirect_question_patterns
+        if name == "QUESTION_PREFIX_PATTERNS":
+            return ParserPolicy.default().question_prefix_patterns
         raise AttributeError(name)
 
 
@@ -161,6 +163,16 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             configured
             if configured is not None
             else cls._policy().indirect_question_patterns
+        )
+
+    @classmethod
+    def _question_prefix_patterns(cls):
+        """Resolve question-prefix delegation patterns from the active policy."""
+        configured = cls.__dict__.get("QUESTION_PREFIX_PATTERNS")
+        return (
+            configured
+            if configured is not None
+            else cls._policy().question_prefix_patterns
         )
 
     @classmethod
@@ -762,18 +774,21 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         """Extract (subject, predicate, target) from natural English questions."""
         q = cls.normalize_text(text).rstrip("?").strip()
 
-        # Strip leading conversational greetings or discourse markers before parsing the question
-        # e.g. "hii who are you" -> "who are you", "hello can an eagle fly" -> "can an eagle fly"
-        greeting_prefixes = "|".join(
-            re.escape(prefix) for prefix in cls._policy().greeting_prefixes
-        )
-        m_greeting_prefix = re.match(
-            rf"^(?:{greeting_prefixes})[,\s!]+(.+)$",
-            q,
-            re.IGNORECASE,
-        )
-        if m_greeting_prefix:
-            sub_q = m_greeting_prefix.group(1).strip()
+        for pattern in cls._question_prefix_patterns().patterns:
+            if pattern.strategy != "prefix_delegate":
+                continue
+            prefixes = getattr(cls._policy(), pattern.prefix_source)
+            if not prefixes:
+                continue
+            prefix_pattern = "|".join(re.escape(prefix) for prefix in prefixes)
+            match = re.match(
+                rf"^(?:{prefix_pattern}){pattern.separator_pattern}(.+)$",
+                q,
+                re.IGNORECASE,
+            )
+            if match is None:
+                continue
+            sub_q = match.group(pattern.body_group).strip()
             sub_parsed = cls.parse_question(sub_q, known_concepts=known_concepts)
             if sub_parsed:
                 return sub_parsed

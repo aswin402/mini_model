@@ -1,0 +1,12 @@
+{
+  "format": "little.parser_question_prefix_policy.v1",
+  "patterns": [
+    {
+      "name": "leading_greeting",
+      "strategy": "prefix_delegate",
+      "prefix_source": "greeting_prefixes",
+      "separator_pattern": "[,\\s!]+",
+      "body_group": 1
+    }
+  ]
+}
