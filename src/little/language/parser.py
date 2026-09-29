@@ -266,7 +266,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
 
     @classmethod
     def clean_noun(cls, text: str) -> str:
-        raw_lower = text.strip().lower()
+        raw_lower = text.strip().lower().rstrip(".?!,")
         if raw_lower in cls._policy().leading_articles:
             return ""
         articles = "|".join(
