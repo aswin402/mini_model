@@ -33,6 +33,7 @@ from little.inference.engine import InferenceEngine
 from little.inference.invariant_gates import DeepSeekInvariantVerifier
 from little.language.construction import ConstructionEngine
 from little.language.dialogue import DialogueContext
+from little.language.dialogue_surface import DialogueSurfaceEngine
 from little.language.math_policy import MathCapture
 from little.language.parser_policy import ParserPolicy
 from little.language.perception import DeterministicPerceptionAdapter, PerceptionAdapter
@@ -1095,6 +1096,33 @@ class LearningEngine:
             policy=self.runtime_policy.procedural,
             unit_policy=self.runtime_policy.units,
         )
+        self.dialogue_surface = DialogueSurfaceEngine(
+            policy=getattr(self.runtime_policy, "dialogue_surface", None)
+        )
+
+    def chat(self, text: str) -> str:
+        """Conversational chat interface with warm, articulate English dialogue."""
+        social_reply = self.dialogue_surface.handle_social(text)
+        if social_reply is not None:
+            return social_reply
+
+        greeting_word, remainder = self.dialogue_surface.decompose_utterance(text)
+        frame = self.perception.perceive(
+            remainder, memory=self.memory, context=self.dialogue
+        )
+        if frame.intent in {"statement", "action"}:
+            learn_res = self.commit_frame(frame, source_type=SourceType.USER)
+            body = self.dialogue_surface.verbalize_learning(learn_res)
+        else:
+            inf_res = self.ask(
+                remainder,
+                parsed_query=frame.parsed_query,
+                parsed_queries=frame.parsed_queries,
+                question_parts=frame.question_parts,
+            )
+            body = self.dialogue_surface.verbalize_inference(inf_res, query=remainder)
+
+        return self.dialogue_surface.compose_reply(greeting_word, body)
 
     def learn(self, text: str) -> LearningResult:
         """Perceive once and delegate candidate decisions to the commit boundary."""
@@ -1111,6 +1139,34 @@ class LearningEngine:
     ) -> LearningResult:
         """Verify and commit candidates without parsing the source text again."""
         text = frame.source_text
+
+        # Check for comparative assertion statement (strict partial orders)
+        from little.language.comparative import ComparativeOrderReasoner
+
+        comp_reasoner = ComparativeOrderReasoner(self.memory)
+        clean_comp_text = text.strip().rstrip(".?!")
+        for pat in comp_reasoner.policy.statement_patterns:
+            m_comp = re.search(pat, clean_comp_text, re.IGNORECASE)
+            if m_comp:
+                e_a, comp_w, e_b = m_comp.group(1), m_comp.group(2), m_comp.group(3)
+                if comp_reasoner.policy.find_dimension_by_comparative(comp_w):
+                    success, msg = comp_reasoner.assert_comparison(e_a, e_b, comp_w)
+                    exp = self.memory.add_experience(
+                        input_text=text,
+                        extracted_triples=[
+                            {"subject": e_a, "predicate": f"{comp_w}_than", "object": e_b}
+                        ],
+                    )
+                    up_type = UpdateType.NEW_RELATION if success else UpdateType.NO_OP
+                    return LearningResult(
+                        input_text=text,
+                        update_type=up_type,
+                        experience_id=exp.id,
+                        concepts_created=[e_a, e_b],
+                        relations_created=[f"({e_a} {comp_w}_than {e_b})"] if success else [],
+                        message=msg,
+                    )
+
         if frame.actions:
             result = self.memory.ledger.commit_action(
                 frame, frame.actions[0], source_type=source_type

@@ -1,0 +1,81 @@
+{
+  "format": "little.dialogue_surface_policy.v1",
+  "social_intents": {
+    "greeting": {
+      "patterns": [
+        "^(?:hello|hi|hey|hey\\s+there|hello\\s+there|hi\\s+there|greetings|good\\s+morning|good\\s+afternoon|good\\s+evening|howdy|yo)[!.]?$"
+      ],
+      "responses": [
+        "Hello! How can I help you explore, learn, or solve something today?",
+        "Hi there! What would you like to discuss or calculate?",
+        "Greetings! I'm ready to answer your questions or learn new concepts."
+      ]
+    },
+    "how_are_you": {
+      "patterns": [
+        "^(?:how\\s+are\\s+you(?:\\s+doing)?|how's\\s+it\\s+going|how\\s+are\\s+things)[?!.]?$"
+      ],
+      "responses": [
+        "I'm operating smoothly and ready to reason. How can I assist you today?",
+        "Doing well, thank you! Ready to explore concepts, solve problems, or chat."
+      ]
+    },
+    "thank_you": {
+      "patterns": [
+        "^(?:thank\\s+you(?:\\s+very\\s+much)?|thanks(?:\\s+a\\s+lot)?|much\\s+appreciated|appreciate\\s+it)[!.]?$"
+      ],
+      "responses": [
+        "You're very welcome!",
+        "Glad I could help!",
+        "Anytime! Feel free to ask if you have more questions."
+      ]
+    },
+    "goodbye": {
+      "patterns": [
+        "^(?:goodbye|bye|bye\\s+bye|see\\s+you(?:\\s+later)?|take\\s+care|have\\s+a\\s+good\\s+day)[!.]?$"
+      ],
+      "responses": [
+        "Goodbye! Everything we learned is safely preserved in memory.",
+        "Take care! Have a great day ahead.",
+        "See you next time! I'll be here whenever you're ready to continue."
+      ]
+    },
+    "identity": {
+      "patterns": [
+        "^(?:who\\s+are\\s+you|what\\s+are\\s+you|what\\s+is\\s+your\\s+name|tell\\s+me\\s+about\\s+yourself)[?!.]?$"
+      ],
+      "responses": [
+        "I am LITTLE (MIVI), a verifiable neuro-symbolic cognitive architecture. I learn continuously, reason over 360° concept knots, and never hallucinate."
+      ]
+    },
+    "compliment": {
+      "patterns": [
+        "^(?:good\\s+job|well\\s+done|great\\s+work|nice\\s+job|you\\s+are\\s+awesome|you're\\s+awesome|you\\s+are\\s+great|you're\\s+great|impressive|cool)[!.]?$"
+      ],
+      "responses": [
+        "Thank you! I strive for rigorous reasoning and continuous learning.",
+        "I appreciate the feedback! Always glad to be helpful and accurate."
+      ]
+    }
+  },
+  "mixed_intent_splitter": {
+    "leading_greeting_regex": "^(hello\\s+there|hi\\s+there|hey\\s+there|good\\s+morning|good\\s+afternoon|good\\s+evening|hello|hi|hey|greetings)[,!.]?\\s+(.+)$"
+  },
+  "verbalizer_templates": {
+    "affirmative_taxonomy": "Yes, {subject_article} {subject} is indeed {target_article} {target}.",
+    "affirmative_capability": "Yes, {subject} can certainly {action}.",
+    "affirmative_feature": "Yes, {subject_article} {subject} has {target}.",
+    "affirmative_property": "{subject_cap} has {property} {value}.",
+    "affirmative_location": "Yes, {subject} is located in {target}.",
+    "affirmative_general": "Yes, that is correct.",
+    "refuted_taxonomy": "No, {subject_article} {subject} is not {target_article} {target}.",
+    "refuted_capability": "No, {subject} cannot {action}.",
+    "refuted_feature": "No, {subject_article} {subject} does not have {target}.",
+    "refuted_general": "No, that does not match what I know to be true.",
+    "epistemic_unknown": "I don't have that information in my memory yet. Could you tell me more about {subject}?",
+    "learning_confirmation": "Got it! I've learned that {summary}.",
+    "mixed_greeting_response": "{greeting_reply} {body}",
+    "conjoined_separator": ", and ",
+    "conjoined_contrast": ", but "
+  }
+}

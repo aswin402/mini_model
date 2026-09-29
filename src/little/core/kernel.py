@@ -8,6 +8,7 @@ from little.core.contracts import CandidateFrame, SourceType
 from little.core.models import BeliefStatus, InferenceResult, LearningResult
 from little.core.runtime_policy import RuntimePolicy
 from little.inference.thinking_controller import CognitiveMode, ThinkingController
+from little.language.dialogue_surface import DialogueSurfaceEngine
 from little.language.parser import LearningEngine, configured_parser
 from little.language.perception import DeterministicPerceptionAdapter, PerceptionAdapter
 from little.memory.store import MemoryStore
@@ -59,6 +60,29 @@ class CognitiveKernel:
             resolver=self.learner.ask,
             runtime_policy=self.runtime_policy,
         )
+        self.dialogue_surface = DialogueSurfaceEngine(
+            policy=getattr(self.runtime_policy, "dialogue_surface", None)
+        )
+
+    def chat(self, text: str) -> str:
+        """Conversational chat interface with warm, articulate English dialogue."""
+        social_reply = self.dialogue_surface.handle_social(text)
+        if social_reply is not None:
+            return social_reply
+
+        greeting_word, remainder = self.dialogue_surface.decompose_utterance(text)
+        outcome = self.process(remainder)
+
+        if outcome.inference is not None:
+            body = self.dialogue_surface.verbalize_inference(
+                outcome.inference, query=remainder
+            )
+        elif outcome.learning is not None:
+            body = self.dialogue_surface.verbalize_learning(outcome.learning)
+        else:
+            body = "I processed that, but have no specific response."
+
+        return self.dialogue_surface.compose_reply(greeting_word, body)
 
     def process(self, text: str, *, allow_learning: bool = True) -> KernelOutcome:
         frame = self.perception.perceive(

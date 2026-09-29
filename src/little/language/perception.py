@@ -112,6 +112,21 @@ class DeterministicPerceptionAdapter:
                 if construction.construction_type == construction_type
             ] + stored
 
+        from little.procedural.math_story import MathStorySolver
+
+        if MathStorySolver().is_math_story(text):
+            return CandidateFrame.from_text(
+                text,
+                claims=[],
+                intent="question",
+                parsed_query=None,
+                parsed_queries=[],
+                question_parts=[text],
+                uncertainty=self.policy.question_frame_uncertainty,
+                model_id="math-story-solver",
+                model_version=self.policy.version,
+            )
+
         sentences = [
             sentence.strip()
             for sentence in re.split(r"(?<=[.!?;\n])\s+", text)
@@ -148,6 +163,18 @@ class DeterministicPerceptionAdapter:
                         parsed_query=parsed_queries[0] if parsed_queries else None,
                         parsed_queries=parsed_queries,
                         question_parts=question_parts,
+                        uncertainty=self.policy.question_frame_uncertainty,
+                        model_id="deterministic-parser",
+                        model_version=self.policy.version,
+                    )
+                elif text.strip().endswith("?"):
+                    return CandidateFrame.from_text(
+                        text,
+                        claims=[],
+                        intent="question",
+                        parsed_query=None,
+                        parsed_queries=[],
+                        question_parts=[text],
                         uncertainty=self.policy.question_frame_uncertainty,
                         model_id="deterministic-parser",
                         model_version=self.policy.version,

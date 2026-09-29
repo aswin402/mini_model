@@ -21,6 +21,7 @@ def test_runtime_policy_loads_the_default_policy_bundle():
     assert any(
         construction.name == "cxn_is_a" for construction in policy.constructions
     )
+    assert "greeting" in policy.dialogue_surface.social_intents
 
 
 def test_kernel_propagates_injected_runtime_policies():

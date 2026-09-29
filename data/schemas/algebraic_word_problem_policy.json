@@ -9,7 +9,11 @@
     "two times": 2,
     "three times": 3,
     "four times": 4,
-    "five times": 5
+    "five times": 5,
+    "2 times": 2,
+    "3 times": 3,
+    "4 times": 4,
+    "5 times": 5
   },
   "positive_offsets": [
     "more than",

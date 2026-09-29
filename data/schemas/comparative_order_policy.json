@@ -59,7 +59,7 @@
     }
   ],
   "question_patterns": {
-    "extremum": "^(?:who|which)\\s+is\\s+(?:the\\s+)?([a-z\\s]+)\\??$",
+    "extremum": "^(?:who|which)\\s+is\\s+(?:the\\s+)?([a-z]+)(?:\\s+(?:between|among|of)\\s+(?:all|them|.+?))?\\??$",
     "transitive": "^is\\s+(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_]+)\\s+([a-z]+(?:\\s+[a-z]+)?)\\s+than\\s+(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_]+)\\??$"
   },
   "statement_patterns": [

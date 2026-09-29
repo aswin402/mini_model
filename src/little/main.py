@@ -571,8 +571,17 @@ def cmd_interact(args: argparse.Namespace) -> None:
                 print()
                 continue
 
-            # Semantic input always enters through the cognitive kernel.
-            outcome = kernel.process(user_input)
+            # Check for pure social intents (greetings, pleasantries, identity)
+            social_reply = kernel.dialogue_surface.handle_social(user_input)
+            if social_reply is not None:
+                print(f"\n💬 LITTLE: {social_reply}\n")
+                continue
+
+            # Decompose mixed utterance if leading greeting is present
+            greeting_word, remainder = kernel.dialogue_surface.decompose_utterance(user_input)
+
+            # Semantic input enters through the cognitive kernel.
+            outcome = kernel.process(remainder)
             if outcome.inference is not None:
                 res = outcome.inference
                 if getattr(args, "thinking", False):
@@ -582,7 +591,9 @@ def cmd_interact(args: argparse.Namespace) -> None:
                     )
                     for step in res.trace:
                         print(f"   ↳ {step}")
-                print(f"\n💬 LITTLE: {res.verbalize()}")
+                verbalized = kernel.dialogue_surface.verbalize_inference(res, query=remainder)
+                final_reply = kernel.dialogue_surface.compose_reply(greeting_word, verbalized)
+                print(f"\n💬 LITTLE: {final_reply}")
                 print(
                     f"   ↳ [Status: {res.status.value} | Confidence: {res.confidence * 100:.1f}%]"
                 )
@@ -667,7 +678,9 @@ def cmd_interact(args: argparse.Namespace) -> None:
                         "   💡 Tip: Try phrasing as a fact (e.g. 'A dog is an animal', 'An apple is red') or action ('Slice apple into 4 pieces'). Type 'help' for examples.\n"
                     )
                 else:
-                    print(f"\n💬 LITTLE: Understood! {res.message}")
+                    verbalized = kernel.dialogue_surface.verbalize_learning(res)
+                    final_reply = kernel.dialogue_surface.compose_reply(greeting_word, verbalized)
+                    print(f"\n💬 LITTLE: {final_reply}")
                     print(f"   ↳ [Update: {res.update_type.value}]\n")
                     if (
                         getattr(args, "auto_study", False)

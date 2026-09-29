@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from little.core.runtime_paths import RuntimePaths
 
 from little.core.grammar_registry import GrammarRegistry
 from little.core.models import Construction
+from little.core.runtime_paths import RuntimePaths
 from little.dynamics.profiles import DynamicsProfileRegistry
 from little.dynamics.transformation_policy import TransformationPolicy
 from little.inference.reasoning_policy import ReasoningPolicy
 from little.knowledge.policy import LanguagePolicy
+from little.language.dialogue_surface_policy import DialogueSurfacePolicy
 from little.language.parser_policy import ParserPolicy
 from little.language.perception import PerceptionPolicy
 from little.procedural.skill_policy import ProceduralSkillPolicy
@@ -31,6 +32,7 @@ class RuntimePolicy:
     dynamics: DynamicsProfileRegistry
     procedural: ProceduralSkillPolicy
     transformation: TransformationPolicy
+    dialogue_surface: DialogueSurfacePolicy
 
     @property
     def semantic(self):
@@ -51,6 +53,7 @@ class RuntimePolicy:
             dynamics=DynamicsProfileRegistry.load(directory),
             procedural=ProceduralSkillPolicy.load(directory),
             transformation=TransformationPolicy.load(directory),
+            dialogue_surface=DialogueSurfacePolicy.load(directory),
         )
 
     @classmethod

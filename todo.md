@@ -507,4 +507,26 @@ Implementation Plan: `docs/superpowers/plans/2026-09-22-mivi-spiderweb-thinking-
     - `tests/unit/test_algebraic_word_problems.py` (3/3 passed)
     - `tests/integration/test_math_english_synthesis_chat.py` (4/4 passed)
 
+- [x] **Phase 12: Zero-Hardcoding Conversational Surface Engine & Social Protocol**
+  - [x] Externalized Policy Schema (`data/schemas/dialogue_surface_policy.json`):
+    - 6 core social intents (`greeting`, `how_are_you`, `thank_you`, `goodbye`, `identity`, `compliment`) with pattern matching and varied warm responses
+    - `mixed_intent_splitter` with `leading_greeting_regex` extracting greetings from mixed inputs ("Hello! Is a robin a bird?")
+    - `verbalizer_templates`: affirmative taxonomy, capability, feature, property, location, general affirmative/refuted, epistemic unknown invitations, and learning confirmations
+  - [x] Typed Policy & Engine Implementation:
+    - `src/little/language/dialogue_surface_policy.py`: Dataclass models for social intent, templates, and full schema loading
+    - `src/little/language/dialogue_surface.py`: `DialogueSurfaceEngine` handling social turns, compound utterance decomposition, reply composition, learning confirmation verbalization, and inference answer verbalization
+  - [x] Core Architecture Integration:
+    - `src/little/core/runtime_policy.py`: Wired `dialogue_surface` policy into global `RuntimePolicy`
+    - `src/little/core/kernel.py`: Added `chat(self, text: str) -> str` supporting mixed social + substantive turns
+    - `src/little/language/parser.py`: Added `LearningEngine.chat(self, text: str) -> str`, wired comparative statement assertions into `commit_frame()`
+    - `src/little/language/perception.py`: Added math story detection bypass to avoid splitting multi-sentence word problems
+    - `src/little/main.py`: Interactive CLI `cmd_interact` updated with natural conversational replies
+  - [x] Schema Robustness Fixes:
+    - Updated `comparative_order_policy.json` to handle between/among clauses in extremum questions
+    - Updated `algebraic_word_problem_policy.json` to support numeric digit multipliers
+  - [x] Full Verification & Test Coverage:
+    - `tests/unit/test_dialogue_surface.py` (4/4 passed)
+    - `tests/integration/test_conversational_fluency_chat.py` (1/1 passed, 12 multi-turn interactions)
+    - Total regression suite: 485/485 passed (100%)
+
 
