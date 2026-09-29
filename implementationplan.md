@@ -1,721 +1,225 @@
-# LITTLE — Implementation Plan
+# LITTLE (MIVI) v2.0 — Comprehensive Implementation Plan: Hybrid Adaptive Neural Mesh (ANM)
 
-**Version:** 0.1  
-**Strategy:** Python-first, Rust-accelerated where justified
-
----
-
-## 1. Development philosophy
-
-Build the smallest experiment that can falsify the current design.
-
-Do not implement the final architecture all at once.
-
-Each milestone must produce:
-
-1. working code;
-2. tests;
-3. benchmark;
-4. observations;
-5. architectural decision.
+**Version:** 2.0  
+**Architecture:** Hybrid Neuro-Symbolic Cognitive Operating System  
+**Budget Target:** < 500 MB RAM + ROM on pure CPU / edge hardware  
+**Core Guarantee:** 0.0% Hallucination under Open-World Assumption (`UNKNOWN`), 0.0% Catastrophic Forgetting
 
 ---
 
-## 2. Recommended technology stack
+## 1. Executive Summary & Vision
 
-### Core
+Current large language models (LLMs like GPT-4, Claude, and Llama) are monolithic statistical next-token guessing machines. While they excel at casual English chat, they suffer from three fatal flaws:
+1. **Hallucination:** Statistical guessing without truth verification causes plausible falsehoods (15–40% error rate).
+2. **Catastrophic Forgetting:** Fine-tuning on new data disrupts prior weights, destroying previously learned domains.
+3. **Massive Compute Waste:** Activating billions of parameters for trivial questions like *"2 + 2"* or *"what is the time"*.
 
-- Python
-- uv
-- PyTorch
-- NumPy
-- SQLite
-
-### Developer tooling
-
-- Ruff
-- Pyrefly
-- pytest
-- Git
-- GitHub Actions later
-
-### Rust integration
-
-- Rust stable
-- Cargo
-- PyO3
-- Maturin
-
-### Optional later
-
-- Polars
-- NetworkX
-- msgspec
-- vector indexing
-- specialized ANN libraries
-
-These optional tools should only be introduced when an experiment demonstrates a need.
+LITTLE (MIVI) v2.0 solves this by implementing an **Adaptive Neural Mesh (ANM)**:
+- **Neural Perception & Learned Routing (System 1):** Continuous latent state representation ($S \in \mathbb{R}^{512}$) and a learned neural router that classifies intent and extracts semantic frames without brittle regex rules.
+- **Mathematical & Symbolic Verification (System 2):** An Epistemic Directed Acyclic Graph (DAG) with **4 Deterministic Verification Gates** ($I_{\text{DAG}}, I_{\text{mutex}}, I_{\text{sort}}, I_{\text{ground}}$), exact rational Computer Algebra System (CAS), Closed-Form Continuous (CfC) Neural ODE dynamics, and transitive partial orders.
+- **Layered Memory Tiers (L0–L3):** Long-term persistent memory inspired by Google Research's **Titans** and DeepSeek's low-rank relational storage.
+- **Typed Action Boundary:** Needle-style typed tool and code execution with cryptographic SHA-256 provenance.
 
 ---
 
-## 3. Why Python-first?
+## 2. Cross-Model Research Synthesis: SOTA Inspirations
 
-The early project contains many unknowns.
+Our architecture synthesizes key breakthroughs from frontier models and research papers:
 
-Python gives us:
-
-- fast iteration;
-- mature ML tooling;
-- easy experimentation;
-- easy notebooks;
-- easier integration with datasets;
-- easier visualization;
-- access to PyTorch.
-
-A research architecture needs iteration speed more than maximum runtime speed.
-
----
-
-## 4. Why Rust too?
-
-Rust becomes valuable when we discover hot paths.
-
-Candidates:
-
-```text
-large graph traversal
-memory indexing
-serialization
-similarity search
-CPU-heavy transformations
-parallel data processing
 ```
-
-We should profile before moving code.
-
-Rule:
-
-```text
-Python first
-   ↓
-benchmark
-   ↓
-profile
-   ↓
-identify bottleneck
-   ↓
-rewrite only bottleneck in Rust
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                 SOTA RESEARCH INSPIRATIONS                             │
+├─────────────────────┬───────────────────────┬──────────────────────────────────────────┤
+│ Model / Research    │ Key Mechanism         │ Architectural Integration in LITTLE      │
+├─────────────────────┼───────────────────────┼──────────────────────────────────────────┤
+│ Laya & Jev          │ Non-autoregressive    │ Fast System 1 gatekeeper; evaluates      │
+│ (ModernBERT 421M)   │ typed decisions       │ intent in < 9ms P50 with calibrated      │
+│                     │ (Choice, Score, Noul) │ probabilities and entropy (H >= 0.35).   │
+├─────────────────────┼───────────────────────┼──────────────────────────────────────────┤
+│ DeepSeek-R1         │ Rule-verified         │ 4 Verification Gates replace critic      │
+│                     │ thinking & GRPO       │ models: deductive proofs verified by     │
+│                     │                       │ DAG acyclicity and type constraints.     │
+├─────────────────────┼───────────────────────┼──────────────────────────────────────────┤
+│ DeepSeek-V3 / V4.1  │ Asymmetric compute,   │ Low-rank relational compression: stores  │
+│                     │ MLA low-rank KV cache │ experiences as graph triples in SQLite   │
+│                     │ compression           │ instead of massive token KV caches.      │
+├─────────────────────┼───────────────────────┼──────────────────────────────────────────┤
+│ GLM-5.3-Flash /     │ Dynamic dual-speed,   │ Fast Mode (< 0.2ms index lookup) vs.     │
+│ GLM-4               │ bidirectional blank   │ Thinking Mode (bidirectional frontier    │
+│                     │ infilling             │ collision search meeting-in-the-middle). │
+├─────────────────────┼───────────────────────┼──────────────────────────────────────────┤
+│ Google Research     │ Test-time long-term   │ Dual-memory hierarchy: short-term latent │
+│ Titans (2025)       │ neural memory         │ workspace (L0) + relational persistent   │
+│                     │ (vs. attention)       │ episodic & semantic memory (L1-L2).      │
+├─────────────────────┼───────────────────────┼──────────────────────────────────────────┤
+│ Liquid AI LFM-2.5   │ Closed-Form           │ Simulates continuous physical state      │
+│ (Hasani & Lechner)  │ Continuous (CfC) ODEs │ vectors s(t) across time delta t in      │
+│                     │ without stepping      │ closed form with 0% numerical drift.     │
+├─────────────────────┼───────────────────────┼──────────────────────────────────────────┤
+│ Cactus Needle 3     │ Byte-level grammar    │ Pre-dispatch verification gate (I_sort); │
+│                     │ constrained actions   │ type-safe, sandboxed tool dispatch.      │
+├─────────────────────┼───────────────────────┼──────────────────────────────────────────┤
+│ Karpathy nanochat   │ Staged training &     │ Incremental scale testing (10M -> 30M -> │
+│ & autoresearch      │ modular distillation  │ 75M) with automated evaluation.          │
+└─────────────────────┴───────────────────────┴──────────────────────────────────────────┘
 ```
 
 ---
 
-## 5. Repository bootstrap
+## 3. The 5-Layer Hybrid Adaptive Neural Mesh (ANM)
 
-Initial commands conceptually:
-
-```bash
-uv init
-uv python pin 3.12
-uv add numpy torch
-uv add --dev pytest ruff pyrefly
 ```
-
-Rust workspace:
-
-```bash
-cargo new --lib rust/little_core
-```
-
-Then integrate PyO3/Maturin when the first Rust component is justified.
-
-The exact dependency versions should be pinned by the generated lockfiles rather than manually copied into this document.
-
----
-
-## 6. Milestone 0 — Repository
-
-Create:
-
-```text
-little/
-├── docs/
-├── src/little/
-├── tests/
-├── experiments/
-├── data/
-├── rust/
-└── scripts/
-```
-
-Success:
-
-```text
-uv run pytest
-uv run ruff check .
-uv run pyrefly check
-cargo test
-```
-
-all execute successfully.
-
----
-
-## 7. Milestone 1 — Persistent memory
-
-Implement:
-
-```text
-MemoryStore
-```
-
-Operations:
-
-```python
-create_concept()
-get_concept()
-create_entity()
-add_relation()
-get_relations()
-add_experience()
-get_experience()
-```
-
-SQLite schema should initially be minimal.
-
-Success test:
-
-```text
-create fact
-close process
-restart
-retrieve fact
+                                      USER INPUT
+                 ("Yo, can you multiply 25 by 4 and simulate apple spoilage?")
+                                          │
+                                          ▼
+   ┌─────────────────────────────────────────────────────────────────────────────┐
+   │ LAYER 1: LANGUAGE PERCEPTION & EMBEDDING                                    │
+   │ - Tokenizer + Compact Transformer Encoder (ModernBERT / MiniLM / Nano-Core)  │
+   │ - Maps noisy, misspelled, casual English into continuous semantic space      │
+   └──────────────────────────────────────┬──────────────────────────────────────┘
+                                          │
+                                          ▼
+   ┌─────────────────────────────────────────────────────────────────────────────┐
+   │ LAYER 2: SHARED LATENT WORKSPACE S ∈ R^512                                  │
+   │ S = FFN([h_text, h_context, h_working_memory])                              │
+   │ Shared semantic workspace for all cognitive pathways                         │
+   └──────────────────────────────────────┬──────────────────────────────────────┘
+                                          │
+                                          ▼
+   ┌─────────────────────────────────────────────────────────────────────────────┐
+   │ LAYER 3: LEARNED NEURAL ROUTER (NO REGEXES!)                                │
+   │ P(pathway | S) = Softmax(W_2 · GELU(W_1 S + b_1) + b_2)                     │
+   │ Outputs: [chat: p1, math: p2, tool: p3, code: p4, poset: p5, physics: p6]   │
+   │ If Entropy H >= 0.35: Trigger Socratic Disambiguation                       │
+   └──────────────┬──────────────┬──────────────┬──────────────┬──────────────┬──┘
+                  │              │              │              │              │
+    ┌─────────────┘              │              │              │              └─────────────┐
+    ▼                            ▼              ▼              ▼                            ▼
+ ┌───────────────┐        ┌─────────────┐ ┌───────────┐ ┌─────────────┐              ┌─────────────┐
+ │ PATHWAY: MATH │        │PATHWAY: TOOL│ │PATH: CODE │ │PATH: POSETS │              │PATH: DYNAM. │
+ │ Symbolic CAS  │        │Needle Action│ │Python AST │ │Strict Order │              │CfC Continuous│
+ │ Fractions/CAS │        │Sandboxed REPL││Synthesizer│ │Topological  │              │Neural ODEs  │
+ └───────┬───────┘        └──────┬──────┘ └─────┬─────┘ └──────┬──────┘              └──────┬──────┘
+         │                       │              │              │                            │
+         └───────────────────────┼──────────────┴──────────────┴────────────────────────────┘
+                                 ▼
+   ┌─────────────────────────────────────────────────────────────────────────────┐
+   │ LAYER 4: 4 DETERMINISTIC VERIFICATION GATES (SYSTEM 2 BRAIN)                │
+   │ - I_DAG: Acyclicity verification on taxonomies (O(V+E))                     │
+   │ - I_mutex: Mutual exclusivity constraints (disjoint_with)                   │
+   │ - I_sort: Type signature enforcement on tools, relations, and arguments     │
+   │ - I_ground: Empirical evidence verification (Open-World Assumption: UNKNOWN)│
+   └──────────────────────────────────────┬──────────────────────────────────────┘
+                                          │
+                                          ▼
+   ┌─────────────────────────────────────────────────────────────────────────────┐
+   │ LAYER 5: 4-TIER PERSISTENT MEMORY ARCHITECTURE                              │
+   │ - L0 (Working): Active problem trace, CAS fractions, ODE state vector s(t)  │
+   │ - L1 (Episodic): SQLite transaction logs, experiences, tool execution hashes│
+   │ - L2 (Semantic): 360° Concept Knot spider-web (Taxonomy, Mereology, Axioms) │
+   │ - L3 (Procedural): Tool catalog, AST synthesis grammar, algorithm runners   │
+   └──────────────────────────────────────┬──────────────────────────────────────┘
+                                          │
+                                          ▼
+   ┌─────────────────────────────────────────────────────────────────────────────┐
+   │ CONVERSATIONAL DIALOGUE SURFACE & NEURAL VERBALIZER                         │
+   │ Warm, articulate human dialogue grounded in proven System 2 facts           │
+   └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 8. Milestone 2 — Knowledge graph
+## 4. Technical Budget & Resource Allocation (< 500 MB)
 
-Implement:
+To run efficiently on standard consumer CPUs, laptops, and edge devices without requiring $5,000 GPUs:
 
-```text
-Concept
-Entity
-Relation
-Evidence
-```
-
-Example:
-
-```text
-DOG -> is_a -> ANIMAL
-```
-
-Add graph traversal.
-
-Success:
-
-```text
-DOG -> ANIMAL -> LIVING_THING
-```
-
-can be discovered.
+| Component | Architecture / Format | Memory Budget | Latency Target |
+| :--- | :--- | :--- | :--- |
+| **Neural Encoder & Latent Workspace** | 4-bit quantized ModernBERT / MiniLM | ~180 MB | < 4.0 ms |
+| **Neural Router & Heads** | 2-layer MLP projection ($512 \to 256 \to 6$) | ~15 MB | < 0.2 ms |
+| **System 2 Symbolic Engine & CAS** | Pure Python + Rust acceleration | ~25 MB | < 1.0 ms |
+| **CfC Continuous ODE Simulator** | Closed-form vector math (NumPy / SIMD) | ~15 MB | < 0.5 ms |
+| **Layered Memory (SQLite + Cache)** | SQLite WAL + In-Memory Index | ~50 MB | < 0.4 ms |
+| **Tokenizer, Runtime & OS Buffers** | BPE / WordPiece runtime | ~65 MB | < 0.5 ms |
+| **Total System Footprint** | **Complete Cognitive Ecosystem** | **~350 MB** | **< 7.0 ms P50** |
 
 ---
 
-## 9. Milestone 3 — Deterministic inference
+## 5. Detailed Phase-by-Phase Roadmap
 
-Implement rules:
-
-```text
-is_a transitivity
-property inheritance
-basic relation lookup
-```
-
-Example:
-
-```text
-DOG is_a ANIMAL
-ANIMAL is_a LIVING_THING
-
-=> DOG is_a LIVING_THING
-```
-
-Return an evidence trace.
+### Phase 15: Typed Action & Tool Core (COMPLETED ✅)
+- Externalized schemas: `tool_definitions_policy.json` and `action_policy.json`.
+- Pre-dispatch verification gate: $I_{\text{sort}}$ and $I_{\text{security\_sandbox}}$.
+- Built-in sandboxed tools: `calculator`, `python_repl`, `system_time`, `web_search`, `file_reader`, `file_writer`, `bash_executor`.
+- SHA-256 verifiable execution hashing and SQLite empirical evidence grounding ($I_{\text{ground}}$).
+- CLI subcommands: `little tool list` and `little tool exec <tool> [--args ...]`.
+- Full regression test suite: 497 / 497 passed (100%).
 
 ---
 
-## 10. Milestone 4 — Unknown detection
-
-Add:
-
-```text
-SUPPORTED
-REFUTED
-UNKNOWN
-AMBIGUOUS
-```
-
-Create a benchmark containing both answerable and unanswerable questions.
-
-Measure false confident answers.
-
----
-
-## 11. Milestone 5 — English interface
-
-Implement a deliberately constrained parser.
-
-Initially support templates such as:
-
-```text
-A dog is an animal.
-A dog is brown.
-Alice has a dog.
-```
-
-Do not use an LLM initially.
-
-The parser can be rule-based.
-
-This gives us a clean experiment of the underlying architecture.
+### Phase 16: Neural Latent State & Router Engine (`src/little/neural/`)
+**Objective:** Replace regex routing with a continuous learned latent workspace ($S \in \mathbb{R}^{512}$) and neural routing head.
+1. **Continuous State Representation (`src/little/neural/state.py`):**
+   - Encode token embeddings into continuous latent state $S \in \mathbb{R}^{512}$.
+   - Fuses user text vector with conversational dialogue context and working memory.
+2. **Learned Neural Router Head (`src/little/neural/router.py`):**
+   - Lightweight MLP projection: $\mathbf{p} = \text{Softmax}(\mathbf{W}_2 \cdot \text{GELU}(\mathbf{W}_1 S + \mathbf{b}_1) + \mathbf{b}_2)$.
+   - Outputs calibrated routing distribution across 6 pathways:
+     `[chat, math, tool, code, poset, physics]`.
+3. **Entropy & Epistemic Uncertainty Threshold:**
+   - Compute Shannon entropy $H = -\sum p_i \ln p_i$.
+   - If $H \ge 0.35$, trigger System 2 disambiguation/clarification question instead of guessing.
+4. **Hybrid Reconciliation:**
+   - Bridge neural router probabilities with existing `HybridPerceptionAdapter` and `CognitiveKernel`.
 
 ---
 
-## 12. Milestone 6 — Natural language expansion
-
-Once the symbolic pipeline works, add a small learned language component.
-
-Possible options:
-
-- a small encoder;
-- a small local language model;
-- a constrained parser model.
-
-It should map language to structured representations.
-
-The core memory and reasoning system should remain independent.
+### Phase 17: Neural Semantic Frame & Slot Extractor (Eliminating Regexes)
+**Objective:** Replace regex statement and question parsers with token-level semantic frame taggers.
+1. **FrameNet-Style Semantic Role Labeling (`src/little/neural/frame_tagger.py`):**
+   - Classify input sequence into semantic roles:
+     $$\text{"Europa orbits Jupiter"} \longrightarrow \langle\text{Subject: Europa}, \text{Predicate: orbits}, \text{Object: Jupiter}\rangle$$
+   - Handles typos, colloquial language, slang, and irregular grammar.
+2. **Grammar Invariant Projection:**
+   - Map extracted semantic roles directly into `CandidateClaim` and `CandidateFrame` contracts.
+   - Run through the 4 Verification Gates ($I_{\text{DAG}}, I_{\text{mutex}}, I_{\text{sort}}, I_{\text{ground}}$).
 
 ---
 
-## 13. Milestone 7 — Continual learning benchmark
-
-Create sequences:
-
-```text
-Task A -> animals
-Task B -> objects
-Task C -> people
-Task D -> properties
-Task E -> mixed
-```
-
-Measure:
-
-- retention;
-- learning speed;
-- interference;
-- memory growth;
-- query accuracy.
-
-Compare against:
-
-1. static rule system;
-2. simple classifier;
-3. continual neural baseline where appropriate.
+### Phase 18: Programming & AST Code Synthesis Engine
+**Objective:** Implement verifiable code generation and execution as an AST machine.
+1. **Python AST Synthesizer (`src/little/procedural/code_synthesizer.py`):**
+   - Synthesizes valid Python Abstract Syntax Trees for algorithms, math formulas, and data processing.
+2. **Sandboxed Execution REPL (`src/little/procedural/code_sandbox.py`):**
+   - Runs synthesized AST code in an isolated subprocess with memory and time caps.
+3. **Socratic Auto-Repair Loop:**
+   - If execution fails (`IndexError`, `TypeError`, `ZeroDivisionError`), the engine inspects the traceback, identifies the failing AST node, applies a semantic repair mutation, and re-executes until tests pass.
 
 ---
 
-## 14. Milestone 8 — Generalization
-
-Create held-out variations.
-
-Example:
-
-Training:
-
-```text
-red apple
-green apple
-```
-
-Test:
-
-```text
-yellow apple
-sliced apple
-rotated apple
-```
-
-The evaluation must distinguish:
-
-- memorization;
-- similarity matching;
-- genuine concept generalization.
+### Phase 19: Rust Acceleration Core (`rust/little_core` via PyO3)
+**Objective:** Accelerate performance-critical graph traversal, transitive closure, and memory indexing in Rust.
+1. **Scaffold PyO3 Workspace:** Configure `maturin` and `Cargo.toml`.
+2. **Rust Graph Engine:** Implement DAG reachability, transitive closure, bidirectional collision search, and poset topological sort in Rust.
+3. **Benchmark:** Achieve **sub-microsecond query resolution (< 5 µs P99)** and scale to > 500,000 concept nodes with zero garbage collection pauses.
 
 ---
 
-## 15. Milestone 9 — Procedural memory
-
-Implement procedures.
-
-First:
-
-```text
-ADD
-SUBTRACT
-MULTIPLY
-```
-
-Then symbolic transformations.
-
-The system should be able to retrieve and execute a learned procedure.
-
----
-
-## 16. Milestone 10 — Mathematics
-
-Progression:
-
-```text
-integer arithmetic
-    ↓
-fractions
-    ↓
-expressions
-    ↓
-equations
-```
-
-Use exact symbolic computation where appropriate.
-
-Neural components should not be used for tasks where deterministic symbolic computation is clearly superior.
-
----
-
-## 17. Milestone 11 — Programming
-
-Start with a sandbox.
-
-The model should:
-
-```text
-generate small program
-execute
-observe result
-compare
-repair
-```
-
-Safety requirement:
-
-Never execute arbitrary generated code directly on the host without isolation.
-
-Use a sandbox/container for later experiments.
-
----
-
-## 18. Milestone 12 — Vision
-
-Add a visual encoder.
-
-Architecture:
-
-```text
-image
- ↓
-vision encoder
- ↓
-embedding/features
- ↓
-concept matcher
- ↓
-memory
- ↓
-reasoning
-```
-
-Start with a small controlled dataset.
-
-Do not begin with a massive image dataset.
-
----
-
-## 19. Milestone 13 — Multimodal concepts
-
-Connect:
-
-```text
-text "apple"
-        ↕
-APPLE concept
-        ↕
-image embedding
-```
-
-The concept should become modality-independent while preserving modality-specific evidence.
-
----
-
-## 20. Milestone 14 — Active learning
-
-Implement:
-
-```text
-detect uncertainty
-      ↓
-generate information request
-      ↓
-receive answer
-      ↓
-update knowledge
-```
-
-Example:
-
-```text
-System:
-"I don't know whether this object is an apple.
-Is it an apple?"
-```
-
-Later, allow tool/environment interaction.
-
----
-
-## 21. Milestone 15 — Self-directed experiments
-
-Introduce an experiment planner.
-
-Input:
-
-```text
-knowledge gaps
-```
-
-Output:
-
-```text
-candidate experiments
-```
-
-Select experiments based on expected information gain.
-
-This is a major research milestone and should not be rushed.
-
----
-
-## 22. Evaluation methodology
-
-Every milestone should have:
-
-### Baseline
-
-What happens with the simplest possible implementation?
-
-### Proposed system
-
-What does LITTLE do?
-
-### Metric
-
-How do we measure improvement?
-
-### Ablation
-
-What happens if we remove a component?
-
-Example:
-
-```text
-LITTLE
-vs
-LITTLE without episodic memory
-vs
-LITTLE without semantic memory
-vs
-LITTLE without confidence
-```
-
-This will tell us which architectural components actually matter.
-
----
-
-## 23. Hardware strategy
-
-### Local PC
-
-Use for:
-
-- coding;
-- SQLite;
-- graph reasoning;
-- small models;
-- CPU experiments;
-- evaluation.
-
-### Google Colab
-
-Use when GPU acceleration materially helps:
-
-- vision experiments;
-- neural representation training;
-- larger embedding experiments.
-
-Do not assume a specific free-tier GPU or runtime duration.
-
----
-
-## 24. Resource budget
-
-Initial target:
-
-```text
-RAM:
-<= 16 GB
-
-CPU:
-works on Ryzen 7-class processor
-
-GPU:
-optional
-
-Persistent storage:
-local SSD
-
-Model size:
-small during early experiments
-```
-
-We should record peak RAM and runtime for every benchmark.
-
----
-
-## 25. First 30-day development plan
-
-### Week 1
-
-- repository;
-- tooling;
-- memory schema;
-- SQLite;
-- basic data classes;
-- tests.
-
-### Week 2
-
-- concepts;
-- relations;
-- evidence;
-- graph traversal;
-- deterministic inference.
-
-### Week 3
-
-- unknown detection;
-- contradiction handling;
-- English template parser;
-- learning pipeline.
-
-### Week 4
-
-- benchmark;
-- continual-learning experiment;
-- documentation;
-- architecture review.
-
-At the end of 30 days, we should know whether the core idea is technically promising enough to continue.
-
----
-
-## 26. Research notebook requirement
-
-Every experiment gets a directory:
-
-```text
-experiments/001_memory/
-```
-
-containing:
-
-```text
-README.md
-config.toml
-results.json
-notes.md
-```
-
-Record:
-
-- hypothesis;
-- setup;
-- data;
-- metrics;
-- result;
-- interpretation;
-- next decision.
-
----
-
-## 27. Versioning
-
-Use semantic-style project versions:
-
-```text
-0.1.x  foundation
-0.2.x  continual learning
-0.3.x  procedural reasoning
-0.4.x  vision
-0.5.x  multimodal
-1.0    mature research prototype
-```
-
-These are project milestones, not promises.
-
----
-
-## 28. Definition of done for an architectural component
-
-A component is done when:
-
-- API is documented;
-- implementation exists;
-- tests exist;
-- benchmark exists;
-- failure cases are recorded;
-- memory/performance characteristics are measured;
-- integration behavior is understood.
-
----
-
-## 29. Golden rule
-
-Do not optimize the architecture before we know what the architecture needs.
-
-First make it:
-
-```text
-correct
-inspectable
-measurable
-```
-
-Then make it:
-
-```text
-fast
-small
-scalable
-```
-
-## Official tooling references used for the stack decision
-
-- uv — modern Python project/dependency/environment workflow.
-- Pyrefly — Python type checker and language server.
-- Ruff — Python linter and formatter.
-- PyO3 — Rust bindings for Python and native Python extension modules.
-- Maturin — build/package workflow for Rust-based Python packages.
-- SQLite — embedded, serverless, transactional local database.
-- Polars — optional later data-processing layer with a Rust core.
-
-The architecture deliberately avoids pinning fast-moving tool versions in design documents. Exact versions belong in `pyproject.toml`, `Cargo.toml`, and lockfiles.
+### Phase 20: Real-World Empirical Benchmark Matrix (LITTLE vs. SLM vs. LLM)
+**Objective:** Publish a comprehensive, verifiable benchmark comparing LITTLE against leading SLMs and LLMs.
+1. **Benchmark Domains:**
+   - **Multi-Turn Dialogue & Anaphora:** CoQA benchmark.
+   - **Exact Mathematics:** GSM8K and SVAMP word problems.
+   - **Code Synthesis & Execution:** HumanEval (Python).
+   - **Typed Tool Calling:** Berkeley Function Calling Leaderboard (BFCL).
+2. **Competitors Tested:**
+   - Local SLMs: `Qwen2.5:0.5b`, `Llama-3.2:1b`, `Qwen2.5-Coder:1.5b`.
+   - Frontier LLMs: `GPT-4o-mini`, `DeepSeek-R1-Distill-7B`.
+3. **Metrics Evaluated:**
+   - Exact Accuracy %
+   - Hallucination Rate % (Target: 0.0% for LITTLE under Open-World Assumption)
+   - Catastrophic Forgetting % across sequential domain ingestion
+   - P50/P99 Latency (Pure CPU vs. GPU)
+   - Total Memory & Power Footprint
+4. **Deliverable:** Automated benchmark runner and report in `experiments/006_real_world_sota_benchmark/REPORT.md`.

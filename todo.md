@@ -581,3 +581,35 @@ Implementation Plan: `docs/superpowers/plans/2026-09-22-mivi-spiderweb-thinking-
     - `tests/unit/test_actions_core.py` (5/5 passed)
     - `tests/integration/test_tool_actions_chat_integration.py` (1/1 passed)
     - Total regression test suite: 497/497 passed (100% pass rate)
+
+- [ ] **Phase 16: Neural Latent State & Router Engine (`src/little/neural/`)**
+  - [ ] Continuous Latent Workspace: `NeuralState` ($S \in \mathbb{R}^{512}$) combining token embeddings, working context, and dialogue history
+  - [ ] Learned Neural Router Head: MLP projection $\mathbf{p} = \text{Softmax}(\mathbf{W}_2 \cdot \text{GELU}(\mathbf{W}_1 S + \mathbf{b}_1) + \mathbf{b}_2)$ over 6 cognitive pathways (`chat`, `math`, `tool`, `code`, `poset`, `physics`)
+  - [ ] Calibrated Uncertainty & Entropy ($H \ge 0.35$ triggers deliberate System 2 questioning rather than guessing)
+  - [ ] Zero-Regex Hybrid Routing: Reconcile neural router probabilities with `CognitiveKernel` and `HybridPerceptionAdapter`
+  - [ ] Unit & Integration Tests: Verify classification on noisy/misspelled queries without regex matching
+
+- [ ] **Phase 17: Neural Semantic Frame & Slot Extractor (Eliminating Regexes)**
+  - [ ] FrameNet-Style Semantic Role Labeling: Map unstructured English sentences into typed semantic frames `(Subject, Predicate, Object, Modifiers)`
+  - [ ] Robustness: Ingest typos, slang, and inverted sentence structures into valid `CandidateClaim` and `CandidateFrame` contracts
+  - [ ] Integration with 4 Verification Gates ($I_{\text{DAG}}, I_{\text{mutex}}, I_{\text{sort}}, I_{\text{ground}}$)
+  - [ ] Unit & Integration Tests: Verify extraction across noisy Wikipedia and conversational dialogues
+
+- [ ] **Phase 18: Programming & AST Code Synthesis Engine**
+  - [ ] Python AST Synthesizer (`src/little/procedural/code_synthesizer.py`): Synthesize valid ASTs for algorithms and math
+  - [ ] Sandboxed Execution Sandbox (`src/little/procedural/code_sandbox.py`): Run code in isolated subprocess with memory and time caps
+  - [ ] Socratic Auto-Repair Loop: Inspect tracebacks, identify failing AST nodes, auto-mutate, and re-execute
+  - [ ] HumanEval Evaluation: Benchmark code pass@1 accuracy in the sandbox
+
+- [ ] **Phase 19: Rust Acceleration Core (`rust/little_core` via PyO3)**
+  - [ ] PyO3 & Maturin Workspace setup in `rust/`
+  - [ ] Graph Traversal, Transitive Closure, and Poset Topological Sort in Rust
+  - [ ] Memory Indexing and Sub-Microsecond Query Resolution (< 5 µs P99)
+  - [ ] Benchmark: Verify scaling to > 500,000 nodes without GC pauses
+
+- [ ] **Phase 20: Real-World Empirical Benchmark Matrix (LITTLE vs. SLM vs. LLM)**
+  - [ ] Benchmark Harness across CoQA (Dialogue), GSM8K (Math), HumanEval (Coding), BFCL (Tools)
+  - [ ] Head-to-Head Evaluation: LITTLE vs. Qwen2.5-0.5B, Llama-3.2-1B, GPT-4o-mini
+  - [ ] Verify 0.0% Hallucination, 0.0% Catastrophic Forgetting, and 400x Latency Speedup on pure CPU
+  - [ ] Publish comprehensive report in `experiments/006_real_world_sota_benchmark/REPORT.md`
+
