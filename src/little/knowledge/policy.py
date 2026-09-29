@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+
 from little.core.runtime_paths import RuntimePaths
 
 
@@ -23,6 +24,8 @@ class LanguagePolicy:
     clear_commands: tuple[str, ...] = ()
     memory_commands: tuple[str, ...] = ()
     skills_commands: tuple[str, ...] = ()
+    curious_commands: tuple[str, ...] = ()
+    study_commands: tuple[str, ...] = ()
     cancel_words: tuple[str, ...] = ()
     positive_affirmations: tuple[str, ...] = ()
     negative_denials: tuple[str, ...] = ()
@@ -89,6 +92,8 @@ class LanguagePolicy:
             clear_commands=read_words("clear_commands"),
             memory_commands=read_words("memory_commands"),
             skills_commands=read_words("skills_commands"),
+            curious_commands=read_words("curious_commands") if "curious_commands" in data else (),
+            study_commands=read_words("study_commands") if "study_commands" in data else (),
             cancel_words=read_words("cancel_words"),
             positive_affirmations=read_words("positive_affirmations"),
             negative_denials=read_words("negative_denials"),

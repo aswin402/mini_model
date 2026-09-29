@@ -13,6 +13,8 @@ def test_language_policy_loads_routing_and_grounding_data():
     assert "hello" in policy.greetings
     assert "quit" in policy.exit_commands
     assert "skip" in policy.cancel_words
+    assert "curious" in policy.curious_commands
+    assert "study" in policy.study_commands
 
 
 def test_laya_grounding_uses_injected_policy_associations():

@@ -35,6 +35,8 @@
     "clear_commands": ["clear"],
     "memory_commands": ["memory", "concepts", "list concepts"],
     "skills_commands": ["skills"],
+    "curious_commands": ["curious", ":curious", "entropy", "spokes"],
+    "study_commands": ["study", ":study", "self-study", "auto-study"],
     "cancel_words": [
       "skip", "pass", "cancel", "idk", "i don't know", "nevermind",
       "none", "nothing", "quit", "exit"

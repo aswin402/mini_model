@@ -290,6 +290,71 @@ def cmd_import(args: argparse.Namespace) -> None:
         store.close()
 
 
+def cmd_curious(args: argparse.Namespace) -> None:
+    store, _ = get_kernel(Path(args.db), seed_ontology=False)
+    try:
+        from little.active.self_study import AutonomousSelfStudyEngine
+        study_engine = AutonomousSelfStudyEngine(store)
+        entropies = study_engine.compute_all_knot_entropies()
+        print("\n🧠 [360° Concept Knot Spoke Entropy]")
+        print("Scanned radial axes: Taxonomy, Mereology, Dynamics, Invariants, Procedural, Episodic\n")
+        concept_filter = getattr(args, "concept", None)
+        top_k = getattr(args, "top", 10)
+        displayed = 0
+        for concept_name, entropy in entropies.items():
+            if concept_filter and concept_filter.lower() not in concept_name.lower():
+                continue
+            if displayed >= top_k:
+                break
+            missing = study_engine.identify_missing_axes(concept_name)
+            bar = "█" * int(entropy * 10) + "░" * (10 - int(entropy * 10))
+            print(f"  • {concept_name:<20} H={entropy:.2f} [{bar}] Missing: {', '.join(missing)}")
+            displayed += 1
+        print(f"\nTotal concepts indexed: {len(entropies)}\n")
+    finally:
+        store.close()
+
+
+def cmd_study(args: argparse.Namespace) -> None:
+    store, _ = get_kernel(Path(args.db), seed_ontology=False)
+    try:
+        from little.active.self_study import AutonomousSelfStudyEngine
+        study_engine = AutonomousSelfStudyEngine(store)
+        steps = getattr(args, "steps", 5)
+        target = getattr(args, "target", None)
+        verbose = getattr(args, "verbose", False)
+
+        print("\n🔄 [Autonomous Self-Study Engine]")
+        print(f"Starting closed-loop curiosity cycle (max_steps={steps}, target={target or 'auto-entropy'})...\n")
+
+        if target:
+            results = []
+            res = study_engine.study_step(target_concept=target)
+            if res:
+                results.append(res)
+        else:
+            results = study_engine.study_cycle(max_steps=steps)
+
+        if not results:
+            print("No analogical hypotheses could be formulated from current hypernym DAG.\n")
+            return
+
+        for idx, r in enumerate(results, 1):
+            status_symbol = "✓" if r.status == "PERSISTED" else "✗"
+            print(f"[{idx}] {status_symbol} Target: {r.target_concept} | Axis: {r.missing_axis} | Status: {r.status}")
+            if r.hypothesis:
+                hyp_str = f"({r.hypothesis.get('subject')} {r.hypothesis.get('predicate')} {r.hypothesis.get('object')})"
+                donor_str = f" (via donor '{r.hypothesis.get('donor')}')" if r.hypothesis.get("donor") else ""
+                print(f"    ↳ Hypothesis: {hyp_str}{donor_str}")
+            if verbose and r.trace:
+                for t in r.trace:
+                    print(f"       • {t}")
+        persisted_count = sum(1 for r in results if r.status == "PERSISTED")
+        print(f"\nCompleted self-study cycle: {persisted_count}/{len(results)} hypotheses verified and persisted live to SQLite.\n")
+    finally:
+        store.close()
+
+
 def cmd_skills_list(args: argparse.Namespace) -> None:
     store, _ = get_engine(Path(args.db))
     try:
@@ -449,6 +514,63 @@ def cmd_interact(args: argparse.Namespace) -> None:
                 print()
                 continue
 
+            if clean_lower in policy.curious_commands or any(
+                clean_lower.startswith(f"{cmd} ") for cmd in policy.curious_commands
+            ):
+                from little.active.self_study import AutonomousSelfStudyEngine
+
+                study_engine = AutonomousSelfStudyEngine(store)
+                parts = clean_lower.split(maxsplit=1)
+                concept_filter = parts[1].strip() if len(parts) > 1 else None
+                entropies = study_engine.compute_all_knot_entropies()
+                print("\n🧠 [360° Concept Knot Spoke Entropy]")
+                displayed = 0
+                for c_name, ent in entropies.items():
+                    if concept_filter and concept_filter not in c_name.lower():
+                        continue
+                    if displayed >= 10:
+                        break
+                    missing = study_engine.identify_missing_axes(c_name)
+                    bar = "█" * int(ent * 10) + "░" * (10 - int(ent * 10))
+                    print(
+                        f"  • {c_name:<18} H={ent:.2f} [{bar}] Missing: {', '.join(missing)}"
+                    )
+                    displayed += 1
+                print()
+                continue
+
+            if clean_lower in policy.study_commands or any(
+                clean_lower.startswith(f"{cmd} ") for cmd in policy.study_commands
+            ):
+                from little.active.self_study import AutonomousSelfStudyEngine
+
+                study_engine = AutonomousSelfStudyEngine(store)
+                parts = clean_lower.split(maxsplit=1)
+                target = parts[1].strip() if len(parts) > 1 else None
+                print(
+                    f"\n🔄 Running autonomous self-study cycle (target={target or 'auto-entropy'})..."
+                )
+                if target:
+                    res = study_engine.study_step(target_concept=target)
+                    results = [res] if res else []
+                else:
+                    results = study_engine.study_cycle(max_steps=3)
+                if not results:
+                    print(
+                        "  No analogical hypotheses could be formulated from current hypernym DAG.\n"
+                    )
+                for r in results:
+                    status_symbol = "✓" if r.status == "PERSISTED" else "✗"
+                    print(
+                        f"  {status_symbol} [{r.status}] {r.target_concept} ({r.missing_axis})"
+                    )
+                    if r.hypothesis:
+                        print(
+                            f"     ↳ ({r.hypothesis.get('subject')} {r.hypothesis.get('predicate')} {r.hypothesis.get('object')})"
+                        )
+                print()
+                continue
+
             # Semantic input always enters through the cognitive kernel.
             outcome = kernel.process(user_input)
             if outcome.inference is not None:
@@ -547,6 +669,23 @@ def cmd_interact(args: argparse.Namespace) -> None:
                 else:
                     print(f"\n💬 LITTLE: Understood! {res.message}")
                     print(f"   ↳ [Update: {res.update_type.value}]\n")
+                    if (
+                        getattr(args, "auto_study", False)
+                        and res.concepts_created
+                    ):
+                        from little.active.self_study import AutonomousSelfStudyEngine
+
+                        study_engine = AutonomousSelfStudyEngine(store)
+                        for created_concept in res.concepts_created:
+                            study_res = study_engine.study_step(
+                                target_concept=created_concept
+                            )
+                            if study_res and study_res.status == "PERSISTED":
+                                hyp = study_res.hypothesis or {}
+                                print(
+                                    f"   🔄 [Auto-Study] Formulated & persisted spoke for '{created_concept}': "
+                                    f"({hyp.get('subject')} {hyp.get('predicate')} {hyp.get('object')})\n"
+                                )
     finally:
         store.close()
 
@@ -635,6 +774,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable Thinking Mode inspectable traces",
     )
+    p_chat.add_argument(
+        "--auto-study",
+        action="store_true",
+        help="Run background self-study after learning new facts",
+    )
     p_chat.set_defaults(func=cmd_interact)
     p_interact = subparsers.add_parser(
         "interact", parents=[db_parent], help="Interactive learning REPL"
@@ -644,7 +788,56 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable Thinking Mode inspectable traces",
     )
+    p_interact.add_argument(
+        "--auto-study",
+        action="store_true",
+        help="Run background self-study after learning new facts",
+    )
     p_interact.set_defaults(func=cmd_interact)
+
+    # curious
+    p_curious = subparsers.add_parser(
+        "curious",
+        parents=[db_parent],
+        help="Analyze 360° concept knot spoke entropy across memory",
+    )
+    p_curious.add_argument(
+        "--top",
+        type=int,
+        default=10,
+        help="Number of highest-entropy concepts to display",
+    )
+    p_curious.add_argument(
+        "--concept",
+        default=None,
+        help="Filter by concept name",
+    )
+    p_curious.set_defaults(func=cmd_curious)
+
+    # study
+    p_study = subparsers.add_parser(
+        "study",
+        parents=[db_parent],
+        help="Run autonomous closed-loop curiosity self-study cycle",
+    )
+    p_study.add_argument(
+        "--steps",
+        type=int,
+        default=5,
+        help="Maximum curiosity study steps to execute",
+    )
+    p_study.add_argument(
+        "--target",
+        default=None,
+        help="Target a specific concept for self-study",
+    )
+    p_study.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Display verification gate trace",
+    )
+    p_study.set_defaults(func=cmd_study)
 
     # export
     p_export = subparsers.add_parser(
