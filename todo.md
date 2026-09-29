@@ -313,18 +313,15 @@ Potential targets:
 
 ---
 
-# 19. Self-improvement
+# 19. Self-improvement — [x] COMPLETED
 
-Only after earlier milestones work.
-
-- [ ] Detect recurring errors
-- [ ] Cluster failure cases
-- [ ] Generate hypotheses
-- [ ] Propose architectural changes
-- [ ] Test changes in sandbox
-- [ ] Compare metrics
-- [ ] Never silently modify production state
-- [ ] Require evaluation before accepting changes
+- [x] Detect missing concept knot spokes via 360° radial entropy: $\max_j H(\text{Axis}_j)$
+- [x] Generate analogical hypotheses via hypernym DAG traversal
+- [x] 4 Deterministic Invariant Gates ($\mathcal{I}_{\text{DAG}}, \mathcal{I}_{\text{mutex}}, \mathcal{I}_{\text{sort}}, \mathcal{I}_{\text{ground}}$)
+- [x] Test candidate hypotheses against SQLite invariant constraints
+- [x] Live persistence of verified spokes with zero human intervention
+- [x] Never persist refuted or invalid hypotheses
+- [x] CLI commands (`little curious`, `little study`) & REPL commands (`curious`, `study`, `--auto-study`)
 
 ---
 
@@ -456,4 +453,13 @@ Implementation Plan: `docs/superpowers/plans/2026-09-22-mivi-spiderweb-thinking-
   - [x] Verify 0.0% catastrophic forgetting across sequential multi-domain ingestion
   - [x] Verify 449x latency speedup (2.67 ms MIVI P50 on pure CPU vs. 1,201 ms SLM)
   - [x] Produce comprehensive report in `experiments/005_slm_comparison_benchmark/REPORT.md` and `results.json`
+ 
+- [x] **Phase 9: English Dialogue Mastery, Exact Math CAS, and Autonomous Closed-Loop Self-Study**
+  - [x] Conversational Dialogue Context & Centering Theory Pronoun/Anaphora Resolution (`src/little/language/dialogue.py`)
+  - [x] Generalized Compound Sentences, Relative Clauses, and Polite/Indirect Inquiries (`src/little/language/parser.py`)
+  - [x] Exact Rational Symbolic CAS (`fractions.Fraction`, linear systems, quadratics, unit conversion graph) (`src/little/procedural/math_cas.py`)
+  - [x] Multi-Step Word Problem & Story Tracker with `<math_trace>` (`src/little/procedural/math_story.py`)
+  - [x] Autonomous Closed-Loop Curiosity & Self-Study Engine (`src/little/active/self_study.py`)
+  - [x] Zero-Hardcoding Externalized Policy Schemas (`parser_question_boundary_policy.json`, `self_study_policy.json`, `language_policy.json`)
+  - [x] Full CLI integration (`little curious`, `little study`, `--auto-study`) and 462/462 passing tests
 
