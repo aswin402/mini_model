@@ -1,0 +1,36 @@
+{
+  "format": "little.socratic_policy.v1",
+  "socratic_policy": {
+    "why_prefixes": [
+      "why is ",
+      "why are ",
+      "why can ",
+      "why does ",
+      "why do ",
+      "explain why ",
+      "explain how ",
+      "how come ",
+      "walk me through why ",
+      "walk me through how "
+    ],
+    "why_not_prefixes": [
+      "why is not ",
+      "why isn't ",
+      "why are not ",
+      "why aren't ",
+      "why cannot ",
+      "why can't ",
+      "why does not ",
+      "why doesn't "
+    ],
+    "syllogism_header": "Deductive Proof:",
+    "premise_template": "Premise {index}: {subject_article} {subject} is {target_article} {target}.",
+    "deduction_template": "Conclusion: Therefore, by transitivity, {subject_article} {subject} is {target_article} {target}.",
+    "refutation_disjoint_template": "Because {subject_article} {subject} is {subject_category_article} {subject_category}, and {subject_category} is mutually disjoint with {target_category} (Invariant Gate I_mutex).",
+    "refutation_negative_template": "Because {subject_article} {subject} explicitly has negative evidence for {predicate} {target}.",
+    "capability_inheritance_template": "Because {subject_article} {subject} is {ancestor_article} {ancestor}, which can {capability}.",
+    "property_inheritance_template": "Because {subject_article} {subject} is {ancestor_article} {ancestor}, which has property {property}.",
+    "location_transitive_template": "Because {subject} is located in {intermediate}, which is located in {target}.",
+    "unknown_explanation_template": "I do not know whether {subject} is {target} yet, so I cannot deduce an explanation."
+  }
+}

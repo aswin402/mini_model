@@ -152,6 +152,41 @@
       "target_groups": [2]
     },
     {
+      "name": "why_can",
+      "pattern": "^why\\s+can\\s+(?:(?:a|an|the)\\s+)?(.+?)\\s+(.+)$",
+      "predicate": "__why_can__",
+      "subject_groups": [1],
+      "target_groups": [2]
+    },
+    {
+      "name": "explain_why_is",
+      "pattern": "^(?:explain\\s+(?:why|how)|walk\\s+me\\s+through\\s+(?:why|how))\\s+(?:(?:a|an|the)\\s+)?(.+?)\\s+(?:is|are)\\s+(?:a|an|the)\\s+(.+)$",
+      "predicate": "__why_is_a__",
+      "subject_groups": [1],
+      "target_groups": [2]
+    },
+    {
+      "name": "explain_why_is_inverted",
+      "pattern": "^(?:explain\\s+(?:why|how)|walk\\s+me\\s+through\\s+(?:why|how))\\s+(?:is|are)\\s+(?:(?:a|an|the)\\s+)?(.+?)\\s+(?:a|an|the)\\s+(.+)$",
+      "predicate": "__why_is_a__",
+      "subject_groups": [1],
+      "target_groups": [2]
+    },
+    {
+      "name": "explain_why_not",
+      "pattern": "^(?:explain\\s+(?:why|how)|walk\\s+me\\s+through\\s+(?:why|how))\\s+(?:(?:a|an|the)\\s+)?(.+?)\\s+(?:is|are)\\s+not\\s+(?:(?:a|an|the)\\s+)?(.+)$",
+      "predicate": "__why_not__",
+      "subject_groups": [1],
+      "target_groups": [2]
+    },
+    {
+      "name": "explain_why_not_inverted",
+      "pattern": "^(?:explain\\s+(?:why|how)|walk\\s+me\\s+through\\s+(?:why|how))\\s+(?:is|are)\\s+(?:(?:a|an|the)\\s+)?(.+?)\\s+not\\s+(?:(?:a|an|the)\\s+)?(.+)$",
+      "predicate": "__why_not__",
+      "subject_groups": [1],
+      "target_groups": [2]
+    },
+    {
       "name": "why_is_a_boundary",
       "pattern": "^why\\s+(?:is|are)\\s+(.+)$",
       "predicate": "__why_is_a__",

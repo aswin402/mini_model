@@ -158,6 +158,18 @@ class ThinkingController:
                 )
 
         if parsed is None:
+            from little.dynamics.counterfactual_policy import CounterfactualPolicy
+
+            cf_prefixes = CounterfactualPolicy.default().counterfactual_prefixes
+            if (
+                any(clean_question.lower().startswith(p) for p in cf_prefixes)
+                or " vs " in clean_question.lower()
+            ):
+                return QueryPlan(
+                    question=clean_question,
+                    mode=CognitiveMode.FAST,
+                    reason="Counterfactual dynamics query has a specialized simulation resolver.",
+                )
             return QueryPlan(
                 question=clean_question,
                 mode=CognitiveMode.ASK,
@@ -322,9 +334,20 @@ class ThinkingController:
         )
 
         if plan.mode is CognitiveMode.ASK:
-            inference = self._unknown_result(
-                plan, "Controller requested clarification before inference."
-            )
+            if self.resolver is not None:
+                resolved_inf = self._run_resolver(
+                    plan, parsed_query, parsed_queries, question_parts
+                )
+                if resolved_inf.status != BeliefStatus.UNKNOWN:
+                    inference = resolved_inf
+                else:
+                    inference = self._unknown_result(
+                        plan, "Controller requested clarification before inference."
+                    )
+            else:
+                inference = self._unknown_result(
+                    plan, "Controller requested clarification before inference."
+                )
         elif plan.mode is CognitiveMode.STUDY:
             inference = self._unknown_result(
                 plan, "Controller routed declarative input to the study pipeline."

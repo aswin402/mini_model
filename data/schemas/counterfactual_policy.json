@@ -1,0 +1,39 @@
+{
+  "format": "little.counterfactual_policy.v1",
+  "counterfactual_policy": {
+    "counterfactual_prefixes": [
+      "what if ",
+      "what would happen if ",
+      "compare ",
+      "suppose ",
+      "how would ",
+      "what happens if "
+    ],
+    "temperature_aliases": {
+      "refrigerated": 4.0,
+      "refrigerator": 4.0,
+      "fridge": 4.0,
+      "in the fridge": 4.0,
+      "cold": 4.0,
+      "room temperature": 20.0,
+      "ambient": 20.0,
+      "warm": 28.0,
+      "hot": 35.0,
+      "sun": 35.0,
+      "in the sun": 35.0,
+      "freezer": -18.0,
+      "frozen": -18.0
+    },
+    "default_baseline_temperature_c": 20.0,
+    "default_counterfactual_temperature_c": 4.0,
+    "default_duration_hours": 2.0,
+    "contrastive_template": "Counterfactual Analysis for '{subject}':\n  • Condition 1 ({label1} at {temp1:.1f}°C for {dur1:.1f}h): Freshness={f1:.2f}, Oxidation={ox1:.2f} (Status: {cond1}, Color: {color1})\n  • Condition 2 ({label2} at {temp2:.1f}°C for {dur2:.1f}h): Freshness={f2:.2f}, Oxidation={ox2:.2f} (Status: {cond2}, Color: {color2})\n  ↳ Thermal Kinetics: {thermal_ratio:.1f}x rate difference via Arrhenius thermal kinetics. {summary}",
+    "single_hypothetical_template": "Hypothetical Scenario for '{subject}' at {temp:.1f}°C for {dur:.1f}h:\n  ↳ Freshness={freshness:.2f}, Oxidation={oxidation:.2f} (Status: {condition}, Color: {color}).\n  ↳ Thermal factor: {rate_factor:.2f}x relative to reference baseline (20°C).",
+    "freshness_thresholds": {
+      "fresh": 0.7,
+      "edible": 0.4,
+      "decaying": 0.15,
+      "spoiled": 0.0
+    }
+  }
+}

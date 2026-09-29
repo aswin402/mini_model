@@ -15,7 +15,8 @@
     "question_prefixes": [
       "is ", "are ", "what ", "where ", "who ", "which ", "why ",
       "how ", "can ", "does ", "do ", "could ", "did ", "has ",
-      "have ", "when ", "tell me ", "describe ", "calculate "
+      "have ", "when ", "tell me ", "describe ", "calculate ",
+      "explain ", "walk me through "
     ],
     "intent_priority": ["math", "curiosity", "action", "question", "statement"],
     "greetings": [

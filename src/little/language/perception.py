@@ -7,10 +7,10 @@ import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from little.core.runtime_paths import RuntimePaths
 from typing import TYPE_CHECKING, Protocol
 
 from little.core.contracts import CandidateAction, CandidateClaim, CandidateFrame
+from little.core.runtime_paths import RuntimePaths
 
 if TYPE_CHECKING:
     from little.language.dialogue import DialogueContext
@@ -57,7 +57,7 @@ class PerceptionPolicy:
             for key in keys:
                 value = data[key]
                 if isinstance(value, bool) or not isinstance(value, (int, float)):
-                    raise ValueError(f"{key} must be a number in [0.0, 1.0]")
+                    raise ValueError(f"{key} must be a number in [0.0, 1.0]")  # noqa: TRY004
                 try:
                     finite = math.isfinite(value)
                 except OverflowError:
@@ -221,7 +221,23 @@ class DeterministicPerceptionAdapter:
                 resolved_text,
                 known_concepts=known_concepts,
             )
-        if question is not None or resolved_text.strip().endswith("?"):
+
+        from little.dynamics.counterfactual_policy import CounterfactualPolicy
+        from little.procedural.math_story import MathStorySolver
+
+        cf_prefixes = CounterfactualPolicy.default().counterfactual_prefixes
+        is_counterfactual = (
+            any(resolved_text.lower().strip().startswith(p) for p in cf_prefixes)
+            or " vs " in resolved_text.lower()
+        )
+        is_math = MathStorySolver().is_math_story(resolved_text)
+
+        if (
+            question is not None
+            or resolved_text.strip().endswith("?")
+            or is_counterfactual
+            or is_math
+        ):
             return CandidateFrame.from_text(
                 text,
                 claims=[],

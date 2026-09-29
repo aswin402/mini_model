@@ -1303,6 +1303,14 @@ class LearningEngine:
                     trace=sol.steps,
                 )
 
+        # 0b. Check for continuous counterfactual / hypothetical dynamics queries
+        from little.dynamics.counterfactual import CounterfactualDynamicsEngine
+
+        cf_engine = CounterfactualDynamicsEngine(self.memory)
+        cf_res = cf_engine.evaluate_query(question)
+        if cf_res is not None:
+            return cf_res
+
         # 0. Check for compound / conjoined questions: e.g. "Can an eagle fly and does it have wings?"
         q_clean = question.strip()
         sub_questions: list[str] = []
@@ -2447,6 +2455,13 @@ class LearningEngine:
         # Why-Questions:
         # 1. Why is X a Y?
         if pred == "__why_is_a__":
+            from little.language.socratic import SocraticReasoner
+
+            socratic = SocraticReasoner(
+                self.memory, self.inference, semantic=self.semantic
+            )
+            soc_res = socratic.explain_why_is_a(subj, target)
+
             res = self.inference.infer(
                 subject=subj,
                 predicate=self.semantic.taxonomy,
@@ -2470,12 +2485,21 @@ class LearningEngine:
                     proof_ans = f"Because {res.evidence[0]}."
                 else:
                     proof_ans = f"Because {subj} is explicitly verified as a {target} in memory."
+
+                q_lower = question.lower()
+                if (
+                    "explain" in q_lower
+                    or "walk me through" in q_lower
+                    or "proof" in q_lower
+                ):
+                    proof_ans = soc_res.verbalized
+
                 return InferenceResult(
                     query=question,
                     status=BeliefStatus.SUPPORTED,
                     answer=proof_ans,
                     confidence=res.confidence,
-                    evidence=res.evidence,
+                    evidence=soc_res.premises or res.evidence,
                     trace=res.trace,
                 )
             elif res.status == BeliefStatus.REFUTED:
@@ -2492,7 +2516,7 @@ class LearningEngine:
                     query=question,
                     status=BeliefStatus.UNKNOWN,
                     answer=f"I do not know whether {subj} is a {target} yet, so I cannot deduce a proof.",
-                confidence=self.parser.POLICY.confidence.unknown,
+                    confidence=self.parser.POLICY.confidence.unknown,
                     evidence=[],
                     trace=res.trace,
                 )
@@ -2531,6 +2555,13 @@ class LearningEngine:
 
         # 3. Why is X not a Y?
         if pred == "__why_not__":
+            from little.language.socratic import SocraticReasoner
+
+            socratic = SocraticReasoner(
+                self.memory, self.inference, semantic=self.semantic
+            )
+            soc_res = socratic.explain_why_not(subj, target)
+
             res = self.inference.infer(
                 subject=subj,
                 predicate=self.semantic.taxonomy,
@@ -2547,12 +2578,20 @@ class LearningEngine:
                     proof_ans = (
                         f"Because {subj} and {target} are mutually exclusive in memory."
                     )
+                q_lower = question.lower()
+                if (
+                    "explain" in q_lower
+                    or "walk me through" in q_lower
+                    or "proof" in q_lower
+                ):
+                    proof_ans = soc_res.verbalized
+
                 return InferenceResult(
                     query=question,
                     status=BeliefStatus.SUPPORTED,
                     answer=proof_ans,
                     confidence=res.confidence,
-                    evidence=res.evidence,
+                    evidence=soc_res.premises or res.evidence,
                     trace=res.trace,
                 )
             return InferenceResult(
@@ -2562,6 +2601,27 @@ class LearningEngine:
                 confidence=self.parser.POLICY.confidence.unknown,
                 evidence=[],
                 trace=res.trace,
+            )
+
+        # 4. Why can X Y? (e.g. "Why can an eagle fly?")
+        if pred == "__why_can__":
+            from little.language.socratic import SocraticReasoner
+
+            socratic = SocraticReasoner(
+                self.memory, self.inference, semantic=self.semantic
+            )
+            soc_res = socratic.explain_capability(subj, target)
+            return InferenceResult(
+                query=question,
+                status=soc_res.status,
+                answer=soc_res.conclusion,
+                confidence=(
+                    self.parser.POLICY.confidence.certain
+                    if soc_res.status == BeliefStatus.SUPPORTED
+                    else self.parser.POLICY.confidence.unknown
+                ),
+                evidence=soc_res.premises,
+                trace=soc_res.trace,
             )
 
         # Standard relational query
