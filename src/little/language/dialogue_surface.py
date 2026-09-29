@@ -30,6 +30,24 @@ class DialogueSurfaceEngine:
         if matched:
             _, response = matched
             return response
+
+        clauses = [p.strip() for p in re.split(r"[.!?]+", text) if p.strip()]
+        if len(clauses) > 1:
+            matched_clauses: list[tuple[str, str]] = []
+            for clause in clauses:
+                m = self.policy.match_social_intent(clause)
+                if not m:
+                    return None
+                matched_clauses.append(m)
+
+            replies: list[str] = []
+            for i, (name, resp) in enumerate(matched_clauses):
+                if name == "greeting" and i == 0 and len(matched_clauses) > 1:
+                    replies.append("Hello!")
+                else:
+                    replies.append(resp)
+            return " ".join(replies)
+
         return None
 
     def decompose_utterance(self, text: str) -> tuple[str | None, str]:
@@ -43,6 +61,8 @@ class DialogueSurfaceEngine:
     def compose_reply(self, greeting_word: str | None, body: str) -> str:
         """Compose final natural English reply, attaching a greeting reply if appropriate."""
         if not greeting_word:
+            return body
+        if body.lower().startswith(greeting_word.lower()):
             return body
         tpl = self.policy.get_template("mixed_greeting_response", "{greeting_reply} {body}")
         greeting_reply = f"{greeting_word.capitalize()}!"

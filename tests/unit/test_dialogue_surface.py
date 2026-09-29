@@ -114,3 +114,18 @@ def test_composed_chat_learning_and_inference():
 
     res_bye = kernel.chat("Goodbye!")
     assert "goodbye" in res_bye.lower() or "care" in res_bye.lower() or "time" in res_bye.lower()
+
+
+def test_multi_clause_social_utterances():
+    """Verify compound social statements like greeting + pleasantry, and gratitude + goodbye."""
+    store = MemoryStore(":memory:", seed_ontology=True)
+    kernel = CognitiveKernel(store)
+
+    res1 = kernel.chat("Hello there! How are you doing today?")
+    assert "hello" in res1.lower()
+    assert "operating" in res1.lower() or "well" in res1.lower()
+
+    res2 = kernel.chat("Thank you so much for your help! Goodbye!")
+    assert "welcome" in res2.lower()
+    assert "goodbye" in res2.lower() or "preserved" in res2.lower()
+

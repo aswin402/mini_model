@@ -71,6 +71,11 @@ class CognitiveKernel:
             return social_reply
 
         greeting_word, remainder = self.dialogue_surface.decompose_utterance(text)
+        if greeting_word:
+            rem_social = self.dialogue_surface.handle_social(remainder)
+            if rem_social is not None:
+                return f"{greeting_word.capitalize()}! {rem_social}"
+
         outcome = self.process(remainder)
 
         if outcome.inference is not None:

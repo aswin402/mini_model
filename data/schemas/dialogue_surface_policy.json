@@ -13,7 +13,7 @@
     },
     "how_are_you": {
       "patterns": [
-        "^(?:how\\s+are\\s+you(?:\\s+doing)?|how's\\s+it\\s+going|how\\s+are\\s+things)[?!.]?$"
+        "^(?:how\\s+are\\s+you(?:\\s+doing)?|how's\\s+it\\s+going|how\\s+are\\s+things)(?:\\s+today)?(?:\\s*,?\\s*(?:my\\s+friend|there))?[?!.]?$"
       ],
       "responses": [
         "I'm operating smoothly and ready to reason. How can I assist you today?",
@@ -22,7 +22,7 @@
     },
     "thank_you": {
       "patterns": [
-        "^(?:thank\\s+you(?:\\s+very\\s+much)?|thanks(?:\\s+a\\s+lot)?|much\\s+appreciated|appreciate\\s+it)[!.]?$"
+        "^(?:thank\\s+you(?:\\s+so\\s+much|\\s+very\\s+much)?|thanks(?:\\s+a\\s+lot|\\s+so\\s+much)?|much\\s+appreciated|appreciate\\s+it)(?:\\s+for\\s+(?:all\\s+)?(?:your\\s+)?(?:help|assistance|time))?[!.]?$"
       ],
       "responses": [
         "You're very welcome!",
@@ -32,7 +32,7 @@
     },
     "goodbye": {
       "patterns": [
-        "^(?:goodbye|bye|bye\\s+bye|see\\s+you(?:\\s+later)?|take\\s+care|have\\s+a\\s+good\\s+day)[!.]?$"
+        "^(?:goodbye|bye|bye\\s+bye|see\\s+you(?:\\s+later)?|take\\s+care|have\\s+a\\s+good\\s+(?:day|one))[!.]?$"
       ],
       "responses": [
         "Goodbye! Everything we learned is safely preserved in memory.",
