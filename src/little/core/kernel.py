@@ -86,7 +86,10 @@ class CognitiveKernel:
 
         if outcome.inference is not None:
             body = self.dialogue_surface.verbalize_inference(
-                outcome.inference, query=remainder, resolved_subject=resolved_subj
+                outcome.inference,
+                query=remainder,
+                resolved_subject=resolved_subj,
+                parsed_query=outcome.frame.parsed_query,
             )
         elif outcome.learning is not None:
             body = self.dialogue_surface.verbalize_learning(outcome.learning)

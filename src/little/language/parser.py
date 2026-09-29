@@ -714,7 +714,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
                         selected = candidate
             if selected is not None:
                 split = (selected[0], selected[2])
-                predicate_override = selected[1]
+                predicate_override = "orbits" if selected[1] == "orbit" else selected[1]
 
         if split is None or not split[0] or not split[1]:
             return None
@@ -1135,7 +1135,10 @@ class LearningEngine:
                 else self.dialogue.get_salient_subject()
             )
             body = self.dialogue_surface.verbalize_inference(
-                inf_res, query=remainder, resolved_subject=resolved_subj
+                inf_res,
+                query=remainder,
+                resolved_subject=resolved_subj,
+                parsed_query=frame.parsed_query,
             )
 
         return self.dialogue_surface.compose_reply(greeting_word, body)
@@ -1160,28 +1163,39 @@ class LearningEngine:
         from little.language.comparative import ComparativeOrderReasoner
 
         comp_reasoner = ComparativeOrderReasoner(self.memory)
-        clean_comp_text = text.strip().rstrip(".?!")
-        for pat in comp_reasoner.policy.statement_patterns:
-            m_comp = re.search(pat, clean_comp_text, re.IGNORECASE)
-            if m_comp:
-                e_a, comp_w, e_b = m_comp.group(1), m_comp.group(2), m_comp.group(3)
-                if comp_reasoner.policy.find_dimension_by_comparative(comp_w):
-                    success, msg = comp_reasoner.assert_comparison(e_a, e_b, comp_w)
-                    exp = self.memory.add_experience(
-                        input_text=text,
-                        extracted_triples=[
-                            {"subject": e_a, "predicate": f"{comp_w}_than", "object": e_b}
-                        ],
-                    )
-                    up_type = UpdateType.NEW_RELATION if success else UpdateType.NO_OP
-                    return LearningResult(
-                        input_text=text,
-                        update_type=up_type,
-                        experience_id=exp.id,
-                        concepts_created=[e_a, e_b],
-                        relations_created=[f"({e_a} {comp_w}_than {e_b})"] if success else [],
-                        message=msg,
-                    )
+        comp_sentences = [s.strip() for s in re.split(r"[.;\n]|,\s*(?:and\s+)?", text) if s.strip()]
+        comparative_matches: list[tuple[str, str, str]] = []
+        for s in comp_sentences:
+            for pat in comp_reasoner.policy.statement_patterns:
+                m_comp = re.search(pat, s, re.IGNORECASE)
+                if m_comp:
+                    e_a, comp_w, e_b = m_comp.group(1).strip(), m_comp.group(2).strip(), m_comp.group(3).strip()
+                    if comp_reasoner.policy.find_dimension_by_comparative(comp_w):
+                        comparative_matches.append((e_a, comp_w, e_b))
+                        break
+        if comparative_matches:
+            created_concepts = set()
+            created_rels: list[str] = []
+            for e_a, comp_w, e_b in comparative_matches:
+                success, msg = comp_reasoner.assert_comparison(e_a, e_b, comp_w)
+                if success:
+                    created_concepts.update([e_a, e_b])
+                    created_rels.append(f"({e_a} {comp_w}_than {e_b})")
+            exp = self.memory.add_experience(
+                input_text=text,
+                extracted_triples=[
+                    {"subject": a, "predicate": f"{w}_than", "object": b}
+                    for a, w, b in comparative_matches
+                ],
+            )
+            return LearningResult(
+                input_text=text,
+                update_type=UpdateType.NEW_RELATION if created_rels else UpdateType.NO_OP,
+                experience_id=exp.id,
+                concepts_created=list(created_concepts),
+                relations_created=created_rels,
+                message=f"Recorded {len(created_rels)} comparative relations.",
+            )
 
         if frame.actions:
             result = self.memory.ledger.commit_action(

@@ -288,6 +288,18 @@
       "attribute_value_format": "capitalize",
       "domain": ["concept", "entity"],
       "range": ["concept", "value"]
+    },
+    {
+      "name": "orbits",
+      "domain": ["concept", "entity"],
+      "range": ["concept", "entity"],
+      "axis": "astronomy"
+    },
+    {
+      "name": "orbit",
+      "domain": ["concept", "entity"],
+      "range": ["concept", "entity"],
+      "axis": "astronomy"
     }
   ]
 }

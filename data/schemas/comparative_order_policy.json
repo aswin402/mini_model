@@ -60,10 +60,10 @@
   ],
   "question_patterns": {
     "extremum": "^(?:who|which)\\s+is\\s+(?:the\\s+)?([a-z]+)(?:\\s+(?:between|among|of)\\s+(?:all|them|.+?))?\\??$",
-    "transitive": "^is\\s+(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_]+)\\s+([a-z]+(?:\\s+[a-z]+)?)\\s+than\\s+(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_]+)\\??$"
+    "transitive": "^is\\s+(?:(?:a|an|the)\\s+)?(.+?)\\s+(taller|shorter|older|younger|faster|quicker|slower|heavier|lighter|more\\s+expensive|pricier|cheaper|less\\s+expensive|bigger|larger|smaller|stronger|weaker|[a-z]+)\\s+than\\s+(?:(?:a|an|the)\\s+)?([^?]+)\\??$"
   },
   "statement_patterns": [
-    "^(?:(?:consider|given|suppose)\\s+that\\s+)?(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_]+)\\s+is\\s+([a-z]+(?:\\s+[a-z]+)?)\\s+than\\s+(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_]+)$"
+    "^(?:(?:consider|given|suppose)\\s+that\\s+)?(?:(?:a|an|the)\\s+)?(.+?)\\s+is\\s+([a-z]+(?:\\s+[a-z]+)?)\\s+than\\s+(?:(?:a|an|the)\\s+)?([^?]+)$"
   ],
   "templates": {
     "transitive_affirmation": "Yes. {trace}",

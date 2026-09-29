@@ -60,6 +60,7 @@
     "cramer_solution": "  Exact Solution via Cramer's Rule: {var} = {val}",
     "age_answer": "{entity} is {val} years old.",
     "cost_answer": "The cost of a {entity} is ${val}.",
-    "quantity_answer": "There are {val} {entity}."
+    "quantity_answer": "There are {val} {entity}.",
+    "quantity_entity_answer": "{entity} has {val} {noun}."
   }
 }

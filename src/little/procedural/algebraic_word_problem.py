@@ -27,7 +27,10 @@ class AlgebraicWordProblemSolver:
         has_sum = any(k in s for k in self.policy.sum_keywords)
         has_offset = any(o in s for o in self.policy.positive_offsets + self.policy.negative_offsets)
         has_cost_system = bool(re.search(r"\b\d+\s+[a-zA-Z]+(?:\s+and\s+\d+\s+[a-zA-Z]+)?\s+cost\b", s))
-        return (has_mult or has_offset or has_cost_system) and (has_sum or bool(re.search(r"\b(?:in|ago|cost|price|sum|total)\b", s)))
+        has_proportional = bool(re.search(r"\bas\s+many\s+[a-zA-Z]+\s+as\b", s))
+        return (has_mult or has_offset or has_cost_system or has_proportional) and (
+            has_sum or bool(re.search(r"\b(?:in|ago|cost|price|sum|total|together)\b", s))
+        )
 
     def _extract_temporal_shift(self, text: str) -> int:
         """Extract signed temporal shift in years (e.g. 'in 5 years' -> +5, '4 years ago' -> -4)."""
@@ -62,6 +65,11 @@ class AlgebraicWordProblemSolver:
         res_cost = self._solve_cost_problem(clean)
         if res_cost:
             return res_cost
+
+        # Step 3: Detect Proportional Quantity Problems
+        res_prop = self._solve_proportional_quantity_problem(clean)
+        if res_prop:
+            return res_prop
 
         return None
 
@@ -293,3 +301,104 @@ class AlgebraicWordProblemSolver:
             latex_trace=sol.latex_trace,
             steps=steps,
         )
+
+    def _solve_proportional_quantity_problem(self, text: str) -> MathSolution | None:
+        """Solve proportional quantity problems: 'Lucas has 3 times as many books as Maya. Together they have 48 books. How many books does Lucas have?'"""
+        # Relation 1: E1 has [multiplier] as many [noun] as E2
+        m_prop = re.search(
+            r"([A-Z][a-zA-Z0-9_]*)\s+has\s+([a-zA-Z0-9_\s]+?)\s+(?:times\s+)?as\s+many\s+([a-zA-Z0-9_]+)\s+as\s+([A-Z][a-zA-Z0-9_]*)",
+            text,
+            re.IGNORECASE,
+        )
+        if not m_prop:
+            return None
+
+        e1 = m_prop.group(1).strip()
+        mult_str = m_prop.group(2).strip().lower()
+        noun = m_prop.group(3).strip()
+        e2 = m_prop.group(4).strip()
+
+        mult_val = self.policy.multipliers.get(mult_str)
+        if mult_val is None:
+            mult_val = self.policy.multipliers.get(f"{mult_str} times")
+        if mult_val is None:
+            m_dig = re.match(r"^(\d+(?:\.\d+)?)$", mult_str)
+            if m_dig:
+                mult_val = float(m_dig.group(1))
+
+        if mult_val is None:
+            return None
+
+        # Equation 1: 1 * E1 - mult * E2 = 0
+        a1 = Fraction(1)
+        b1 = -Fraction(mult_val).limit_denominator()
+        c1 = Fraction(0)
+
+        # Equation 2: E1 + E2 = total
+        m_sum = re.search(
+            r"(?:together\s+(?:they\s+have)?|the\s+sum\s+of\s+their\s+[a-zA-Z0-9_]+\s+is|in\s+total\s+(?:they\s+have)?|combined\s+they\s+have|they\s+have)\s*(\d+(?:\.\d+)?)",
+            text,
+            re.IGNORECASE,
+        )
+        if not m_sum:
+            return None
+
+        total_val = Fraction(m_sum.group(1)).limit_denominator()
+        a2 = Fraction(1)
+        b2 = Fraction(1)
+        c2 = total_val
+
+        sol = self.cas.solve_linear_system_2x2(a1, b1, c1, a2, b2, c2)
+        if sol.status != "SOLVED":
+            return sol
+
+        vals = sol.result
+        x_val = vals["x"]
+        y_val = vals["y"]
+
+        # Target entity: "How many books does Lucas have?"
+        e1_cap = e1.capitalize()
+        e2_cap = e2.capitalize()
+        target_name = e1_cap
+
+        m_q = re.search(r"how\s+many\s+(?:[a-zA-Z0-9_]+\s+)?does\s+([A-Z][a-zA-Z0-9_]*)\s+have", text, re.IGNORECASE)
+        if m_q:
+            cand = m_q.group(1).strip().capitalize()
+            if cand.lower() == e2_cap.lower():
+                target_name = e2_cap
+            elif cand.lower() == e1_cap.lower():
+                target_name = e1_cap
+
+        if target_name.lower() == e2_cap.lower():
+            target_val = y_val
+            other_name = e1_cap
+            other_val = x_val
+        else:
+            target_name = e1_cap
+            target_val = x_val
+            other_name = e2_cap
+            other_val = y_val
+
+        val_display = int(target_val) if target_val.denominator == 1 else f"{target_val.numerator}/{target_val.denominator}"
+        other_display = int(other_val) if other_val.denominator == 1 else f"{other_val.numerator}/{other_val.denominator}"
+
+        ans_tpl = self.policy.templates.get("quantity_entity_answer", "{entity} has {val} {noun}.")
+        final_answer = ans_tpl.format(entity=target_name, val=val_display, noun=noun)
+
+        steps = [
+            self.policy.templates.get("trace_header", "Algebraic Word Problem (<math_trace>):"),
+            f"  Variables: x = {noun} of {e1_cap}, y = {noun} of {e2_cap}",
+            f"  Constraint 1: {a1}x + ({b1})y = {c1}",
+            f"  Constraint 2: {a2}x + {b2}y = {c2}",
+            f"  Exact Solution via Cramer's Rule: x = {int(x_val) if x_val.denominator == 1 else x_val}, y = {int(y_val) if y_val.denominator == 1 else y_val}",
+            f"  Answering target query for {target_name}:",
+            f"  {final_answer} ({other_name} has {other_display} {noun}).",
+        ]
+
+        return MathSolution(
+            status="SOLVED",
+            result=final_answer,
+            latex_trace=sol.latex_trace,
+            steps=steps,
+        )
+

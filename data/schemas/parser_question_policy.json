@@ -15,7 +15,7 @@
     },
     {
       "name": "user_name",
-      "pattern": "^(?:what\\s+is\\s+my\\s+name|what['’]s\\s+my\\s+name|who\\s+am\\s+i|do\\s+you\\s+(?:know|remember)\\s+my\\s+name|do\\s+you\\s+know\\s+who\\s+i\\s+am|tell\\s+me\\s+my\\s+name)$",
+      "pattern": "^(?:what\\s+is\\s+my\\s+name|what['’]s\\s+my\\s+name|who\\s+am\\s+i|do\\s+you\\s+(?:know|remember)\\s+my\\s+name|do\\s+you\\s+(?:know|remember)\\s+who\\s+i\\s+am|tell\\s+me\\s+my\\s+name)$",
       "subject": "user",
       "predicate": "__user_name__"
     },

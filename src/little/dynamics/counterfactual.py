@@ -258,7 +258,10 @@ class CounterfactualDynamicsEngine:
         dur = self.resolve_duration_hours(body, default=self.policy.default_duration_hours)
         temp = self.resolve_temperature(body, default=self.policy.default_counterfactual_temperature_c)
 
-        m_subj = re.search(r"^(?:an?\s+)?([a-z0-9_ ]+?)(?:\s+is|\s+was|\s+were|\s+at|\s+in|\s+kept|\s+left)", body)
+        m_subj = re.search(
+            r"^(?:an?\s+)?([a-z0-9_ ]+?)(?:\s+is|\s+was|\s+were|\s+at|\s+in|\s+kept|\s+left|\s+decay|\s+oxidation|\s+over|\s+for)",
+            body,
+        )
         subject = m_subj.group(1).strip() if m_subj else "apple slice"
 
         sc = self.simulate_scenario(subject, temp, dur)

@@ -35,3 +35,16 @@ def test_algebraic_cost_linear_system():
     assert sol is not None
     assert sol.status == "SOLVED"
     assert "cost of a pen is $6" in sol.result
+
+
+def test_algebraic_proportional_quantity_system():
+    solver = AlgebraicWordProblemSolver()
+    problem = "Lucas has 3 times as many books as Maya. Together they have 48 books. How many books does Lucas have?"
+
+    assert solver.is_algebraic_problem(problem) is True
+    sol = solver.solve(problem)
+    assert sol is not None
+    assert sol.status == "SOLVED"
+    assert sol.result == "Lucas has 36 books."
+    assert any("Cramer's Rule" in step for step in sol.steps)
+

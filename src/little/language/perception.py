@@ -260,7 +260,7 @@ class DeterministicPerceptionAdapter:
         is_math = MathStorySolver().is_math_story(resolved_text)
         is_comparative_query = bool(
             re.search(r"\b(?:who|which)\s+is\s+(?:the\s+)?[a-z]+", resolved_text, re.IGNORECASE)
-            or re.search(r"\bis\s+[a-zA-Z0-9_]+\s+[a-z\s]+\s+than\s+[a-zA-Z0-9_]+", resolved_text, re.IGNORECASE)
+            or re.search(r"\bis\s+.+?\s+(?:than)\s+.+", resolved_text, re.IGNORECASE)
         )
 
         if (

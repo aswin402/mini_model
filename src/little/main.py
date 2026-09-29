@@ -579,6 +579,11 @@ def cmd_interact(args: argparse.Namespace) -> None:
 
             # Decompose mixed utterance if leading greeting is present
             greeting_word, remainder = kernel.dialogue_surface.decompose_utterance(user_input)
+            if greeting_word:
+                rem_social = kernel.dialogue_surface.handle_social(remainder)
+                if rem_social is not None:
+                    print(f"\n💬 LITTLE: {greeting_word.capitalize()}! {rem_social}\n")
+                    continue
 
             # Semantic input enters through the cognitive kernel.
             outcome = kernel.process(remainder)
@@ -591,7 +596,17 @@ def cmd_interact(args: argparse.Namespace) -> None:
                     )
                     for step in res.trace:
                         print(f"   ↳ {step}")
-                verbalized = kernel.dialogue_surface.verbalize_inference(res, query=remainder)
+                resolved_subj = (
+                    outcome.frame.parsed_query[0]
+                    if outcome.frame.parsed_query and isinstance(outcome.frame.parsed_query, tuple)
+                    else kernel.learner.dialogue.get_salient_subject()
+                )
+                verbalized = kernel.dialogue_surface.verbalize_inference(
+                    res,
+                    query=remainder,
+                    resolved_subject=resolved_subj,
+                    parsed_query=outcome.frame.parsed_query,
+                )
                 final_reply = kernel.dialogue_surface.compose_reply(greeting_word, verbalized)
                 print(f"\n💬 LITTLE: {final_reply}")
                 print(

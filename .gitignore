@@ -24,3 +24,7 @@ htmlcov/
 .idea/
 *.swp
 *.swo
+
+# Scratch files
+scratch/
+

@@ -7,7 +7,8 @@
       "compare ",
       "suppose ",
       "how would ",
-      "what happens if "
+      "what happens if ",
+      "simulate "
     ],
     "temperature_aliases": {
       "refrigerated": 4.0,

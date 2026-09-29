@@ -15,7 +15,9 @@
       "diet": "eats",
       "composition": "made_of",
       "purpose": "used_for",
-      "causality": "causes"
+      "causality": "causes",
+      "orbits": "orbits",
+      "orbit": "orbit"
     },
     "identity_predicates": ["has_name", "name", "is"]
   }

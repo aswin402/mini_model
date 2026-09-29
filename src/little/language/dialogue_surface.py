@@ -20,8 +20,13 @@ class DialogueSurfaceEngine:
 
     @staticmethod
     def _article(word: str, capitalize: bool = False) -> str:
-        w = word.strip().lower()
-        art = "an" if w and w[0] in "aeiou" else "a"
+        w = word.strip()
+        if not w:
+            return ""
+        if w[0].isupper():
+            return ""
+        w_lower = w.lower()
+        art = "an" if w_lower[0] in "aeiou" else "a"
         return art.capitalize() if capitalize else art
 
     def handle_social(self, text: str) -> str | None:
@@ -153,10 +158,31 @@ class DialogueSurfaceEngine:
         inference: InferenceResult,
         query: str = "",
         resolved_subject: str | None = None,
+        parsed_query: tuple[str, str, Any] | None = None,
     ) -> str:
         """Render formal InferenceResult into fluent conversational English."""
-        raw_ans = str(inference.answer) if inference.answer is not None else ""
+        if isinstance(inference.answer, (list, tuple)):
+            clean_list = [str(x).strip() for x in inference.answer if x is not None and str(x).strip()]
+            unique_list = list(dict.fromkeys(clean_list))
+            if len(unique_list) == 1:
+                raw_ans = unique_list[0]
+            else:
+                return "\n\n".join(unique_list)
+        else:
+            raw_ans = str(inference.answer) if inference.answer is not None else ""
+
         pronouns = {"it", "they", "this", "that", "he", "she"}
+
+        def _clean(text: str) -> str:
+            res = re.sub(r" +", " ", text)
+            res = res.replace(" ,", ",").replace(" .", ".").replace(" ?", "?").replace(" !", "!")
+            return res.strip()
+
+        def _restore_casing(name: str) -> str:
+            m = re.search(rf"\b{re.escape(name)}\b", query, re.IGNORECASE)
+            if m and m.group(0)[0].isupper():
+                return m.group(0)
+            return name
 
         # 1. Custom traces & multi-step solutions (Socratic syllogisms, CAS math traces, ODE simulations, posets)
         if (
@@ -184,28 +210,77 @@ class DialogueSurfaceEngine:
         ):
             verbalized_def = self.verbalize_concept_definition(raw_ans)
             if verbalized_def:
-                return verbalized_def
+                return _clean(verbalized_def)
 
         # 2. Epistemic Unknown (Honest admissions with conversational invitation)
         if inference.status == BeliefStatus.UNKNOWN:
-            m_subj = re.search(
-                r"\b(?:is|can|does|what color is|where is|where does|what is)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_]+)",
-                query,
-                re.IGNORECASE,
-            )
-            subject = m_subj.group(1).strip() if m_subj else "that concept"
+            subject = None
+            if parsed_query and len(parsed_query) >= 1 and parsed_query[0]:
+                subject = str(parsed_query[0]).strip()
+            if not subject:
+                m_subj = re.search(
+                    r"\b(?:is|can|does|what color is|where is|where does|what is)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)(?:\s+(?:a|an|the|have|in|on|at|can|fly|swim|live|color)|\?|$)",
+                    query,
+                    re.IGNORECASE,
+                )
+                subject = m_subj.group(1).strip() if m_subj else "that concept"
             if subject.lower() in pronouns and resolved_subject:
                 subject = resolved_subject
             tpl = self.policy.get_template(
                 "epistemic_unknown",
                 "I don't have that information in my memory yet. Could you tell me more about {subject}?",
             )
-            return tpl.format(subject=subject)
+            return _clean(tpl.format(subject=subject))
 
         # 3. Refuted claims
         if inference.status == BeliefStatus.REFUTED or inference.answer is False:
+            if parsed_query and len(parsed_query) == 3 and parsed_query[1] in {"is_a", "subclass_of", "isa"}:
+                s_name = _restore_casing(str(parsed_query[0]).strip())
+                t_name = _restore_casing(str(parsed_query[2]).strip())
+                if s_name.lower() in pronouns and resolved_subject:
+                    s_name = _restore_casing(resolved_subject)
+                tpl = self.policy.get_template(
+                    "refuted_taxonomy", "No, {subject_article} {subject} is not {target_article} {target}."
+                )
+                return _clean(tpl.format(
+                    subject_article=self._article(s_name, capitalize=False),
+                    subject=s_name,
+                    target_article=self._article(t_name, capitalize=False),
+                    target=t_name,
+                ))
+
+            if parsed_query and len(parsed_query) == 3 and parsed_query[1] in {"can", "capable_of"}:
+                s_name = _restore_casing(str(parsed_query[0]).strip())
+                action = str(parsed_query[2]).strip()
+                if s_name.lower() in pronouns and resolved_subject:
+                    s_name = _restore_casing(resolved_subject)
+                tpl = self.policy.get_template(
+                    "refuted_capability", "No, {subject} cannot {action}."
+                )
+                return _clean(tpl.format(subject=s_name, action=action))
+
+            if parsed_query and len(parsed_query) == 3 and parsed_query[1] in {"has", "has_feature", "has_part"}:
+                s_name = _restore_casing(str(parsed_query[0]).strip())
+                m_has = re.search(
+                    r"(?:Does|Has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\s+(?:have|has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\?*$",
+                    query.strip(),
+                    re.IGNORECASE,
+                )
+                raw_feature = m_has.group(2).strip() if m_has else str(parsed_query[2]).strip()
+                feature = _restore_casing(raw_feature)
+                if s_name.lower() in pronouns and resolved_subject:
+                    s_name = _restore_casing(resolved_subject)
+                tpl = self.policy.get_template(
+                    "refuted_feature", "No, {subject_article} {subject} does not have {target}."
+                )
+                return _clean(tpl.format(
+                    subject_article=self._article(s_name, capitalize=False),
+                    subject=s_name,
+                    target=feature,
+                ))
+
             m_tax = re.search(
-                r"Is\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_]+)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\?*$",
+                r"Is\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\?*$",
                 query.strip(),
                 re.IGNORECASE,
             )
@@ -217,14 +292,14 @@ class DialogueSurfaceEngine:
                 tpl = self.policy.get_template(
                     "refuted_taxonomy", "No, {subject_article} {subject} is not {target_article} {target}."
                 )
-                return tpl.format(
+                return _clean(tpl.format(
                     subject_article=self._article(s_name, capitalize=False),
                     subject=s_name,
                     target_article=self._article(t_name, capitalize=False),
                     target=t_name,
-                )
+                ))
             m_can = re.search(
-                r"Can\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_\s]+?)\?*$",
+                r"Can\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\s+([a-zA-Z0-9_\s]+?)\?*$",
                 query.strip(),
                 re.IGNORECASE,
             )
@@ -236,10 +311,10 @@ class DialogueSurfaceEngine:
                 tpl = self.policy.get_template(
                     "refuted_capability", "No, {subject} cannot {action}."
                 )
-                return tpl.format(subject=s_name, action=action)
+                return _clean(tpl.format(subject=s_name, action=action))
 
             m_has = re.search(
-                r"(?:Does|Has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_]+)\s+(?:have|has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\?*$",
+                r"(?:Does|Has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\s+(?:have|has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\?*$",
                 query.strip(),
                 re.IGNORECASE,
             )
@@ -251,21 +326,78 @@ class DialogueSurfaceEngine:
                 tpl = self.policy.get_template(
                     "refuted_feature", "No, {subject_article} {subject} does not have {target}."
                 )
-                return tpl.format(
+                return _clean(tpl.format(
                     subject_article=self._article(s_name, capitalize=False),
                     subject=s_name,
                     target=feature,
-                )
+                ))
 
-            return self.policy.get_template(
+            return _clean(self.policy.get_template(
                 "refuted_general", "No, that does not match what I know to be true."
-            )
+            ))
 
         # 4. Supported Affirmations
         if inference.status == BeliefStatus.SUPPORTED:
             if inference.answer is True:
+                if parsed_query and len(parsed_query) == 3 and parsed_query[1] in {"is_a", "subclass_of", "isa"}:
+                    s_name = _restore_casing(str(parsed_query[0]).strip())
+                    t_name = _restore_casing(str(parsed_query[2]).strip())
+                    if s_name.lower() in pronouns and resolved_subject:
+                        s_name = _restore_casing(resolved_subject)
+                    tpl = self.policy.get_template(
+                        "affirmative_taxonomy",
+                        "Yes, {subject_article} {subject} is indeed {target_article} {target}.",
+                    )
+                    return _clean(tpl.format(
+                        subject_article=self._article(s_name, capitalize=False),
+                        subject=s_name,
+                        target_article=self._article(t_name, capitalize=False),
+                        target=t_name,
+                    ))
+
+                if parsed_query and len(parsed_query) == 3 and parsed_query[1] in {"can", "capable_of"}:
+                    s_name = _restore_casing(str(parsed_query[0]).strip())
+                    action = str(parsed_query[2]).strip()
+                    if s_name.lower() in pronouns and resolved_subject:
+                        s_name = _restore_casing(resolved_subject)
+                    tpl = self.policy.get_template(
+                        "affirmative_capability", "Yes, {subject} can certainly {action}."
+                    )
+                    return _clean(tpl.format(subject=s_name, action=action))
+
+                if parsed_query and len(parsed_query) == 3 and parsed_query[1] in {"has", "has_feature", "has_part"}:
+                    s_name = _restore_casing(str(parsed_query[0]).strip())
+                    m_has = re.search(
+                        r"(?:Does|Has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\s+(?:have|has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\?*$",
+                        query.strip(),
+                        re.IGNORECASE,
+                    )
+                    raw_feature = m_has.group(2).strip() if m_has else str(parsed_query[2]).strip()
+                    feature = _restore_casing(raw_feature)
+                    if s_name.lower() in pronouns and resolved_subject:
+                        s_name = _restore_casing(resolved_subject)
+                    tpl = self.policy.get_template(
+                        "affirmative_feature",
+                        "Yes, {subject_article} {subject} has {target}.",
+                    )
+                    return _clean(tpl.format(
+                        subject_article=self._article(s_name, capitalize=False),
+                        subject=s_name,
+                        target=feature,
+                    ))
+
+                if parsed_query and len(parsed_query) == 3 and parsed_query[1] not in {"is_a", "subclass_of", "isa", "can", "capable_of", "has", "has_feature", "has_part"}:
+                    s_name = _restore_casing(str(parsed_query[0]).strip())
+                    pred = str(parsed_query[1]).strip()
+                    t_name = _restore_casing(str(parsed_query[2]).strip())
+                    if s_name.lower() in pronouns and resolved_subject:
+                        s_name = _restore_casing(resolved_subject)
+                    pred_3sg = f"{pred}s" if not pred.endswith(("s", "x", "z", "ch", "sh")) else pred
+                    tpl = self.policy.get_template("affirmative_relation", "Yes, {subject} {predicate} {target}.")
+                    return _clean(tpl.format(subject=s_name, predicate=pred_3sg, target=t_name))
+
                 m_can = re.search(
-                    r"Can\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_]+)\s+([a-zA-Z0-9_\s]+?)\?*$",
+                    r"Can\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\s+([a-zA-Z0-9_\s]+?)\?*$",
                     query.strip(),
                     re.IGNORECASE,
                 )
@@ -277,10 +409,10 @@ class DialogueSurfaceEngine:
                     tpl = self.policy.get_template(
                         "affirmative_capability", "Yes, {subject} can certainly {action}."
                     )
-                    return tpl.format(subject=s_name, action=action)
+                    return _clean(tpl.format(subject=s_name, action=action))
 
                 m_tax = re.search(
-                    r"Is\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_]+)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\?*$",
+                    r"Is\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\?*$",
                     query.strip(),
                     re.IGNORECASE,
                 )
@@ -293,15 +425,15 @@ class DialogueSurfaceEngine:
                         "affirmative_taxonomy",
                         "Yes, {subject_article} {subject} is indeed {target_article} {target}.",
                     )
-                    return tpl.format(
+                    return _clean(tpl.format(
                         subject_article=self._article(s_name, capitalize=False),
                         subject=s_name,
                         target_article=self._article(t_name, capitalize=False),
                         target=t_name,
-                    )
+                    ))
 
                 m_has = re.search(
-                    r"(?:Does|Has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_]+)\s+(?:have|has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\?*$",
+                    r"(?:Does|Has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\s+(?:have|has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\?*$",
                     query.strip(),
                     re.IGNORECASE,
                 )
@@ -314,15 +446,15 @@ class DialogueSurfaceEngine:
                         "affirmative_feature",
                         "Yes, {subject_article} {subject} has {target}.",
                     )
-                    return tpl.format(
+                    return _clean(tpl.format(
                         subject_article=self._article(s_name, capitalize=False),
                         subject=s_name,
                         target=feature,
-                    )
+                    ))
 
-                return self.policy.get_template(
+                return _clean(self.policy.get_template(
                     "affirmative_general", "Yes, that is correct."
-                )
+                ))
 
             # Property / Textual answers
             if isinstance(inference.answer, str):
@@ -333,10 +465,10 @@ class DialogueSurfaceEngine:
                     or " is located in " in raw_ans
                     or raw_ans.endswith((".", "!"))
                 ):
-                    return raw_ans
+                    return _clean(raw_ans)
                 if not raw_ans.startswith(("Yes", "No")):
-                    return f"Based on my knowledge, that is {raw_ans}."
+                    return _clean(f"Based on my knowledge, that is {raw_ans}.")
 
-            return str(inference.answer)
+            return _clean(raw_ans)
 
-        return str(inference.answer) if inference.answer is not None else ""
+        return _clean(raw_ans) if raw_ans else ""

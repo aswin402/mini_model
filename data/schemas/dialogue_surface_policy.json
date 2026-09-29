@@ -32,7 +32,7 @@
     },
     "goodbye": {
       "patterns": [
-        "^(?:goodbye|bye|bye\\s+bye|see\\s+you(?:\\s+later)?|take\\s+care|have\\s+a\\s+good\\s+(?:day|one))[!.]?$"
+        "^(?:goodbye(?:\\s+for\\s+now)?|bye(?:\\s+bye)?(?:\\s+for\\s+now)?|see\\s+you(?:\\s+later)?|take\\s+care|have\\s+a\\s+good\\s+(?:day|one))[!.]?$"
       ],
       "responses": [
         "Goodbye! Everything we learned is safely preserved in memory.",
@@ -50,7 +50,7 @@
     },
     "compliment": {
       "patterns": [
-        "^(?:good\\s+job|well\\s+done|great\\s+work|nice\\s+job|you\\s+are\\s+awesome|you're\\s+awesome|you\\s+are\\s+great|you're\\s+great|impressive|cool)[!.]?$"
+        "^(?:good\\s+job|well\\s+done|great\\s+work|nice\\s+job|you\\s+are\\s+awesome|you're\\s+awesome|you\\s+are\\s+great|you're\\s+great|impressive|cool|you\\s+did\\s+(?:a\\s+)?(?:great|good|wonderful|fantastic)\\s+job|you\\s+did\\s+great)[!.]?$"
       ],
       "responses": [
         "Thank you! I strive for rigorous reasoning and continuous learning.",
@@ -83,6 +83,7 @@
     "affirmative_feature": "Yes, {subject_article} {subject} has {target}.",
     "affirmative_property": "{subject_cap} has {property} {value}.",
     "affirmative_location": "Yes, {subject} is located in {target}.",
+    "affirmative_relation": "Yes, {subject} {predicate} {target}.",
     "affirmative_general": "Yes, that is correct.",
     "refuted_taxonomy": "No, {subject_article} {subject} is not {target_article} {target}.",
     "refuted_capability": "No, {subject} cannot {action}.",

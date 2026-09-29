@@ -69,3 +69,25 @@ def test_thinking_controller_routes_algebraic_and_comparative():
     res_comp = controller.run(story)
     assert res_comp.inference.status == BeliefStatus.SUPPORTED
     assert "Falcon is the fastest" in str(res_comp.inference.answer)
+
+
+def test_proportional_word_problem_via_learning_engine():
+    memory = MemoryStore(":memory:", seed_ontology=False)
+    engine = LearningEngine(memory=memory)
+
+    problem = "Lucas has 3 times as many books as Maya. Together they have 48 books. How many books does Lucas have?"
+    res = engine.ask(problem)
+    assert res.status == BeliefStatus.SUPPORTED
+    assert res.answer == "Lucas has 36 books."
+    assert any("Cramer's Rule" in step for step in res.trace)
+
+
+def test_multi_word_comparative_via_learning_engine():
+    memory = MemoryStore(":memory:", seed_ontology=False)
+    engine = LearningEngine(memory=memory)
+
+    story = "The snow leopard is faster than the arctic hare. Is snow leopard faster than arctic hare?"
+    res = engine.ask(story)
+    assert res.status == BeliefStatus.SUPPORTED
+    assert "Yes" in str(res.answer)
+
