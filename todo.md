@@ -582,12 +582,13 @@ Implementation Plan: `docs/superpowers/plans/2026-09-22-mivi-spiderweb-thinking-
     - `tests/integration/test_tool_actions_chat_integration.py` (1/1 passed)
     - Total regression test suite: 497/497 passed (100% pass rate)
 
-- [ ] **Phase 16: Neural Latent State & Router Engine (`src/little/neural/`)**
-  - [ ] Continuous Latent Workspace: `NeuralState` ($S \in \mathbb{R}^{512}$) combining token embeddings, working context, and dialogue history
-  - [ ] Learned Neural Router Head: MLP projection $\mathbf{p} = \text{Softmax}(\mathbf{W}_2 \cdot \text{GELU}(\mathbf{W}_1 S + \mathbf{b}_1) + \mathbf{b}_2)$ over 6 cognitive pathways (`chat`, `math`, `tool`, `code`, `poset`, `physics`)
-  - [ ] Calibrated Uncertainty & Entropy ($H \ge 0.35$ triggers deliberate System 2 questioning rather than guessing)
-  - [ ] Zero-Regex Hybrid Routing: Reconcile neural router probabilities with `CognitiveKernel` and `HybridPerceptionAdapter`
-  - [ ] Unit & Integration Tests: Verify classification on noisy/misspelled queries without regex matching
+- [x] **Phase 16: Neural Latent State & Router Engine (`src/little/neural/`)**
+  - [x] Continuous Latent Workspace: `NeuralState` ($S \in \mathbb{R}^{512}$) combining token embeddings, typo-resilient n-grams, working context, and dialogue history
+  - [x] Learned Neural Router Head: Calibrated prototypical projection $\mathbf{p} = \text{Softmax}(\tau \cdot \mathbf{W} S + \mathbf{b})$ over 6 cognitive pathways (`chat`, `math`, `tool`, `code`, `poset`, `physics`) with online gradient adaptation (`learn()`)
+  - [x] Calibrated Uncertainty & Entropy: Shannon entropy $H = -\sum p \ln p$ flags ambiguous/multi-intent queries ($H \ge 0.35$)
+  - [x] Zero-Regex Hybrid Routing: Reconciled neural router probabilities with `CognitiveKernel` and `ActionRouter` (slang math, tool intent extraction)
+  - [x] Unit & Integration Tests: Verified classification on noisy/slang queries without regex matching (`tests/unit/test_neural_router.py` 5/5, `tests/integration/test_neural_routing_chat_integration.py` 4/4)
+  - [x] Full Regression Suite Pass: 506 / 506 tests passing (100% pass rate in 68.83s)
 
 - [ ] **Phase 17: Neural Semantic Frame & Slot Extractor (Eliminating Regexes)**
   - [ ] FrameNet-Style Semantic Role Labeling: Map unstructured English sentences into typed semantic frames `(Subject, Predicate, Object, Modifiers)`

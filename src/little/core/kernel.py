@@ -11,13 +11,14 @@ from little.actions import (
     ToolGroundingEngine,
 )
 from little.core.contracts import CandidateFrame, SourceType
-from little.core.models import BeliefStatus, InferenceResult, LearningResult
+from little.core.models import BeliefStatus, InferenceResult, LearningResult, generate_id
 from little.core.runtime_policy import RuntimePolicy
 from little.inference.thinking_controller import CognitiveMode, ThinkingController
 from little.language.dialogue_surface import DialogueSurfaceEngine
 from little.language.parser import LearningEngine, configured_parser
 from little.language.perception import DeterministicPerceptionAdapter, PerceptionAdapter
 from little.memory.store import MemoryStore
+from little.neural import NeuralRouter, RoutingDecision
 from little.procedural.math_cas import UnitConversionGraph
 
 
@@ -28,6 +29,7 @@ class KernelOutcome:
     learning: LearningResult | None = None
     inference: InferenceResult | None = None
     tool_result: ToolExecutionResult | None = None
+    routing_decision: RoutingDecision | None = None
 
 
 class CognitiveKernel:
@@ -40,6 +42,7 @@ class CognitiveKernel:
         learner: LearningEngine | None = None,
         controller: ThinkingController | None = None,
         runtime_policy: RuntimePolicy | None = None,
+        neural_router: NeuralRouter | None = None,
     ) -> None:
         self.memory = memory
         explicit_runtime_policy = runtime_policy is not None
@@ -70,7 +73,8 @@ class CognitiveKernel:
         self.dialogue_surface = DialogueSurfaceEngine(
             policy=getattr(self.runtime_policy, "dialogue_surface", None)
         )
-        self.action_router = ActionRouter()
+        self.neural_router = neural_router or NeuralRouter()
+        self.action_router = ActionRouter(neural_router=self.neural_router)
         self.tool_executor = ToolExecutor()
         self.tool_grounder = ToolGroundingEngine(memory_store=self.memory)
 
@@ -86,15 +90,18 @@ class CognitiveKernel:
             if rem_social is not None:
                 return f"{greeting_word.capitalize()}! {rem_social}"
 
-        # Check action router for tool execution intents
-        tool_call = self.action_router.route(remainder)
+        # Neural routing over utterance
+        routing = self.neural_router.route(remainder)
+
+        # Check action router for tool execution intents (with neural routing support)
+        tool_call = self.action_router.route(remainder, routing_decision=routing)
         if tool_call is not None:
             exec_result = self.tool_executor.execute(tool_call)
             self.tool_grounder.ground(exec_result)
             body = self.dialogue_surface.verbalize_tool_result(exec_result)
             return self.dialogue_surface.compose_reply(greeting_word, body)
 
-        outcome = self.process(remainder)
+        outcome = self.process(remainder, routing_decision=routing)
 
         resolved_subj = None
         if outcome.frame.parsed_query and isinstance(outcome.frame.parsed_query, tuple):
@@ -118,21 +125,32 @@ class CognitiveKernel:
 
         return self.dialogue_surface.compose_reply(greeting_word, body)
 
-    def process(self, text: str, *, allow_learning: bool = True) -> KernelOutcome:
+    def process(
+        self,
+        text: str,
+        *,
+        allow_learning: bool = True,
+        routing_decision: RoutingDecision | None = None,
+    ) -> KernelOutcome:
+        # Route neurally if not provided
+        routing = routing_decision or self.neural_router.route(text)
+
         # Check action router first for tool invocations
-        tool_call = self.action_router.route(text)
+        tool_call = self.action_router.route(text, routing_decision=routing)
         if tool_call is not None:
             exec_result = self.tool_executor.execute(tool_call)
             self.tool_grounder.ground(exec_result)
             return KernelOutcome(
                 frame=CandidateFrame(
+                    frame_id=generate_id("frame"),
                     source_text=text,
                     intent="action",
-                    confidence=1.0,
-                    source_type=SourceType.USER,
+                    claims=[],
+                    uncertainty=0.0,
                 ),
                 mode=CognitiveMode.FAST,
                 tool_result=exec_result,
+                routing_decision=routing,
             )
 
         frame = self.perception.perceive(
@@ -146,12 +164,18 @@ class CognitiveKernel:
                 question_parts=frame.question_parts,
             )
             return KernelOutcome(
-                frame=frame, mode=thinking.mode, inference=thinking.inference
+                frame=frame,
+                mode=thinking.mode,
+                inference=thinking.inference,
+                routing_decision=routing,
             )
         if frame.intent in {"statement", "action"} and allow_learning:
             learning = self.learner.commit_frame(frame, source_type=SourceType.USER)
             return KernelOutcome(
-                frame=frame, mode=CognitiveMode.STUDY, learning=learning
+                frame=frame,
+                mode=CognitiveMode.STUDY,
+                learning=learning,
+                routing_decision=routing,
             )
         return KernelOutcome(
             frame=frame,
@@ -170,4 +194,5 @@ class CognitiveKernel:
                     )
                 ],
             ),
+            routing_decision=routing,
         )

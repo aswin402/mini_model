@@ -1,0 +1,51 @@
+{
+  "format": "little.neural_router_policy.v1",
+  "input_dim": 512,
+  "hidden_dim": 256,
+  "pathways": [
+    "chat",
+    "math",
+    "tool",
+    "code",
+    "poset",
+    "physics"
+  ],
+  "entropy_threshold": 0.35,
+  "uncertainty_margin": 0.15,
+  "semantic_clusters": {
+    "math": [
+      "add", "plus", "sum", "subtract", "minus", "difference",
+      "multiply", "times", "product", "divide", "divided", "ratio",
+      "calculate", "compute", "solve", "equation", "fraction",
+      "percent", "percentage", "algebra", "eval"
+    ],
+    "tool": [
+      "search", "lookup", "google", "web",
+      "time", "clock", "date", "today", "current",
+      "run", "exec", "execute", "bash", "command",
+      "file", "read", "write", "cat"
+    ],
+    "code": [
+      "def", "function", "class", "return", "import",
+      "python", "script", "algorithm", "code", "loop",
+      "for", "while", "array", "list", "dict", "syntax"
+    ],
+    "poset": [
+      "faster", "slower", "taller", "shorter", "larger", "smaller",
+      "older", "younger", "heavier", "lighter", "better", "worse",
+      "fastest", "slowest", "tallest", "shortest", "highest", "lowest",
+      "extremum", "compare", "comparison"
+    ],
+    "physics": [
+      "simulate", "decay", "spoilage", "spoil", "rot", "rotting",
+      "browning", "oxidation", "temperature", "humidity", "moisture",
+      "freshness", "hours", "days", "half-life", "evolve"
+    ],
+    "chat": [
+      "hello", "hi", "hey", "greetings", "howdy", "morning", "evening",
+      "who", "what", "are", "you", "your", "name", "creator", "made",
+      "capabilities", "help", "thanks", "thank", "doing", "today",
+      "friend", "good"
+    ]
+  }
+}
