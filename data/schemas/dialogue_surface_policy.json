@@ -99,6 +99,15 @@
     "definition_part_of": "It is part of {target_article} {target}.",
     "definition_parts": "It consists of {parts}.",
     "definition_disjoint": "It is distinct from {disjoint}.",
-    "definition_attributes": "Its attributes include {attributes}."
+    "definition_attributes": "Its attributes include {attributes}.",
+    "tool_success_calculator": "The calculated result is {output}.",
+    "tool_success_python_repl": "Python execution output:\n{output}",
+    "tool_success_system_time": "The current time is {time} on {date} ({timezone}).",
+    "tool_success_web_search": "I found the following search results for '{query}':\n{results}",
+    "tool_success_file_reader": "Contents of {file_path}:\n{output}",
+    "tool_success_file_writer": "Successfully wrote {bytes_written} bytes to {file_path}.",
+    "tool_success_bash_executor": "Command output:\n{stdout}",
+    "tool_success_generic": "Tool '{tool_name}' executed successfully:\n{output}",
+    "tool_error": "I encountered an issue executing tool '{tool_name}': {error}"
   }
 }

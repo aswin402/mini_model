@@ -585,6 +585,22 @@ def cmd_interact(args: argparse.Namespace) -> None:
                     print(f"\n💬 LITTLE: {greeting_word.capitalize()}! {rem_social}\n")
                     continue
 
+            # Check action router for tool execution intents
+            tool_call = kernel.action_router.route(remainder)
+            if tool_call is not None:
+                exec_result = kernel.tool_executor.execute(tool_call)
+                kernel.tool_grounder.ground(exec_result)
+                if getattr(args, "thinking", False):
+                    print(
+                        f"\n🧭 Route: TOOL_ACTION ({tool_call.tool_name}) [SHA: {exec_result.verifiable_hash}]"
+                    )
+                    print(f"   ↳ Arguments: {tool_call.arguments}")
+                    print(f"   ↳ Elapsed: {exec_result.execution_time_ms:.2f}ms")
+                body = kernel.dialogue_surface.verbalize_tool_result(exec_result)
+                reply = kernel.dialogue_surface.compose_reply(greeting_word, body)
+                print(f"\n💬 LITTLE: {reply}\n")
+                continue
+
             # Semantic input enters through the cognitive kernel.
             outcome = kernel.process(remainder)
             if outcome.inference is not None:
@@ -716,6 +732,50 @@ def cmd_interact(args: argparse.Namespace) -> None:
                                 )
     finally:
         store.close()
+
+
+def cmd_tool(args: argparse.Namespace) -> None:
+    from little.actions import (
+        ActionPolicy,
+        ToolCall,
+        ToolDefinitionsPolicy,
+        ToolExecutor,
+    )
+
+    tool_policy = ToolDefinitionsPolicy.default()
+    action_policy = ActionPolicy.default()
+    executor = ToolExecutor(tool_policy=tool_policy, action_policy=action_policy)
+
+    if args.action == "list":
+        print("\n🔧 Registered Typed Tools:")
+        print(f"{'Tool Name':<16} {'Return Type':<12} {'Sandboxed':<10} {'Description'}")
+        print("-" * 75)
+        for name, tdef in tool_policy.tools.items():
+            sandboxed = "Yes" if tdef.sandboxed else "No"
+            print(f"{name:<16} {tdef.return_type:<12} {sandboxed:<10} {tdef.description}")
+        print()
+    elif args.action == "exec":
+        tool_name = args.name
+        if tool_name not in tool_policy.tools:
+            print(f"❌ Unknown tool '{tool_name}'. Available: {list(tool_policy.tools.keys())}")
+            sys.exit(1)
+        raw_args = {}
+        if getattr(args, "args", None):
+            try:
+                raw_args = json.loads(args.args)
+            except json.JSONDecodeError as ex:
+                print(f"❌ Invalid JSON arguments: {ex}")
+                sys.exit(1)
+        call = ToolCall(tool_name=tool_name, arguments=raw_args)
+        result = executor.execute(call)
+        print(f"\n⚙️  Tool Execution: {tool_name}")
+        print(f"   ↳ Success: {'✓' if result.success else '✗'}")
+        print(f"   ↳ Elapsed: {result.execution_time_ms:.2f}ms")
+        print(f"   ↳ SHA-256: {result.verifiable_hash}")
+        if result.success:
+            print(f"   ↳ Output:  {result.output}\n")
+        else:
+            print(f"   ↳ Error:   {result.error}\n")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -911,6 +971,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum triples to import",
     )
     p_import.set_defaults(func=cmd_import)
+
+    # tool
+    p_tool = subparsers.add_parser(
+        "tool",
+        parents=[db_parent],
+        help="Inspect and execute typed tools and action schemas",
+    )
+    p_tool_subs = p_tool.add_subparsers(dest="action", required=True)
+    p_tool_list = p_tool_subs.add_parser("list", help="List registered typed tools")
+    p_tool_list.set_defaults(func=cmd_tool)
+    p_tool_exec = p_tool_subs.add_parser("exec", help="Execute a typed tool")
+    p_tool_exec.add_argument("name", help="Name of the tool to execute")
+    p_tool_exec.add_argument("--args", default="{}", help="JSON dictionary of tool arguments")
+    p_tool_exec.set_defaults(func=cmd_tool)
 
     return parser
 

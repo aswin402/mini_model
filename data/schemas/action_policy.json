@@ -1,0 +1,51 @@
+{
+  "format": "little.action_policy.v1",
+  "intent_patterns": {
+    "calculator": [
+      "^calc(?:ulate)?\\s+(?P<expression>.+)$",
+      "^compute\\s+(?P<expression>.+)$",
+      "^what\\s+is\\s+(?P<expression>[0-9\\.\\+\\-\\*/\\^\\(\\)\\s]{3,})$"
+    ],
+    "python_repl": [
+      "^(?:run|exec(?:ute)?)\\s+python\\s*:?\\s*(?P<code>.+)$",
+      "^python\\s*:\\s*(?P<code>.+)$",
+      "^eval(?:uate)?\\s+python\\s*:?\\s*(?P<code>.+)$"
+    ],
+    "system_time": [
+      "^what(?:'s|\\s+is)\\s+the\\s+(?:current\\s+)?time\\??$",
+      "^what\\s+time\\s+is\\s+it\\??$",
+      "^what(?:'s|\\s+is)\\s+today(?:'s)?\\s+date\\??$",
+      "^current\\s+date(?:\\s+and\\s+time)?\\??$",
+      "^time\\??$"
+    ],
+    "web_search": [
+      "^search(?:\\s+for|\\s+the\\s+web\\s+for)?\\s+(?P<query>.+?)\\??$",
+      "^google\\s+(?P<query>.+?)\\??$",
+      "^lookup\\s+(?P<query>.+?)\\??$"
+    ],
+    "file_reader": [
+      "^read\\s+file\\s+(?P<file_path>[a-zA-Z0-9_\\-\\./]+)$",
+      "^view\\s+file\\s+(?P<file_path>[a-zA-Z0-9_\\-\\./]+)$",
+      "^cat\\s+(?P<file_path>[a-zA-Z0-9_\\-\\./]+)$"
+    ],
+    "file_writer": [
+      "^write\\s+to\\s+file\\s+(?P<file_path>[a-zA-Z0-9_\\-\\./]+)\\s*:\\s*(?P<content>.+)$"
+    ],
+    "bash_executor": [
+      "^(?:run|exec(?:ute)?)\\s+bash\\s*:?\\s*(?P<command>.+)$",
+      "^bash\\s*:\\s*(?P<command>.+)$"
+    ]
+  },
+  "allowed_bash_binaries": [
+    "echo",
+    "ls",
+    "cat",
+    "date",
+    "wc",
+    "git",
+    "pwd",
+    "whoami"
+  ],
+  "workspace_root_fallback": ".",
+  "max_execution_timeout_sec": 10.0
+}

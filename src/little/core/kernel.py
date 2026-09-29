@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from little.actions import (
+    ActionRouter,
+    ToolExecutionResult,
+    ToolExecutor,
+    ToolGroundingEngine,
+)
 from little.core.contracts import CandidateFrame, SourceType
 from little.core.models import BeliefStatus, InferenceResult, LearningResult
 from little.core.runtime_policy import RuntimePolicy
@@ -21,6 +27,7 @@ class KernelOutcome:
     mode: CognitiveMode
     learning: LearningResult | None = None
     inference: InferenceResult | None = None
+    tool_result: ToolExecutionResult | None = None
 
 
 class CognitiveKernel:
@@ -63,6 +70,9 @@ class CognitiveKernel:
         self.dialogue_surface = DialogueSurfaceEngine(
             policy=getattr(self.runtime_policy, "dialogue_surface", None)
         )
+        self.action_router = ActionRouter()
+        self.tool_executor = ToolExecutor()
+        self.tool_grounder = ToolGroundingEngine(memory_store=self.memory)
 
     def chat(self, text: str) -> str:
         """Conversational chat interface with warm, articulate English dialogue."""
@@ -76,6 +86,14 @@ class CognitiveKernel:
             if rem_social is not None:
                 return f"{greeting_word.capitalize()}! {rem_social}"
 
+        # Check action router for tool execution intents
+        tool_call = self.action_router.route(remainder)
+        if tool_call is not None:
+            exec_result = self.tool_executor.execute(tool_call)
+            self.tool_grounder.ground(exec_result)
+            body = self.dialogue_surface.verbalize_tool_result(exec_result)
+            return self.dialogue_surface.compose_reply(greeting_word, body)
+
         outcome = self.process(remainder)
 
         resolved_subj = None
@@ -84,7 +102,9 @@ class CognitiveKernel:
         if not resolved_subj:
             resolved_subj = self.learner.dialogue.get_salient_subject()
 
-        if outcome.inference is not None:
+        if outcome.tool_result is not None:
+            body = self.dialogue_surface.verbalize_tool_result(outcome.tool_result)
+        elif outcome.inference is not None:
             body = self.dialogue_surface.verbalize_inference(
                 outcome.inference,
                 query=remainder,
@@ -99,6 +119,22 @@ class CognitiveKernel:
         return self.dialogue_surface.compose_reply(greeting_word, body)
 
     def process(self, text: str, *, allow_learning: bool = True) -> KernelOutcome:
+        # Check action router first for tool invocations
+        tool_call = self.action_router.route(text)
+        if tool_call is not None:
+            exec_result = self.tool_executor.execute(tool_call)
+            self.tool_grounder.ground(exec_result)
+            return KernelOutcome(
+                frame=CandidateFrame(
+                    source_text=text,
+                    intent="action",
+                    confidence=1.0,
+                    source_type=SourceType.USER,
+                ),
+                mode=CognitiveMode.FAST,
+                tool_result=exec_result,
+            )
+
         frame = self.perception.perceive(
             text, memory=self.memory, context=self.learner.dialogue
         )

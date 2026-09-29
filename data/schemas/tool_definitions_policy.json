@@ -1,0 +1,127 @@
+{
+  "format": "little.tool_definitions_policy.v1",
+  "tools": [
+    {
+      "name": "calculator",
+      "description": "Evaluates exact mathematical expressions using rational CAS or math functions.",
+      "parameters": {
+        "expression": {
+          "type": "string",
+          "required": true,
+          "description": "Mathematical expression to evaluate, e.g. '14 * 28 + 5' or '(2/3) + (4/7)'"
+        }
+      },
+      "return_type": "number",
+      "sandboxed": true,
+      "timeout_seconds": 2.0
+    },
+    {
+      "name": "python_repl",
+      "description": "Executes Python code in an isolated sandbox and returns stdout, stderr, and the evaluated result.",
+      "parameters": {
+        "code": {
+          "type": "string",
+          "required": true,
+          "description": "Python code snippet or script to execute"
+        }
+      },
+      "return_type": "string",
+      "sandboxed": true,
+      "timeout_seconds": 5.0
+    },
+    {
+      "name": "system_time",
+      "description": "Returns the current system date, time, and timestamp in ISO format.",
+      "parameters": {
+        "timezone": {
+          "type": "string",
+          "required": false,
+          "default": "UTC",
+          "description": "Target timezone (defaults to UTC)"
+        }
+      },
+      "return_type": "dict",
+      "sandboxed": false,
+      "timeout_seconds": 1.0
+    },
+    {
+      "name": "web_search",
+      "description": "Searches external web sources or local search index and returns ranked structured results.",
+      "parameters": {
+        "query": {
+          "type": "string",
+          "required": true,
+          "description": "Search query string"
+        },
+        "max_results": {
+          "type": "int",
+          "required": false,
+          "default": 5,
+          "description": "Maximum number of search results to return"
+        }
+      },
+      "return_type": "list",
+      "sandboxed": true,
+      "timeout_seconds": 5.0
+    },
+    {
+      "name": "file_reader",
+      "description": "Safely reads text contents of a project file within authorized workspace boundaries.",
+      "parameters": {
+        "file_path": {
+          "type": "string",
+          "required": true,
+          "description": "Relative path to target file within workspace"
+        },
+        "max_bytes": {
+          "type": "int",
+          "required": false,
+          "default": 100000,
+          "description": "Maximum bytes to read"
+        }
+      },
+      "return_type": "string",
+      "sandboxed": true,
+      "timeout_seconds": 2.0
+    },
+    {
+      "name": "file_writer",
+      "description": "Safely writes or appends content to a local file within authorized workspace boundaries.",
+      "parameters": {
+        "file_path": {
+          "type": "string",
+          "required": true,
+          "description": "Relative path to target file"
+        },
+        "content": {
+          "type": "string",
+          "required": true,
+          "description": "Text content to write"
+        },
+        "append": {
+          "type": "bool",
+          "required": false,
+          "default": false,
+          "description": "Whether to append to existing file"
+        }
+      },
+      "return_type": "dict",
+      "sandboxed": true,
+      "timeout_seconds": 2.0
+    },
+    {
+      "name": "bash_executor",
+      "description": "Executes whitelisted non-destructive shell commands in a sandboxed subprocess.",
+      "parameters": {
+        "command": {
+          "type": "string",
+          "required": true,
+          "description": "Whitelisted shell command to run"
+        }
+      },
+      "return_type": "dict",
+      "sandboxed": true,
+      "timeout_seconds": 5.0
+    }
+  ]
+}

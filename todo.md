@@ -561,3 +561,23 @@ Implementation Plan: `docs/superpowers/plans/2026-09-22-mivi-spiderweb-thinking-
   - [x] Real-World Multi-Turn Simulation Suite:
     - Added `tests/integration/test_real_world_simulation_dialogue.py` covering 25 live cross-domain turns (astronomy, biology, algebra, posets, physics, identity, memory recall, UNKNOWN boundary)
     - Regression suite: 491/491 tests passed (100% pass rate)
+
+- [x] **Phase 15: Typed Action & Tool Core (Needle-Style Tool Execution & Pre/Post Invariant Verification)**
+  - [x] Externalized Policy Schemas (`tool_definitions_policy.json`, `action_policy.json`):
+    - Defined typed schemas for `calculator`, `python_repl`, `system_time`, `web_search`, `file_reader`, `file_writer`, `bash_executor`
+    - Configured intent patterns, argument types, sandboxing, and security whitelists
+  - [x] Pre-Dispatch Verification Gate (`src/little/actions/pre_dispatch_verifier.py`):
+    - Enforced $I_{\text{tool\_exists}}$, $I_{\text{param\_required}}$, $I_{\text{sort\_type}}$, and $I_{\text{security\_sandbox}}$ (preventing path traversal and unauthorized shell commands)
+  - [x] Sandboxed Tool Executor (`src/little/actions/tool_executor.py`):
+    - Deterministic execution of exact math CAS, sandboxed Python subprocesses, filesystem I/O, system time, and bash
+    - Generates SHA-256 verifiable execution hashes for provenance tracking
+  - [x] Action Router & Intent Dispatch (`src/little/actions/action_router.py`):
+    - Dispatches natural language conversational requests into typed `ToolCall` objects with argument type casting
+  - [x] Empirical Evidence Grounding ($I_{\text{ground}}$) (`src/little/actions/grounding.py`):
+    - Persists tool execution events and observation relations directly into SQLite memory
+  - [x] Dialogue Surface & CLI Integration (`dialogue_surface.py`, `main.py`):
+    - Added verbalizers for all tool outcomes and added CLI `little tool list` and `little tool exec <tool> [--args ...]`
+  - [x] Full Verification & Test Coverage:
+    - `tests/unit/test_actions_core.py` (5/5 passed)
+    - `tests/integration/test_tool_actions_chat_integration.py` (1/1 passed)
+    - Total regression test suite: 497/497 passed (100% pass rate)

@@ -7,6 +7,7 @@ into warm, articulate, human-like dialogue governed by externalized schemas.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from little.core.models import BeliefStatus, InferenceResult, LearningResult
 from little.language.dialogue_surface_policy import DialogueSurfacePolicy
@@ -472,3 +473,78 @@ class DialogueSurfaceEngine:
             return _clean(raw_ans)
 
         return _clean(raw_ans) if raw_ans else ""
+
+    def verbalize_tool_result(self, result: Any) -> str:
+        """Verbalize a ToolExecutionResult using externalized schema templates."""
+        tool_name = getattr(result, "tool_name", "tool")
+        success = getattr(result, "success", False)
+        output = getattr(result, "output", None)
+        error = getattr(result, "error", None)
+        args = getattr(result, "arguments", {})
+
+        if not success:
+            tpl = self.policy.get_template(
+                "tool_error", "I encountered an issue executing tool '{tool_name}': {error}"
+            )
+            return tpl.format(tool_name=tool_name, error=error or "Unknown error")
+
+        if tool_name == "calculator":
+            tpl = self.policy.get_template(
+                "tool_success_calculator", "The calculated result is {output}."
+            )
+            return tpl.format(output=output)
+
+        if tool_name == "python_repl":
+            tpl = self.policy.get_template(
+                "tool_success_python_repl", "Python execution output:\n{output}"
+            )
+            return tpl.format(output=output)
+
+        if tool_name == "system_time" and isinstance(output, dict):
+            tpl = self.policy.get_template(
+                "tool_success_system_time", "The current time is {time} on {date} ({timezone})."
+            )
+            return tpl.format(
+                time=output.get("time", ""),
+                date=output.get("date", ""),
+                timezone=output.get("timezone", "UTC"),
+            )
+
+        if tool_name == "web_search" and isinstance(output, list):
+            tpl = self.policy.get_template(
+                "tool_success_web_search", "I found the following search results for '{query}':\n{results}"
+            )
+            res_lines = [
+                f"- {item.get('title')}: {item.get('snippet')}"
+                for item in output
+                if isinstance(item, dict)
+            ]
+            query_val = args.get("query", "")
+            return tpl.format(query=query_val, results="\n".join(res_lines))
+
+        if tool_name == "file_reader":
+            tpl = self.policy.get_template(
+                "tool_success_file_reader", "Contents of {file_path}:\n{output}"
+            )
+            return tpl.format(file_path=args.get("file_path", ""), output=output)
+
+        if tool_name == "file_writer" and isinstance(output, dict):
+            tpl = self.policy.get_template(
+                "tool_success_file_writer", "Successfully wrote {bytes_written} bytes to {file_path}."
+            )
+            return tpl.format(
+                bytes_written=output.get("bytes_written", 0),
+                file_path=output.get("file_path", ""),
+            )
+
+        if tool_name == "bash_executor" and isinstance(output, dict):
+            tpl = self.policy.get_template(
+                "tool_success_bash_executor", "Command output:\n{stdout}"
+            )
+            return tpl.format(stdout=output.get("stdout", ""))
+
+        tpl = self.policy.get_template(
+            "tool_success_generic", "Tool '{tool_name}' executed successfully:\n{output}"
+        )
+        return tpl.format(tool_name=tool_name, output=output)
+
