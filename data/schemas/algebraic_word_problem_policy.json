@@ -1,0 +1,61 @@
+{
+  "format": "little.algebraic_word_problem_policy.v1",
+  "multipliers": {
+    "twice": 2,
+    "thrice": 3,
+    "triple": 3,
+    "double": 2,
+    "half": 0.5,
+    "two times": 2,
+    "three times": 3,
+    "four times": 4,
+    "five times": 5
+  },
+  "positive_offsets": [
+    "more than",
+    "older than",
+    "heavier than",
+    "longer than",
+    "greater than",
+    "exceeds",
+    "taller than",
+    "higher than"
+  ],
+  "negative_offsets": [
+    "less than",
+    "younger than",
+    "lighter than",
+    "shorter than",
+    "fewer than",
+    "lower than"
+  ],
+  "temporal_shifts": {
+    "future_regex": "(?:in\\s+(\\d+)\\s+years?(?:\\s+(?:time|from\\s+now))?|(\\d+)\\s+years?\\s+(?:from\\s+now|later|in\\s+the\\s+future))",
+    "past_regex": "(\\d+)\\s+years?\\s+(?:ago|earlier|before)"
+  },
+  "sum_keywords": [
+    "sum of their ages",
+    "sum of the ages",
+    "combined age",
+    "total age",
+    "together",
+    "in total",
+    "sum is",
+    "sum will be",
+    "sum was"
+  ],
+  "question_patterns": {
+    "age": "^(?:how\\s+old\\s+is\\s+([a-zA-Z0-9_]+)|what\\s+is\\s+(?:the\\s+age\\s+of\\s+)?([a-zA-Z0-9_]+)(?:'s\\s+age)?)\\??$",
+    "cost": "^(?:what\\s+is\\s+the\\s+(?:cost|price)\\s+of\\s+(?:a|an|the)?\\s*([a-zA-Z0-9_]+)|how\\s+much\\s+(?:does|is)\\s+(?:a|an|the)?\\s*([a-zA-Z0-9_]+)(?:\\s+cost)?)\\??$",
+    "quantity": "^how\\s+many\\s+([a-zA-Z0-9_]+)(?:\\s+(?:does\\s+[a-zA-Z0-9_]+\\s+have|are\\s+there))?\\??$"
+  },
+  "templates": {
+    "trace_header": "Algebraic Word Problem (<math_trace>):",
+    "variable_def": "  Variable: {var} = {meaning}",
+    "equation_def": "  Constraint {index}: {formula}",
+    "cramer_solution": "  Exact Solution via Cramer's Rule: {var} = {val}",
+    "age_answer": "{entity} is {val} years old.",
+    "cost_answer": "The cost of a {entity} is ${val}.",
+    "quantity_answer": "There are {val} {entity}."
+  }
+}

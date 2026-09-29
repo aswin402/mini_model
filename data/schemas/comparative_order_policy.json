@@ -1,0 +1,76 @@
+{
+  "format": "little.comparative_order_policy.v1",
+  "dimensions": [
+    {
+      "dimension": "height",
+      "positive_comparatives": ["taller"],
+      "negative_comparatives": ["shorter"],
+      "positive_superlatives": ["tallest"],
+      "negative_superlatives": ["shortest"],
+      "noun": "height"
+    },
+    {
+      "dimension": "age",
+      "positive_comparatives": ["older"],
+      "negative_comparatives": ["younger"],
+      "positive_superlatives": ["oldest"],
+      "negative_superlatives": ["youngest"],
+      "noun": "age"
+    },
+    {
+      "dimension": "speed",
+      "positive_comparatives": ["faster", "quicker"],
+      "negative_comparatives": ["slower"],
+      "positive_superlatives": ["fastest", "quickest"],
+      "negative_superlatives": ["slowest"],
+      "noun": "speed"
+    },
+    {
+      "dimension": "weight",
+      "positive_comparatives": ["heavier"],
+      "negative_comparatives": ["lighter"],
+      "positive_superlatives": ["heaviest"],
+      "negative_superlatives": ["lightest"],
+      "noun": "weight"
+    },
+    {
+      "dimension": "cost",
+      "positive_comparatives": ["more expensive", "pricier"],
+      "negative_comparatives": ["cheaper", "less expensive"],
+      "positive_superlatives": ["most expensive", "priciest"],
+      "negative_superlatives": ["cheapest", "least expensive"],
+      "noun": "price"
+    },
+    {
+      "dimension": "size",
+      "positive_comparatives": ["bigger", "larger"],
+      "negative_comparatives": ["smaller"],
+      "positive_superlatives": ["biggest", "largest"],
+      "negative_superlatives": ["smallest"],
+      "noun": "size"
+    },
+    {
+      "dimension": "strength",
+      "positive_comparatives": ["stronger"],
+      "negative_comparatives": ["weaker"],
+      "positive_superlatives": ["strongest"],
+      "negative_superlatives": ["weakest"],
+      "noun": "strength"
+    }
+  ],
+  "question_patterns": {
+    "extremum": "^(?:who|which)\\s+is\\s+(?:the\\s+)?([a-z\\s]+)\\??$",
+    "transitive": "^is\\s+(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_]+)\\s+([a-z]+(?:\\s+[a-z]+)?)\\s+than\\s+(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_]+)\\??$"
+  },
+  "statement_patterns": [
+    "^(?:(?:consider|given|suppose)\\s+that\\s+)?(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_]+)\\s+is\\s+([a-z]+(?:\\s+[a-z]+)?)\\s+than\\s+(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_]+)$"
+  ],
+  "templates": {
+    "transitive_affirmation": "Yes. {trace}",
+    "transitive_step": "{a} is {comp} than {b}",
+    "refutation": "No. In fact, {b} is {comp} than {a}.",
+    "extremum_result": "{entity} is the {superlative} ({chain}).",
+    "unknown": "It is unknown whether {a} is {comp} than {b} from the given premises.",
+    "cycle_contradiction": "Contradiction detected: {a} cannot be simultaneously {comp_pos} and {comp_neg} than {b}."
+  }
+}

@@ -159,6 +159,8 @@ class ThinkingController:
 
         if parsed is None:
             from little.dynamics.counterfactual_policy import CounterfactualPolicy
+            from little.language.comparative import ComparativeOrderReasoner
+            from little.procedural.math_story import MathStorySolver
 
             cf_prefixes = CounterfactualPolicy.default().counterfactual_prefixes
             if (
@@ -170,6 +172,24 @@ class ThinkingController:
                     mode=CognitiveMode.FAST,
                     reason="Counterfactual dynamics query has a specialized simulation resolver.",
                 )
+
+            if MathStorySolver().is_math_story(clean_question):
+                return QueryPlan(
+                    question=clean_question,
+                    mode=CognitiveMode.FAST,
+                    reason="Math story problem has a specialized algebraic/arithmetic solver.",
+                )
+
+            if (
+                ComparativeOrderReasoner(self.memory).evaluate_text(clean_question)
+                is not None
+            ):
+                return QueryPlan(
+                    question=clean_question,
+                    mode=CognitiveMode.FAST,
+                    reason="Comparative order query has a specialized poset reasoner.",
+                )
+
             return QueryPlan(
                 question=clean_question,
                 mode=CognitiveMode.ASK,
@@ -384,8 +404,51 @@ class ThinkingController:
             or plan.target == "?"
             or plan.subject == "?"
         ):
-            inference = self._unknown_result(
-                plan, "This query requires a specialized resolver.")
+            from little.language.comparative import ComparativeOrderReasoner
+            from little.procedural.math_story import MathStorySolver
+
+            story_solver = MathStorySolver(unit_policy=self.runtime_policy.units)
+            if story_solver.is_math_story(plan.question):
+                sol = story_solver.solve_story(plan.question)
+                if sol and sol.status == "SOLVED":
+                    inference = InferenceResult(
+                        query=plan.question,
+                        status=BeliefStatus.SUPPORTED,
+                        answer=sol.result,
+                        confidence=self.parser.POLICY.confidence.certain,
+                        evidence=[f"<math_trace>\n{sol.verbalize()}\n</math_trace>"],
+                        trace=sol.steps,
+                    )
+                else:
+                    inference = self._unknown_result(
+                        plan, "Math solver could not resolve."
+                    )
+            else:
+                comp_reasoner = ComparativeOrderReasoner(self.memory)
+                comp_ans = comp_reasoner.evaluate_text(plan.question)
+                if comp_ans is not None:
+                    status = (
+                        BeliefStatus.REFUTED
+                        if comp_ans.startswith("No.")
+                        else BeliefStatus.UNKNOWN
+                        if (
+                            comp_ans.startswith("It is unknown")
+                            or "incomplete information" in comp_ans
+                            or "Contradiction detected" in comp_ans
+                        )
+                        else BeliefStatus.SUPPORTED
+                    )
+                    inference = InferenceResult(
+                        query=plan.question,
+                        status=status,
+                        answer=comp_ans,
+                        confidence=self.parser.POLICY.confidence.certain,
+                        evidence=[comp_ans],
+                    )
+                else:
+                    inference = self._unknown_result(
+                        plan, "This query requires a specialized resolver."
+                    )
         else:
             inference = self.inference.infer(
                 plan.subject, plan.predicate, plan.target

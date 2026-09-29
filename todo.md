@@ -482,3 +482,29 @@ Implementation Plan: `docs/superpowers/plans/2026-09-22-mivi-spiderweb-thinking-
     - `tests/unit/test_counterfactual_reasoning.py`
     - `tests/integration/test_socratic_counterfactual_chat.py`
 
+- [x] **Phase 11: Multi-Constraint Algebraic Word Problems & Comparative Order Reasoning (Math + English Synthesis)**
+  - [x] Externalized Policy Schemas & Data Models:
+    - `data/schemas/comparative_order_policy.json` (dimensions, comparative pairs, superlatives, statement & question patterns, proof templates)
+    - `data/schemas/algebraic_word_problem_policy.json` (multipliers, positive/negative offsets, temporal shifts, sum markers, question targets, `<math_trace>` templates)
+    - `data/schemas/relation_types.json` (registered comparative relations: `height_greater`, `age_greater`, `speed_greater`, `weight_greater`, `cost_greater`, `size_greater`, `strength_greater`, `depth_greater`)
+  - [x] Comparative Order & Strict Partial Order Reasoner (`src/little/language/comparative.py`, `src/little/language/comparative_policy.py`):
+    - Strict partial order poset DAG builder with dual-polarity normalization ($A > B \iff B < A$)
+    - Transitive multi-hop proof generator ("Yes. A is taller than M, and M is taller than B. Therefore, A is taller than B.")
+    - Direct and indirect refutation of inverted relations ("No. In fact, B is taller than A.")
+    - Topological root/sink superlative extremum queries ("Who is the tallest?", "Who is the shortest?")
+    - Cycle & contradiction detection preventing paradoxical assertions
+    - ACID SQLite persistent storage of comparative relations
+  - [x] Algebraic Word Problem Linear System Solver (`src/little/procedural/algebraic_word_problem.py`, `src/little/procedural/algebraic_word_problem_policy.py`):
+    - Age word problems with proportional multipliers and signed temporal shifts ($t \pm k$ years)
+    - Multi-entity coin, cost, and item linear combination problems
+    - Exact 2x2 linear matrix formulation solved symbolically via Cramer's rule in `SymbolicCAS`
+    - Transparent `<math_trace>` showing variable assignments, system constraints, determinants, and target answers
+  - [x] Seamless Natural Language Integration & Cognitive Routing:
+    - Integrated with `MathStorySolver.solve_story` and `LearningEngine.ask()`
+    - Routed through `ThinkingController` fast mode
+  - [x] Comprehensive Unit & Integration Tests:
+    - `tests/unit/test_comparative_reasoner.py` (4/4 passed)
+    - `tests/unit/test_algebraic_word_problems.py` (3/3 passed)
+    - `tests/integration/test_math_english_synthesis_chat.py` (4/4 passed)
+
+

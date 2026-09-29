@@ -7,10 +7,10 @@ proportional rates, and fractional partitions with verifiable <math_trace> outpu
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from fractions import Fraction
-from typing import Any, List, Optional, Tuple
 
+from little.procedural.algebraic_word_problem import AlgebraicWordProblemSolver
 from little.procedural.math_cas import MathSolution, SymbolicCAS, UnitConversionGraph
 from little.procedural.unit_conversion_policy import UnitConversionPolicy
 
@@ -29,10 +29,13 @@ class MathStorySolver:
     def __init__(self, unit_policy: UnitConversionPolicy | None = None) -> None:
         self.cas = SymbolicCAS()
         self.unit_graph = UnitConversionGraph(unit_policy)
+        self.algebraic_solver = AlgebraicWordProblemSolver()
 
     def is_math_story(self, text: str) -> bool:
         """Detect if input text constitutes a math story / word problem."""
         s = text.strip()
+        if self.algebraic_solver.is_algebraic_problem(s):
+            return True
         # Must contain numbers
         if not re.search(r"\b\d+(?:\.\d+)?\b", s):
             return False
@@ -40,9 +43,15 @@ class MathStorySolver:
         q_pattern = r"\b(?:how many|how much|how far|what is the total|how many .* left|how much .* left)\b"
         return bool(re.search(q_pattern, s, re.IGNORECASE))
 
-    def solve_story(self, text: str) -> Optional[MathSolution]:
+    def solve_story(self, text: str) -> MathSolution | None:
         """Parse story problem, track quantity state transitions, and return exact MathSolution."""
         clean = text.strip()
+
+        # 0. Algebraic linear systems (age problems, cost systems, etc.)
+        if self.algebraic_solver.is_algebraic_problem(clean):
+            alg_sol = self.algebraic_solver.solve(clean)
+            if alg_sol:
+                return alg_sol
 
         # 1. Rate * Time problem: e.g. "travels at 60 km/h for 3 hours. How far does..."
         m_rate = re.search(
@@ -68,10 +77,10 @@ class MathStorySolver:
             dist = speed_kmh * time_hrs
             dist_res = int(dist) if dist.is_integer() else round(dist, 2)
             steps = [
-                f"Rate & Distance Problem:",
+                "Rate & Distance Problem:",
                 f"  Speed v = {speed} {speed_unit}",
                 f"  Time t = {time_val} {time_unit} (= {time_hrs} hours)",
-                f"  Formula: Distance d = v * t",
+                "  Formula: Distance d = v * t",
                 f"  Normalized speed: {speed_kmh} km/h",
                 f"  Calculation: {speed_kmh} * {time_hrs} = {dist_res} km",
             ]
@@ -124,7 +133,7 @@ class MathStorySolver:
             if s.strip()
         ]
 
-        current_val: Optional[float] = None
+        current_val: float | None = None
         item_name = "items"
         steps: list[str] = ["Sequential State Tracking:"]
 

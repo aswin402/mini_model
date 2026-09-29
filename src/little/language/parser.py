@@ -1311,6 +1311,33 @@ class LearningEngine:
         if cf_res is not None:
             return cf_res
 
+        # 0c. Check for comparative ordering and poset queries
+        parsed_std = parsed_query or self.parser.parse_question(question)
+        if not (parsed_std and parsed_std[1] == "larger_than"):
+            from little.language.comparative import ComparativeOrderReasoner
+
+            comp_reasoner = ComparativeOrderReasoner(self.memory)
+            comp_ans = comp_reasoner.evaluate_text(question)
+            if comp_ans is not None:
+                status = (
+                    BeliefStatus.REFUTED
+                    if comp_ans.startswith("No.")
+                    else BeliefStatus.UNKNOWN
+                    if (
+                        comp_ans.startswith("It is unknown")
+                        or "incomplete information" in comp_ans
+                        or "Contradiction detected" in comp_ans
+                    )
+                    else BeliefStatus.SUPPORTED
+                )
+                return InferenceResult(
+                    query=question,
+                    status=status,
+                    answer=comp_ans,
+                    confidence=self.parser.POLICY.confidence.certain,
+                    evidence=[comp_ans],
+                )
+
         # 0. Check for compound / conjoined questions: e.g. "Can an eagle fly and does it have wings?"
         q_clean = question.strip()
         sub_questions: list[str] = []
