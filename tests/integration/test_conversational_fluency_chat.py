@@ -71,3 +71,46 @@ def test_multi_turn_conversational_english_chat():
     # Turn 12: Farewell
     turn12 = kernel.chat("Goodbye!")
     assert "goodbye" in turn12.lower() or "safely preserved" in turn12.lower()
+
+
+def test_multi_turn_anaphora_and_concept_summarization():
+    """Verify discourse anaphora resolution, concept summaries, creator identity, and memory recall."""
+    store = MemoryStore(":memory:", seed_ontology=True)
+    kernel = CognitiveKernel(store)
+
+    # 1. Learning with pronouns
+    kernel.chat("A cheetah is a mammal. Cheetahs can run fast.")
+    turn_pronoun1 = kernel.chat("Can it run fast?")
+    assert "cheetah can certainly run fast" in turn_pronoun1.lower()
+
+    turn_pronoun2 = kernel.chat("Is it an animal?")
+    assert "cheetah is indeed an animal" in turn_pronoun2.lower()
+
+    turn_pronoun3 = kernel.chat("Can it fly?")
+    assert "cheetah cannot fly" in turn_pronoun3.lower()
+
+    # 2. Concept Summarization & Definition Verbalization
+    turn_summary = kernel.chat("Summarize cheetah.")
+    assert "cheetah is a mammal" in turn_summary.lower()
+
+    turn_bird_summary = kernel.chat("What do you know about bird?")
+    assert "bird is a vertebrate" in turn_bird_summary.lower()
+    assert "feather" in turn_bird_summary.lower()
+    assert "mammal" in turn_bird_summary.lower()
+
+    # 3. Creator & Capabilities
+    turn_creator = kernel.chat("Who created you?")
+    assert "LITTLE (MIVI)" in turn_creator
+    assert "neuro-symbolic" in turn_creator.lower()
+
+    turn_caps = kernel.chat("What can you do?")
+    assert "deductive" in turn_caps.lower() or "learn" in turn_caps.lower()
+
+    # 4. User profile name introduction and recall
+    turn_intro = kernel.chat("My name is Aswin.")
+    assert "Aswin" in turn_intro
+    assert "recorded" in turn_intro.lower() or "nice to meet you" in turn_intro.lower()
+
+    turn_recall = kernel.chat("Do you remember my name?")
+    assert "Aswin" in turn_recall
+

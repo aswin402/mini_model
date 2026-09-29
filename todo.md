@@ -529,4 +529,21 @@ Implementation Plan: `docs/superpowers/plans/2026-09-22-mivi-spiderweb-thinking-
     - `tests/integration/test_conversational_fluency_chat.py` (1/1 passed, 12 multi-turn interactions)
     - Total regression suite: 485/485 passed (100%)
 
+- [x] **Phase 13: Multi-Turn Discourse Anaphora, Pronoun Coreference & Conversational Concept Summarization**
+  - [x] Externalized Policy Schemas (`dialogue_surface_policy.json`, `parser_definition_policy.json`, `parser_question_policy.json`):
+    - Added `creator` and `capabilities` social intents
+    - Added definition verbalizer templates (`definition_taxonomy`, `definition_has`, `definition_part_of`, `definition_parts`, `definition_disjoint`, `definition_attributes`)
+    - Extended definition routing with `what_do_you_know_about`, `summarize`, and `describe` with flexible punctuation stripping
+    - Broadened `user_name` memory recall ("Do you remember my name?", "Do you know who I am?") and `identity_name`
+  - [x] Dialogue Context & Anaphora Engine (`src/little/language/dialogue.py`):
+    - Multi-turn pronoun co-reference resolution for `it` and generic plural `they` prioritizing salient subject antecedents
+  - [x] Conversational Verbalizer & Surface Engine (`src/little/language/dialogue_surface.py`):
+    - Implemented `verbalize_concept_definition` to convert semi-colon separated knowledge graph records into warm, flowing English paragraphs
+    - Pronoun replacement in `verbalize_inference` substituting pronouns (`it`, `they`, `he`, `she`) with resolved concept antecedents
+    - Natural textual answers for self/user identity without awkward prefixes
+  - [x] Full Verification & Test Coverage:
+    - `tests/integration/test_conversational_fluency_chat.py` (2/2 passed)
+    - Full regression test suite: 487/487 passed (100% pass rate)
+
+
 

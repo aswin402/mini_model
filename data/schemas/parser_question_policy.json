@@ -15,13 +15,13 @@
     },
     {
       "name": "user_name",
-      "pattern": "^(?:what\\s+is\\s+my\\s+name|what['’]s\\s+my\\s+name|who\\s+am\\s+i|do\\s+you\\s+know\\s+my\\s+name|tell\\s+me\\s+my\\s+name)$",
+      "pattern": "^(?:what\\s+is\\s+my\\s+name|what['’]s\\s+my\\s+name|who\\s+am\\s+i|do\\s+you\\s+(?:know|remember)\\s+my\\s+name|do\\s+you\\s+know\\s+who\\s+i\\s+am|tell\\s+me\\s+my\\s+name)$",
       "subject": "user",
       "predicate": "__user_name__"
     },
     {
       "name": "identity_name",
-      "pattern": "^(?:what\\s+is\\s+(?:your|ur|you)\\s+name|what['’]s\\s+(?:your|ur|you)\\s+name|tell\\s+me\\s+(?:your|ur|you)\\s+name)$",
+      "pattern": "^(?:what\\s+is\\s+(?:your|ur|you)\\s+name|what['’]s\\s+(?:your|ur|you)\\s+name|tell\\s+me\\s+(?:your|ur|you)\\s+name|do\\s+you\\s+have\\s+a\\s+name)$",
       "subject": "little",
       "predicate": "__identity_name__"
     },

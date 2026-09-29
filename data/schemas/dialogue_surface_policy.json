@@ -56,6 +56,22 @@
         "Thank you! I strive for rigorous reasoning and continuous learning.",
         "I appreciate the feedback! Always glad to be helpful and accurate."
       ]
+    },
+    "creator": {
+      "patterns": [
+        "^(?:who\\s+(?:created|made|built|developed|designed)\\s+you|who\\s+is\\s+your\\s+creator)[?!.]?$"
+      ],
+      "responses": [
+        "I was designed and developed as LITTLE (MIVI), an open-world neuro-symbolic cognitive architecture that reasons without hallucinations."
+      ]
+    },
+    "capabilities": {
+      "patterns": [
+        "^(?:what\\s+can\\s+you\\s+do|what\\s+are\\s+your\\s+capabilities|how\\s+can\\s+you\\s+help(?:\\s+me)?|help)[?!.]?$"
+      ],
+      "responses": [
+        "I can learn new facts continuously from conversation, perform deductive multi-hop reasoning, solve algebraic word problems, simulate physical dynamics over time, compare orders, and verify logic without hallucination."
+      ]
     }
   },
   "mixed_intent_splitter": {
@@ -76,6 +92,12 @@
     "learning_confirmation": "Got it! I've learned that {summary}.",
     "mixed_greeting_response": "{greeting_reply} {body}",
     "conjoined_separator": ", and ",
-    "conjoined_contrast": ", but "
+    "conjoined_contrast": ", but ",
+    "definition_taxonomy": "{subject_article} {subject} is {taxonomy}.",
+    "definition_has": "It has {features}.",
+    "definition_part_of": "It is part of {target_article} {target}.",
+    "definition_parts": "It consists of {parts}.",
+    "definition_disjoint": "It is distinct from {disjoint}.",
+    "definition_attributes": "Its attributes include {attributes}."
   }
 }

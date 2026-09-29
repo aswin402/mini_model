@@ -3,14 +3,21 @@
   "patterns": [
     {
       "name": "what_or_who_is",
-      "pattern": "^(?:what|who)\\s+(?:is|are)\\s+(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_\\s-]+)$",
+      "pattern": "^(?:what|who)\\s+(?:is|are)\\s+(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_\\s-]+)[?.!]*$",
       "predicate": "__definition__",
       "subject_group": 1,
       "exclude_non_concept": true
     },
     {
       "name": "tell_about",
-      "pattern": "^tell\\s+me\\s+about\\s+(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_\\s-]+)$",
+      "pattern": "^tell\\s+me\\s+about\\s+(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_\\s-]+)[?.!]*$",
+      "predicate": "__definition__",
+      "subject_group": 1,
+      "exclude_non_concept": true
+    },
+    {
+      "name": "what_do_you_know_about",
+      "pattern": "^(?:what\\s+do\\s+you\\s+know\\s+about|what\\s+can\\s+you\\s+tell\\s+me\\s+about|describe|explain|summarize)\\s+(?:(?:a|an|the)\\s+)?([a-zA-Z0-9_\\s-]+)[?.!]*$",
       "predicate": "__definition__",
       "subject_group": 1,
       "exclude_non_concept": true

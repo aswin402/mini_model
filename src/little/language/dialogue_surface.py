@@ -81,9 +81,82 @@ class DialogueSurfaceEngine:
         )
         return tpl.format(summary=clean_text)
 
-    def verbalize_inference(self, inference: InferenceResult, query: str = "") -> str:
+    def _format_conjoined(self, items: list[str], conj: str = "and") -> str:
+        """Join a list of items into a natural English conjoined phrase."""
+        clean = [item.strip() for item in items if item.strip()]
+        if not clean:
+            return ""
+        if len(clean) == 1:
+            return clean[0]
+        if len(clean) == 2:
+            return f"{clean[0]} {conj} {clean[1]}"
+        sep = self.policy.get_template("conjoined_separator", ", and ") if conj == "and" else f", {conj} "
+        return f"{', '.join(clean[:-1])}{sep}{clean[-1]}"
+
+    def verbalize_concept_definition(self, text: str) -> str:
+        """Render a raw semi-colon separated definition into warm, flowing English prose."""
+        parts = [p.strip().rstrip(".") for p in text.split(";") if p.strip()]
+        if not parts:
+            return text
+
+        first = parts[0]
+        m = re.match(r"^([a-zA-Z0-9_\s-]+?)\s+(is(?:\s+a)?\s+.+)$", first, re.IGNORECASE)
+        if not m:
+            return text
+
+        subj = m.group(1).strip()
+        subj_clean = subj.lower()
+        subj_art = self._article(subj_clean, capitalize=True)
+        sentences: list[str] = []
+
+        tax_raw = m.group(2).strip().rstrip(".")
+        raw_items = [re.sub(r"^(?:is\s+(?:a\s+)?)", "", item).strip() for item in tax_raw.split(",")]
+        tax_items = [f"{self._article(item)} {item}" for item in raw_items if item]
+        if tax_items:
+            tax_str = self._format_conjoined(tax_items)
+            tpl_tax = self.policy.get_template("definition_taxonomy", "{subject_article} {subject} is {taxonomy}.")
+            sentences.append(tpl_tax.format(subject_article=subj_art, subject=subj_clean, taxonomy=tax_str))
+
+        for part in parts[1:]:
+            p_strip = part.strip()
+            if p_strip.startswith("has "):
+                items = [it.strip() for it in p_strip[4:].split(",") if it.strip()]
+                if items:
+                    f_str = self._format_conjoined(items)
+                    tpl_has = self.policy.get_template("definition_has", "It has {features}.")
+                    sentences.append(tpl_has.format(features=f_str))
+            elif p_strip.startswith("is part of "):
+                target = p_strip[11:].strip()
+                tpl_po = self.policy.get_template("definition_part_of", "It is part of {target_article} {target}.")
+                sentences.append(tpl_po.format(target_article=self._article(target), target=target))
+            elif p_strip.startswith("consists of parts:"):
+                items = [it.strip() for it in p_strip[18:].split(",") if it.strip()]
+                if items:
+                    f_str = self._format_conjoined(items)
+                    tpl_parts = self.policy.get_template("definition_parts", "It consists of {parts}.")
+                    sentences.append(tpl_parts.format(parts=f_str))
+            elif p_strip.startswith(("is not a ", "is not ")):
+                raw_disj = re.sub(r"^is\s+not\s+(?:a\s+)?", "", p_strip).strip()
+                items = [it.strip() for it in raw_disj.split(",") if it.strip()]
+                if items:
+                    f_str = self._format_conjoined(items)
+                    tpl_disj = self.policy.get_template("definition_disjoint", "It is distinct from {disjoint}.")
+                    sentences.append(tpl_disj.format(disjoint=f_str))
+            elif p_strip.startswith("attributes:"):
+                tpl_attr = self.policy.get_template("definition_attributes", "Its attributes include {attributes}.")
+                sentences.append(tpl_attr.format(attributes=p_strip[11:].strip()))
+
+        return " ".join(sentences)
+
+    def verbalize_inference(
+        self,
+        inference: InferenceResult,
+        query: str = "",
+        resolved_subject: str | None = None,
+    ) -> str:
         """Render formal InferenceResult into fluent conversational English."""
         raw_ans = str(inference.answer) if inference.answer is not None else ""
+        pronouns = {"it", "they", "this", "that", "he", "she"}
 
         # 1. Custom traces & multi-step solutions (Socratic syllogisms, CAS math traces, ODE simulations, posets)
         if (
@@ -99,6 +172,20 @@ class DialogueSurfaceEngine:
         ):
             return raw_ans
 
+        # 1b. Concept definitions (knowledge graph summaries and definition retrievals)
+        if (
+            not raw_ans.startswith("Deductive Proof:")
+            and not raw_ans.startswith("Yes")
+            and not raw_ans.startswith("No")
+            and (
+                ";" in raw_ans
+                or any("Retrieved concept definition for" in str(e) for e in inference.evidence)
+            )
+        ):
+            verbalized_def = self.verbalize_concept_definition(raw_ans)
+            if verbalized_def:
+                return verbalized_def
+
         # 2. Epistemic Unknown (Honest admissions with conversational invitation)
         if inference.status == BeliefStatus.UNKNOWN:
             m_subj = re.search(
@@ -107,6 +194,8 @@ class DialogueSurfaceEngine:
                 re.IGNORECASE,
             )
             subject = m_subj.group(1).strip() if m_subj else "that concept"
+            if subject.lower() in pronouns and resolved_subject:
+                subject = resolved_subject
             tpl = self.policy.get_template(
                 "epistemic_unknown",
                 "I don't have that information in my memory yet. Could you tell me more about {subject}?",
@@ -123,6 +212,8 @@ class DialogueSurfaceEngine:
             if m_tax:
                 s_name = m_tax.group(1).strip()
                 t_name = m_tax.group(2).strip()
+                if s_name.lower() in pronouns and resolved_subject:
+                    s_name = resolved_subject
                 tpl = self.policy.get_template(
                     "refuted_taxonomy", "No, {subject_article} {subject} is not {target_article} {target}."
                 )
@@ -140,6 +231,8 @@ class DialogueSurfaceEngine:
             if m_can:
                 s_name = m_can.group(1).strip()
                 action = m_can.group(2).strip()
+                if s_name.lower() in pronouns and resolved_subject:
+                    s_name = resolved_subject
                 tpl = self.policy.get_template(
                     "refuted_capability", "No, {subject} cannot {action}."
                 )
@@ -153,6 +246,8 @@ class DialogueSurfaceEngine:
             if m_has:
                 s_name = m_has.group(1).strip()
                 feature = m_has.group(2).strip()
+                if s_name.lower() in pronouns and resolved_subject:
+                    s_name = resolved_subject
                 tpl = self.policy.get_template(
                     "refuted_feature", "No, {subject_article} {subject} does not have {target}."
                 )
@@ -177,6 +272,8 @@ class DialogueSurfaceEngine:
                 if m_can:
                     s_name = m_can.group(1).strip()
                     action = m_can.group(2).strip()
+                    if s_name.lower() in pronouns and resolved_subject:
+                        s_name = resolved_subject
                     tpl = self.policy.get_template(
                         "affirmative_capability", "Yes, {subject} can certainly {action}."
                     )
@@ -190,6 +287,8 @@ class DialogueSurfaceEngine:
                 if m_tax:
                     s_name = m_tax.group(1).strip()
                     t_name = m_tax.group(2).strip()
+                    if s_name.lower() in pronouns and resolved_subject:
+                        s_name = resolved_subject
                     tpl = self.policy.get_template(
                         "affirmative_taxonomy",
                         "Yes, {subject_article} {subject} is indeed {target_article} {target}.",
@@ -209,6 +308,8 @@ class DialogueSurfaceEngine:
                 if m_has:
                     s_name = m_has.group(1).strip()
                     feature = m_has.group(2).strip()
+                    if s_name.lower() in pronouns and resolved_subject:
+                        s_name = resolved_subject
                     tpl = self.policy.get_template(
                         "affirmative_feature",
                         "Yes, {subject_article} {subject} has {target}.",
@@ -223,9 +324,15 @@ class DialogueSurfaceEngine:
                     "affirmative_general", "Yes, that is correct."
                 )
 
-            # Property (e.g. color: "Based on my knowledge, that is red.")
+            # Property / Textual answers
             if isinstance(inference.answer, str):
-                if raw_ans.startswith(("A ", "An ", "Because ")) or " lives in " in raw_ans or " is a " in raw_ans or " is located in " in raw_ans:
+                if (
+                    raw_ans.startswith(("A ", "An ", "Because ", "Here is ", "Your ", "You are ", "I am "))
+                    or " lives in " in raw_ans
+                    or " is a " in raw_ans
+                    or " is located in " in raw_ans
+                    or raw_ans.endswith((".", "!"))
+                ):
                     return raw_ans
                 if not raw_ans.startswith(("Yes", "No")):
                     return f"Based on my knowledge, that is {raw_ans}."

@@ -735,6 +735,10 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
     ) -> tuple[str, str, Any] | None:
         """Extract (subject, predicate, target) from natural English questions."""
         q = cls.normalize_text(text).rstrip("?").strip()
+        if q.endswith("."):
+            q = q[:-1].strip()
+        elif q.endswith("!") and not re.search(r"\d+!$", q):
+            q = q[:-1].strip()
 
         for pattern in cls._question_prefix_patterns().patterns:
             if pattern.strategy != "prefix_delegate":
@@ -1125,7 +1129,14 @@ class LearningEngine:
                 parsed_queries=frame.parsed_queries,
                 question_parts=frame.question_parts,
             )
-            body = self.dialogue_surface.verbalize_inference(inf_res, query=remainder)
+            resolved_subj = (
+                frame.parsed_query[0]
+                if frame.parsed_query and isinstance(frame.parsed_query, tuple)
+                else self.dialogue.get_salient_subject()
+            )
+            body = self.dialogue_surface.verbalize_inference(
+                inf_res, query=remainder, resolved_subject=resolved_subj
+            )
 
         return self.dialogue_surface.compose_reply(greeting_word, body)
 

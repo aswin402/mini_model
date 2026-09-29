@@ -151,9 +151,16 @@ class DialogueContext:
             for e in reversed(self.entity_stack):
                 if e.is_plural:
                     return e.name
-            # Fallback to collective set if multiple entities exist in last turn
-            if self.turns and len(self.turns[-1].entities) >= 2:
-                return self.turns[-1].entities[-1]
+            # Fallback to salient subject for generic plural or collective reference
+            if self.active_subject:
+                return self.active_subject
+            for e in reversed(self.entity_stack):
+                if e.role == "subject":
+                    return e.name
+            if self.turns and self.turns[-1].entities:
+                return self.turns[-1].entities[0]
+            if self.entity_stack:
+                return self.entity_stack[-1].name
             return None
 
         # 3. Person-specific pronouns: 'he', 'him', 'his', 'she', 'her'
