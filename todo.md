@@ -545,5 +545,19 @@ Implementation Plan: `docs/superpowers/plans/2026-09-22-mivi-spiderweb-thinking-
     - `tests/integration/test_conversational_fluency_chat.py` (2/2 passed)
     - Full regression test suite: 487/487 passed (100% pass rate)
 
-
-
+- [x] **Phase 14: 25-Turn Real-World Generalization, Strict Zero-Hallucination, and Cross-Domain Simulation**
+  - [x] Proportional Quantity Word Problems:
+    - Implemented `_solve_proportional_quantity_problem` in `src/little/procedural/algebraic_word_problem.py`
+    - Added `quantity_entity_answer` to `data/schemas/algebraic_word_problem_policy.json`
+  - [x] Proper Noun & Surface Grammar Hardening:
+    - Added proper noun casing restoration and indefinite article stripping in `DialogueSurfaceEngine._article` (`src/little/language/dialogue_surface.py`)
+    - Added multi-word entity greedy matching for comparative posets in `data/schemas/comparative_order_policy.json`
+  - [x] Celestial & Physical Relational Invariants:
+    - Registered `orbits` and `orbit` in `relation_types.json` and `semantic_predicate_policy.json` (`acyclic: false`)
+    - Added `affirmative_relation` verbalizer template in `dialogue_surface_policy.json`
+    - Wired base verb to 3sg transitive query mapping (`orbit` -> `orbits`) in `src/little/language/parser.py`
+  - [x] Continuous Physical Simulation Integration:
+    - Added `simulate` prefix to `counterfactual_policy.json` and extended regex in `counterfactual.py` for physical decay
+  - [x] Real-World Multi-Turn Simulation Suite:
+    - Added `tests/integration/test_real_world_simulation_dialogue.py` covering 25 live cross-domain turns (astronomy, biology, algebra, posets, physics, identity, memory recall, UNKNOWN boundary)
+    - Regression suite: 491/491 tests passed (100% pass rate)
