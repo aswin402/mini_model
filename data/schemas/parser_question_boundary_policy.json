@@ -1,0 +1,17 @@
+{
+  "format": "little.parser_question_boundary_policy.v1",
+  "patterns": [
+    {
+      "name": "question_mark",
+      "strategy": "question_mark",
+      "pattern": "\\?\\s*",
+      "case_insensitive": false
+    },
+    {
+      "name": "coordinated_question",
+      "strategy": "coordinated",
+      "pattern": ",?\\s+and\\s+(?=(?:is|are|was|were|do|does|did|can|could|will|would|has|have|what|who|where|how|why)\\b)",
+      "case_insensitive": true
+    }
+  ]
+}

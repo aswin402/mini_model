@@ -247,6 +247,65 @@ def test_numeric_tokenization_uses_injected_pattern(
     assert SimpleParser._parse_math_value("10 plus 20", "numbers") == [10, 20]
 
 
+def test_question_boundaries_do_not_use_hardcoded_fallback(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_question_boundary_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_question_boundary_policy.v1",
+                "patterns": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    text = "Can a bird fly? Does it have wings?"
+
+    assert SimpleParser.split_question_boundaries(text) == [text]
+
+
+def test_question_boundaries_use_injected_pattern(
+    tmp_path: Path, monkeypatch
+):
+    parser_payload = json.loads(
+        Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")
+    )
+    (tmp_path / "parser_policy.json").write_text(
+        json.dumps(parser_payload), encoding="utf-8"
+    )
+    (tmp_path / "parser_question_boundary_policy.json").write_text(
+        json.dumps(
+            {
+                "format": "little.parser_question_boundary_policy.v1",
+                "patterns": [
+                    {
+                        "name": "plus_question_boundary",
+                        "strategy": "coordinated",
+                        "pattern": r"\s+plus\s+(?=what\b)",
+                        "case_insensitive": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = ParserPolicy.load(tmp_path)
+    monkeypatch.setattr(SimpleParser, "POLICY", policy)
+
+    assert SimpleParser.split_question_boundaries(
+        "What is 10 plus what is 5?"
+    ) == ["What is 10", "what is 5?"]
+
+
 def test_parser_uses_injected_action_vocabulary(tmp_path: Path, monkeypatch):
     payload = json.loads(
         Path("data/schemas/parser_policy.json").read_text(encoding="utf-8")

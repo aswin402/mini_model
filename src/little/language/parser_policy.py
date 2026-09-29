@@ -19,6 +19,7 @@ from little.language.number_policy import NumberTokenPolicy
 from little.language.parser_confidence_policy import ParserConfidencePolicy
 from little.language.plural_policy import PluralizationPolicy
 from little.language.question_policy import QuestionPatternPolicy
+from little.language.question_boundary_policy import QuestionBoundaryPolicy
 from little.language.question_prefix_policy import QuestionPrefixPolicy
 from little.language.semantic_question_policy import SemanticQuestionPolicy
 from little.language.statement_policy import StatementPolicy
@@ -56,6 +57,9 @@ class ParserPolicy:
     plural_s_exceptions: tuple[str, ...]
     clause_delimiter_pattern: str
     number_tokens: NumberTokenPolicy = field(default_factory=NumberTokenPolicy.default)
+    question_boundaries: QuestionBoundaryPolicy = field(
+        default_factory=QuestionBoundaryPolicy.default
+    )
     pluralization: PluralizationPolicy = field(
         default_factory=PluralizationPolicy.default
     )
@@ -174,6 +178,14 @@ class ParserPolicy:
             if number_policy_path.exists()
             else NumberTokenPolicy.default()
         )
+        question_boundary_policy_path = (
+            Path(directory) / "parser_question_boundary_policy.json"
+        )
+        question_boundaries = (
+            QuestionBoundaryPolicy.load(directory)
+            if question_boundary_policy_path.exists()
+            else QuestionBoundaryPolicy.default()
+        )
         temporal_policy_path = Path(directory) / "parser_temporal_policy.json"
         temporal_patterns = (
             TemporalQuestionPolicy.load(directory)
@@ -285,6 +297,7 @@ class ParserPolicy:
             plural_s_exceptions=words("plural_s_exceptions"),
             clause_delimiter_pattern=clause_delimiter_pattern,
             number_tokens=number_tokens,
+            question_boundaries=question_boundaries,
             pluralization=pluralization,
             confidence=ParserConfidencePolicy.default(),
             semantic=semantic,

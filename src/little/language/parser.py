@@ -961,6 +961,11 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         return [clean] if clean else []
 
     @classmethod
+    def split_question_boundaries(cls, text: str) -> list[str]:
+        """Split question clauses using the active boundary catalog."""
+        return cls._policy().question_boundaries.split(text)
+
+    @classmethod
     def parse_compound_question(
         cls,
         text: str,
@@ -1305,25 +1310,10 @@ class LearningEngine:
         if payload_supplied and parsed_queries and len(parsed_queries) > 1:
             sub_questions = list(question_parts or [])
             supplied_queries = list(parsed_queries)
-        elif not payload_supplied and "?" in q_clean[:-1]:
-            # Multiple questions with question marks: "Can an eagle fly? Does it have wings?"
-            sub_questions = [
-                s.strip() for s in re.split(r"\?\s*", q_clean) if s.strip()
-            ]
-        elif not payload_supplied and re.search(
-            r",?\s+and\s+(?=(?:is|are|was|were|do|does|did|can|could|will|would|has|have|what|who|where|how|why)\b)",
-            q_clean,
-            flags=re.IGNORECASE,
-        ):
-            sub_questions = [
-                s.strip()
-                for s in re.split(
-                    r",?\s+and\s+(?=(?:is|are|was|were|do|does|did|can|could|will|would|has|have|what|who|where|how|why)\b)",
-                    q_clean,
-                    flags=re.IGNORECASE,
-                )
-                if s.strip()
-            ]
+        elif not payload_supplied:
+            boundary_parts = self.parser.split_question_boundaries(q_clean)
+            if len(boundary_parts) > 1:
+                sub_questions = boundary_parts
 
         if len(sub_questions) > 1:
             sub_results: list[InferenceResult] = []
