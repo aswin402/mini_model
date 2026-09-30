@@ -617,4 +617,36 @@ Implementation Plan: `docs/superpowers/plans/2026-09-22-mivi-spiderweb-thinking-
   - [x] Comprehensive Report Published: `experiments/010_real_world_sota_benchmark/REPORT.md` and automated integration test `tests/evaluation/test_comprehensive_matrix.py` (100% pass)
   - [x] Full Regression Suite Pass: 534 / 534 tests passing (100% pass rate in 87.41s)
 
+- [x] **Phase 21: Autonomous Knowledge Ingestion, TurboQuant Vector Compression & Living Graph Wiki (OKF & Headroom)**
+  - [x] Standardized Google OKF (Open Knowledge Format) Importer/Exporter (`src/little/knowledge/okf.py`, `okf_policy.py`):
+    - Versioned Markdown + YAML frontmatter concept files (`.okf.md`) with bidirectional `[[Concept]]` wikilinking
+    - DeepSeek-R1 Invariant Verification Gates integration ($I_{\text{DAG}}, I_{\text{mutex}}, I_{\text{sort}}, I_{\text{ground}}$) rejecting cyclic or contradictory relations during ingestion
+    - Bi-directional sync between SQLite `MemoryStore` and `data/knowledge_vault/`
+  - [x] Google Research ICLR 2026 TurboQuant / TurboVec Vector Compressor (`src/little/neural/turbo_quant.py`, `turbo_quant_policy.py`):
+    - Deterministic Fast Walsh-Hadamard Transform (FWHT) with random diagonal signs (Subsampled Randomized Hadamard Transform SRHT) achieving exact isometric energy dispersion ($O(d \log d)$ ops, microsecond speed)
+    - 4-bit scalar quantization with packed nibbles (256 bytes per 512-dim vector, 8x compression, <0.5% dot product error)
+    - 1-bit binary sign quantization into 8 uint64 integers (64 bytes per 512-dim vector, 32x compression, sub-microsecond CPU popcount Hamming distance)
+    - `TurboQuantIndex` two-stage coarse-to-fine nearest-neighbor search engine (<35 MB RAM per 100k vectors)
+  - [x] Headroom Reversible Context Compression (CCR) Engine (`src/little/memory/headroom.py`, `headroom_policy.py`):
+    - Multi-factor salience scoring $S_i = w_{\text{recency}} e^{-\lambda \Delta t} + w_{\text{frequency}} f_i + w_{\text{activation}} a_i$
+    - Reversible Context Compression (CCR): compresses older conversational turns into compact semantic frame pointers while preserving exact SQLite `experience_id` references for on-demand decompression
+    - Strictly bounds active working memory to < 50 MB RAM with automatic low-salience concept eviction
+  - [x] Living Graph Wiki Engine (`src/little/knowledge/living_wiki.py`, `living_wiki_policy.py`):
+    - Interconnected living wiki graph with forward links, backlinks, degree centrality, hubs, orphans, and unexplored frontier stubs
+    - Integrated microsecond semantic search via `TurboQuantIndex`
+  - [x] Autonomous Self-Study Crawler (`src/little/active/crawler.py`):
+    - Autonomous document and web ingestion pipeline: extracts FrameNet-style frames via `NeuralFrameExtractor`, verifies all candidate claims through the 4 invariant gates, updates SQLite memory, exports living OKF wiki pages, and indexes continuous embeddings into TurboQuant
+  - [x] Dialogue Surface & Cognitive Kernel Integration (`src/little/core/kernel.py`, `dialogue_surface.py`):
+    - Added natural chat handlers: `study text: ...`, `search wiki for ...`, `what links to ...?`, `show wiki page for ...`
+    - Headroom working memory tracking on every conversational turn
+  - [x] Verification & Tests:
+    - `tests/unit/test_turbo_quant.py` (4/4 passed)
+    - `tests/unit/test_okf_engine.py` (3/3 passed)
+    - `tests/unit/test_headroom.py` (3/3 passed)
+    - `tests/unit/test_living_wiki.py` (2/2 passed)
+    - `tests/unit/test_knowledge_crawler.py` (3/3 passed)
+    - `tests/integration/test_living_wiki_chat_integration.py` (1/1 passed)
+    - Full Regression Suite: **550 / 550 tests passing (100% pass rate in 120.91s)**
+
+
 

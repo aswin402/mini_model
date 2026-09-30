@@ -1,0 +1,14 @@
+{
+  "format": "little.headroom.v1",
+  "max_active_tokens": 2048,
+  "max_active_concepts": 64,
+  "max_working_episodes": 32,
+  "recency_decay_lambda": 0.01,
+  "salience_weights": {
+    "recency": 0.4,
+    "frequency": 0.3,
+    "activation": 0.3
+  },
+  "eviction_salience_threshold": 0.25,
+  "memory_headroom_budget_mb": 50.0
+}

@@ -133,6 +133,19 @@
       "axis": "procedural"
     },
     {
+      "name": "capable_of",
+      "domain": [
+        "concept",
+        "entity"
+      ],
+      "range": [
+        "concept",
+        "entity",
+        "skill"
+      ],
+      "axis": "procedural"
+    },
+    {
       "name": "used_for",
       "domain": [
         "concept",
@@ -312,6 +325,19 @@
       "domain": ["concept", "entity"],
       "range": ["concept", "entity"],
       "axis": "epistemic"
+    },
+    {
+      "name": "related_to",
+      "domain": ["concept", "entity"],
+      "range": ["concept", "entity"],
+      "symmetric": true,
+      "axis": "associative"
+    },
+    {
+      "name": "grows_on",
+      "domain": ["concept", "entity"],
+      "range": ["concept", "entity"],
+      "axis": "biology"
     }
   ]
 }

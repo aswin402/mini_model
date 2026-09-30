@@ -1,0 +1,13 @@
+{
+  "format": "little.turbo_quant.v1",
+  "dimension": 512,
+  "rotation_seed": 42,
+  "quantization_modes": [
+    "4bit",
+    "1bit"
+  ],
+  "bins_4bit": 16,
+  "top_k_default": 5,
+  "coarse_filter_multiplier": 4,
+  "similarity_threshold": 0.08
+}

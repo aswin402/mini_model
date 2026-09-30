@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from little.actions import (
     ActionRouter,
@@ -10,13 +11,16 @@ from little.actions import (
     ToolExecutor,
     ToolGroundingEngine,
 )
+from little.active.crawler import KnowledgeCrawler
 from little.core.contracts import CandidateFrame, SourceType
 from little.core.models import BeliefStatus, InferenceResult, LearningResult, generate_id
 from little.core.runtime_policy import RuntimePolicy
 from little.inference.thinking_controller import CognitiveMode, ThinkingController
+from little.knowledge.living_wiki import LivingWiki
 from little.language.dialogue_surface import DialogueSurfaceEngine
 from little.language.parser import LearningEngine, configured_parser
 from little.language.perception import DeterministicPerceptionAdapter, PerceptionAdapter
+from little.memory.headroom import HeadroomContextManager
 from little.memory.store import MemoryStore
 from little.neural import NeuralRouter, RoutingDecision
 from little.procedural.code_synthesizer import ASTCodeSynthesizer, SynthesizedProgram
@@ -80,18 +84,73 @@ class CognitiveKernel:
         self.tool_executor = ToolExecutor()
         self.tool_grounder = ToolGroundingEngine(memory_store=self.memory)
         self.code_synthesizer = ASTCodeSynthesizer()
+        self.headroom = HeadroomContextManager(memory=self.memory)
+        self.wiki = LivingWiki(memory=self.memory)
+        self.crawler = KnowledgeCrawler(memory=self.memory, wiki=self.wiki)
 
     def chat(self, text: str) -> str:
-        """Conversational chat interface with warm, articulate English dialogue."""
+        """Conversational chat interface with warm, articulate English dialogue and living wiki integration."""
+        self.headroom.record_turn(role="user", text=text)
+
         social_reply = self.dialogue_surface.handle_social(text)
         if social_reply is not None:
+            self.headroom.record_turn(role="assistant", text=social_reply)
             return social_reply
 
         greeting_word, remainder = self.dialogue_surface.decompose_utterance(text)
         if greeting_word:
             rem_social = self.dialogue_surface.handle_social(remainder)
             if rem_social is not None:
-                return f"{greeting_word.capitalize()}! {rem_social}"
+                reply = f"{greeting_word.capitalize()}! {rem_social}"
+                self.headroom.record_turn(role="assistant", text=reply)
+                return reply
+
+        clean_rem = remainder.strip()
+        lower_rem = clean_rem.lower()
+
+        # 1. Autonomous Knowledge Ingestion & Crawling Intent
+        if any(
+            lower_rem.startswith(prefix)
+            for prefix in ("study text:", "crawl text:", "ingest text:", "ingest document:")
+        ):
+            _, doc_text = clean_rem.split(":", 1)
+            report = self.crawler.crawl_text(doc_text.strip(), source_reference="chat_ingest")
+            body = self.dialogue_surface.verbalize_crawl_report(report)
+            reply = self.dialogue_surface.compose_reply(greeting_word, body)
+            self.headroom.record_turn(role="assistant", text=reply)
+            return reply
+
+        # 2. Living Wiki TurboQuant Semantic Search Intent
+        if lower_rem.startswith("search wiki for ") or lower_rem.startswith("search the wiki for "):
+            query_str = clean_rem.split("for", 1)[1].strip() if "for" in clean_rem else clean_rem
+            search_results = self.wiki.search_semantic(query_str, top_k=5)
+            body = self.dialogue_surface.verbalize_wiki_search(query_str, search_results)
+            reply = self.dialogue_surface.compose_reply(greeting_word, body)
+            self.headroom.record_turn(role="assistant", text=reply)
+            return reply
+
+        # 3. Living Wiki Backlinks Intent
+        if lower_rem.startswith("backlinks to ") or "what are the backlinks to " in lower_rem or "what links to " in lower_rem:
+            m = re.search(r"(?:backlinks to|what links to)\s+([^?.!]+)", clean_rem, re.IGNORECASE)
+            target = m.group(1).strip().lower() if m else clean_rem
+            backlinks = self.wiki.get_backlinks(target)
+            body = self.dialogue_surface.verbalize_backlinks(target, backlinks)
+            reply = self.dialogue_surface.compose_reply(greeting_word, body)
+            self.headroom.record_turn(role="assistant", text=reply)
+            return reply
+
+        # 4. Living Wiki OKF Page Summary Intent
+        if lower_rem.startswith("wiki page for ") or lower_rem.startswith("show wiki page for "):
+            m = re.search(r"(?:wiki page for|show wiki page for)\s+([^?.!]+)", clean_rem, re.IGNORECASE)
+            target = m.group(1).strip().lower() if m else clean_rem
+            page = self.wiki.get_page(target)
+            if page is not None:
+                body = self.dialogue_surface.verbalize_wiki_page(page)
+            else:
+                body = f"I do not have a wiki page for '{target}' in my memory yet."
+            reply = self.dialogue_surface.compose_reply(greeting_word, body)
+            self.headroom.record_turn(role="assistant", text=reply)
+            return reply
 
         # Neural routing over utterance
         routing = self.neural_router.route(remainder)
@@ -102,7 +161,9 @@ class CognitiveKernel:
             exec_result = self.tool_executor.execute(tool_call)
             self.tool_grounder.ground(exec_result)
             body = self.dialogue_surface.verbalize_tool_result(exec_result)
-            return self.dialogue_surface.compose_reply(greeting_word, body)
+            reply = self.dialogue_surface.compose_reply(greeting_word, body)
+            self.headroom.record_turn(role="assistant", text=reply)
+            return reply
 
         outcome = self.process(remainder, routing_decision=routing)
 
@@ -128,7 +189,9 @@ class CognitiveKernel:
         else:
             body = "I processed that, but have no specific response."
 
-        return self.dialogue_surface.compose_reply(greeting_word, body)
+        reply = self.dialogue_surface.compose_reply(greeting_word, body)
+        self.headroom.record_turn(role="assistant", text=reply)
+        return reply
 
     def process(
         self,

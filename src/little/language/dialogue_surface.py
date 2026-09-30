@@ -562,4 +562,47 @@ class DialogueSurfaceEngine:
             lines.append(f"- Execution Hash: `{prog.execution_hash[:16]}...`")
         return "\n".join(lines)
 
+    def verbalize_crawl_report(self, report: Any) -> str:
+        """Verbalize knowledge crawling and ingestion session results."""
+        lines = [
+            f"Crawled and ingested '{report.source_reference}' in {report.duration_ms:.2f} ms:",
+            f"- Extracted claims: {report.extracted_claims}",
+            f"- Verified claims committed to memory: {report.verified_claims}",
+            f"- OKF pages created/updated in vault: {report.new_pages_written}",
+        ]
+        if report.rejected_claims > 0:
+            lines.append(
+                f"- Invariant gate rejections: {report.rejected_claims} ({len(report.rejection_reasons)} violations caught)"
+            )
+        return "\n".join(lines)
+
+    def verbalize_wiki_search(self, query: str, results: list[Any]) -> str:
+        """Verbalize TurboQuant semantic search results over the living knowledge wiki."""
+        if not results:
+            return f"No concept pages matching '{query}' were found in the living wiki."
+        lines = [f"Found {len(results)} relevant wiki concept(s) for '{query}':"]
+        for r in results:
+            lines.append(f"- **{r.id}** (similarity: {r.score:.3f})")
+        return "\n".join(lines)
+
+    def verbalize_backlinks(self, concept_name: str, backlinks: list[str]) -> str:
+        """Verbalize incoming wiki links to a concept."""
+        if not backlinks:
+            return f"There are currently no concepts linking to '{concept_name}' in the living wiki."
+        links_str = ", ".join(f"[[{c}]]" for c in backlinks)
+        return f"The following concept(s) link to '{concept_name}': {links_str}."
+
+    def verbalize_wiki_page(self, doc: Any) -> str:
+        """Verbalize an OKF wiki page summary."""
+        name = doc.concept_name
+        tax = doc.frontmatter.get("taxonomy", {})
+        parents = tax.get("is_a", []) if isinstance(tax, dict) else []
+        parents_str = f"a type of {', '.join(parents)}" if parents else "a concept knot in the living wiki"
+        lines = [f"**{name.title()}** is {parents_str}."]
+        if doc.wikilinks:
+            linked_str = ", ".join(f"[[{link.target}]]" for link in doc.wikilinks)
+            lines.append(f"- Linked concepts: {linked_str}")
+        return "\n".join(lines)
+
+
 

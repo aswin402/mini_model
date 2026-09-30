@@ -1,0 +1,8 @@
+{
+  "format": "little.living_wiki.v1",
+  "vault_directory": "data/knowledge_vault",
+  "auto_sync_on_mutation": true,
+  "batch_crawl_limit": 50,
+  "verification_required": true,
+  "min_extraction_confidence": 0.70
+}

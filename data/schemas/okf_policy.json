@@ -1,0 +1,26 @@
+{
+  "format": "little.okf.v1",
+  "vault_directory": "data/knowledge_vault",
+  "file_extension": ".okf.md",
+  "wikilink_pattern": "\\[\\[([^\\]\\|]+)(?:\\|([^\\]]+))?\\]\\]",
+  "required_frontmatter_fields": [
+    "id",
+    "name",
+    "taxonomy"
+  ],
+  "supported_frontmatter_fields": [
+    "id",
+    "name",
+    "aliases",
+    "taxonomy",
+    "mereology",
+    "invariants",
+    "procedural_skills",
+    "attributes",
+    "relations",
+    "citations",
+    "confidence",
+    "status"
+  ],
+  "default_citation_source": "document"
+}
