@@ -17,7 +17,9 @@
       "purpose": "used_for",
       "causality": "causes",
       "orbits": "orbits",
-      "orbit": "orbit"
+      "orbit": "orbit",
+      "discovery": "discovered",
+      "discovered_by": "discovered_by"
     },
     "identity_predicates": ["has_name", "name", "is"]
   }

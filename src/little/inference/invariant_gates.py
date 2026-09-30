@@ -58,25 +58,44 @@ class DeepSeekInvariantVerifier:
     def _clean_id(self, name: str) -> str:
         return name.strip().upper().replace(" ", "_")
 
+    def _resolve_target_ids(self, name: str) -> Set[str]:
+        clean = self._clean_id(name)
+        ids = {clean, name.strip().lower()}
+        concept = self.memory.get_concept(name.strip().lower())
+        if concept:
+            ids.add(concept.id)
+            ids.add(self._clean_id(concept.name))
+        return ids
+
+    def _get_outgoing_objects(self, node: str, predicate: str) -> Set[str]:
+        node_ids = self._resolve_target_ids(node)
+        outgoing: Set[str] = set()
+        for nid in node_ids:
+            for rel in self.memory.get_relations(subject_id=nid, predicate=predicate):
+                outgoing.add(self._clean_id(rel.object_id))
+                c_obj = self.memory.get_concept(rel.object_id)
+                if c_obj:
+                    outgoing.add(self._clean_id(c_obj.name))
+        return outgoing
+
     def _check_cycle(
         self, start_node: str, target_node: str, predicate: str
     ) -> bool:
         """DFS check if start_node can reach target_node via hierarchical predicates."""
-        start = self._clean_id(start_node)
-        target = self._clean_id(target_node)
+        target_ids = self._resolve_target_ids(target_node)
+        start_clean = self._clean_id(start_node)
         visited: Set[str] = set()
-        stack = [start]
+        stack = [start_clean]
         while stack:
             curr = stack.pop()
-            if curr == target:
+            if curr in target_ids:
                 return True
             if curr in visited:
                 continue
             visited.add(curr)
-            for rel in self.memory.get_relations(
-                subject_id=curr, predicate=predicate
-            ):
-                obj_clean = self._clean_id(rel.object_id)
+            for obj_clean in self._get_outgoing_objects(curr, predicate):
+                if obj_clean in target_ids:
+                    return True
                 if obj_clean not in visited:
                     stack.append(obj_clean)
         return False
@@ -89,10 +108,7 @@ class DeepSeekInvariantVerifier:
         while stack:
             curr = stack.pop()
             for pred in self.acyclic_predicates:
-                for rel in self.memory.get_relations(
-                    subject_id=curr, predicate=pred
-                ):
-                    obj_clean = self._clean_id(rel.object_id)
+                for obj_clean in self._get_outgoing_objects(curr, pred):
                     if obj_clean not in ancestors:
                         ancestors.add(obj_clean)
                         stack.append(obj_clean)
@@ -100,13 +116,20 @@ class DeepSeekInvariantVerifier:
 
     def _get_disjoints(self, node: str) -> Set[str]:
         """Collects all concepts mutually exclusive with node."""
-        clean = self._clean_id(node)
+        node_ids = self._resolve_target_ids(node)
         disjoints: Set[str] = set()
-        for predicate in self.disjoint_predicates:
-            for rel in self.memory.get_relations(subject_id=clean, predicate=predicate):
-                disjoints.add(self._clean_id(rel.object_id))
-            for rel in self.memory.get_relations(object_id=clean, predicate=predicate):
-                disjoints.add(self._clean_id(rel.subject_id))
+        for nid in node_ids:
+            for predicate in self.disjoint_predicates:
+                for rel in self.memory.get_relations(subject_id=nid, predicate=predicate):
+                    disjoints.add(self._clean_id(rel.object_id))
+                    c_obj = self.memory.get_concept(rel.object_id)
+                    if c_obj:
+                        disjoints.add(self._clean_id(c_obj.name))
+                for rel in self.memory.get_relations(object_id=nid, predicate=predicate):
+                    disjoints.add(self._clean_id(rel.subject_id))
+                    c_subj = self.memory.get_concept(rel.subject_id)
+                    if c_subj:
+                        disjoints.add(self._clean_id(c_subj.name))
         return disjoints
 
     def verify_relation(

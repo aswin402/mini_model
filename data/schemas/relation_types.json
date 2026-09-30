@@ -300,6 +300,18 @@
       "domain": ["concept", "entity"],
       "range": ["concept", "entity"],
       "axis": "astronomy"
+    },
+    {
+      "name": "discovered",
+      "domain": ["concept", "entity"],
+      "range": ["concept", "entity"],
+      "axis": "epistemic"
+    },
+    {
+      "name": "discovered_by",
+      "domain": ["concept", "entity"],
+      "range": ["concept", "entity"],
+      "axis": "epistemic"
     }
   ]
 }

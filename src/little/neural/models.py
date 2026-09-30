@@ -1,10 +1,11 @@
-"""Data models for continuous neural representations and routing decisions."""
+"""Data models for continuous neural representations, routing decisions, and semantic frames."""
 
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 
 class Pathway(str, Enum):
@@ -44,3 +45,29 @@ class RoutingDecision:
     entropy: float
     is_uncertain: bool
     latent_state: NeuralState
+
+
+@dataclass(frozen=True)
+class SemanticSlot:
+    """A typed extraction slot (e.g. subject, predicate, object, modifier)."""
+
+    slot_name: str
+    text: str
+    confidence: float
+    start_pos: int = 0
+    end_pos: int = 0
+
+
+@dataclass(frozen=True)
+class ExtractedSemanticFrame:
+    """A FrameNet-style structured semantic frame extracted from unstructured natural language."""
+
+    frame_type: str
+    subject: str
+    predicate: str
+    object_val: str
+    is_negative: bool = False
+    is_property: bool = False
+    confidence: float = 0.85
+    attributes: dict[str, Any] = field(default_factory=dict)
+    raw_text: str = ""

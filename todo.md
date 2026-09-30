@@ -590,11 +590,12 @@ Implementation Plan: `docs/superpowers/plans/2026-09-22-mivi-spiderweb-thinking-
   - [x] Unit & Integration Tests: Verified classification on noisy/slang queries without regex matching (`tests/unit/test_neural_router.py` 5/5, `tests/integration/test_neural_routing_chat_integration.py` 4/4)
   - [x] Full Regression Suite Pass: 506 / 506 tests passing (100% pass rate in 68.83s)
 
-- [ ] **Phase 17: Neural Semantic Frame & Slot Extractor (Eliminating Regexes)**
-  - [ ] FrameNet-Style Semantic Role Labeling: Map unstructured English sentences into typed semantic frames `(Subject, Predicate, Object, Modifiers)`
-  - [ ] Robustness: Ingest typos, slang, and inverted sentence structures into valid `CandidateClaim` and `CandidateFrame` contracts
-  - [ ] Integration with 4 Verification Gates ($I_{\text{DAG}}, I_{\text{mutex}}, I_{\text{sort}}, I_{\text{ground}}$)
-  - [ ] Unit & Integration Tests: Verify extraction across noisy Wikipedia and conversational dialogues
+- [x] **Phase 17: Neural Semantic Frame & Slot Extractor (Eliminating Regexes)**
+  - [x] FrameNet-Style Semantic Role Labeling: Map unstructured conversational/Wikipedia English into typed semantic frames `(Subject, Predicate, Object, Modifiers)` via `NeuralFrameExtractor` and `SemanticFramePolicy`
+  - [x] Robustness: Ingest typos, conversational fillers ("did you know that", "note that"), parenthetical relative clauses, and passive voice ("X was discovered by Y") into valid `CandidateClaim` contracts
+  - [x] Integration with 4 Verification Gates ($I_{\text{DAG}}, I_{\text{mutex}}, I_{\text{sort}}, I_{\text{ground}}$): Reject contradictory claims even when parsed from conversational inputs
+  - [x] Unit & Integration Tests: `tests/unit/test_semantic_frame_extractor.py` (7/7 passed), `tests/integration/test_semantic_frame_learning_chat_integration.py` (5/5 passed)
+  - [x] Full Regression Suite Pass: 518 / 518 tests passing (100% pass rate in 83.71s)
 
 - [ ] **Phase 18: Programming & AST Code Synthesis Engine**
   - [ ] Python AST Synthesizer (`src/little/procedural/code_synthesizer.py`): Synthesize valid ASTs for algorithms and math

@@ -83,9 +83,15 @@ class DeterministicPerceptionAdapter:
         self,
         policy: PerceptionPolicy | None = None,
         parser: type[SimpleParser] | None = None,
+        frame_extractor: Any | None = None,
     ) -> None:
         self.policy = policy or PerceptionPolicy.default()
         self.parser = parser
+        if frame_extractor is None:
+            from little.neural.frame_extractor import NeuralFrameExtractor
+            self.frame_extractor = NeuralFrameExtractor()
+        else:
+            self.frame_extractor = frame_extractor
 
     def perceive(
         self,
@@ -193,17 +199,33 @@ class DeterministicPerceptionAdapter:
                     resolved_sentence, construction_catalog("statement")
                 )
                 if not triples:
-                    triples = parser.parse_statement(resolved_sentence)
-                for triple in triples:
-                    claims.append(
-                        CandidateClaim(
-                            triple.subject, triple.predicate, triple.object_,
-                            probability=self.policy.deterministic_claim_probability,
-                            positive=not triple.is_negative,
-                            is_property=triple.is_property,
+                    sub_claims = self.frame_extractor.extract_candidate_claims(resolved_sentence)
+                    if sub_claims:
+                        claims.extend(sub_claims)
+                        previous_subject = sub_claims[0].subject
+                    else:
+                        triples = parser.parse_statement(resolved_sentence)
+                        if triples:
+                            for triple in triples:
+                                claims.append(
+                                    CandidateClaim(
+                                        triple.subject, triple.predicate, triple.object_,
+                                        probability=self.policy.deterministic_claim_probability,
+                                        positive=not triple.is_negative,
+                                        is_property=triple.is_property,
+                                    )
+                                )
+                            previous_subject = triples[0].subject
+                else:
+                    for triple in triples:
+                        claims.append(
+                            CandidateClaim(
+                                triple.subject, triple.predicate, triple.object_,
+                                probability=self.policy.deterministic_claim_probability,
+                                positive=not triple.is_negative,
+                                is_property=triple.is_property,
+                            )
                         )
-                    )
-                if triples:
                     previous_subject = triples[0].subject
             return CandidateFrame.from_text(
                 text,
@@ -258,9 +280,29 @@ class DeterministicPerceptionAdapter:
             or " vs " in resolved_text.lower()
         )
         is_math = MathStorySolver().is_math_story(resolved_text)
+        teaching_prefixes = (
+            "did you know that",
+            "do you know that",
+            "i learned that",
+            "note that",
+            "remember that",
+            "we know that",
+        )
+        if any(resolved_text.lower().strip().startswith(p) for p in teaching_prefixes):
+            extracted = self.frame_extractor.extract_candidate_claims(resolved_text)
+            if extracted:
+                return CandidateFrame.from_text(
+                    text,
+                    claims=extracted,
+                    intent="statement",
+                    uncertainty=self.policy.deterministic_frame_uncertainty,
+                    model_id="neural-frame-extractor",
+                    model_version=self.policy.version,
+                )
+
         is_comparative_query = bool(
-            re.search(r"\b(?:who|which)\s+is\s+(?:the\s+)?[a-z]+", resolved_text, re.IGNORECASE)
-            or re.search(r"\bis\s+.+?\s+(?:than)\s+.+", resolved_text, re.IGNORECASE)
+            re.match(r"^(?:who|which)\s+is\s+(?:the\s+)?[a-z]+", resolved_text.strip(), re.IGNORECASE)
+            or (re.search(r"\bis\s+.+?\s+than\s+.+", resolved_text, re.IGNORECASE) and resolved_text.strip().endswith("?"))
         )
 
         if (
@@ -303,11 +345,47 @@ class DeterministicPerceptionAdapter:
                 model_version=self.policy.version,
             )
 
+        # Check specialized syntactic patterns that SimpleParser cannot parse (passive voice, parenthetical relative clauses)
+        pass_frames = self.frame_extractor._extract_passive(resolved_text, text)
+        if pass_frames:
+            claims = self.frame_extractor.to_candidate_claims(pass_frames)
+            return CandidateFrame.from_text(
+                text,
+                claims=claims,
+                intent="statement",
+                uncertainty=self.policy.deterministic_frame_uncertainty,
+                model_id="neural-frame-extractor",
+                model_version=self.policy.version,
+            )
+
+        rel_frames = self.frame_extractor._extract_relative_clause(resolved_text, text)
+        if rel_frames:
+            claims = self.frame_extractor.to_candidate_claims(rel_frames)
+            return CandidateFrame.from_text(
+                text,
+                claims=claims,
+                intent="statement",
+                uncertainty=self.policy.deterministic_frame_uncertainty,
+                model_id="neural-frame-extractor",
+                model_version=self.policy.version,
+            )
+
         triples = parser.CONSTRUCTION_ENGINE.parse_from_catalog(
             resolved_text, construction_catalog("statement")
         )
         if not triples:
             triples = parser.parse_statement(resolved_text)
+        if not triples:
+            extracted_claims = self.frame_extractor.extract_candidate_claims(resolved_text)
+            if extracted_claims:
+                return CandidateFrame.from_text(
+                    text,
+                    claims=extracted_claims,
+                    intent="statement",
+                    uncertainty=self.policy.deterministic_frame_uncertainty,
+                    model_id="neural-frame-extractor",
+                    model_version=self.policy.version,
+                )
         if not triples:
             return CandidateFrame.from_text(
                 text,
