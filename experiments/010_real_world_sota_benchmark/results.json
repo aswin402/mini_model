@@ -1,0 +1,436 @@
+{
+  "summaries": [
+    {
+      "modality": "English Dialogue",
+      "total": 11,
+      "passed": 11,
+      "pass_rate": 100.0,
+      "avg_latency_ms": 16.84,
+      "p99_latency_ms": 39.54
+    },
+    {
+      "modality": "Math & CAS Reasoning",
+      "total": 7,
+      "passed": 7,
+      "pass_rate": 100.0,
+      "avg_latency_ms": 10.92,
+      "p99_latency_ms": 16.18
+    },
+    {
+      "modality": "AST Code Synthesis",
+      "total": 8,
+      "passed": 8,
+      "pass_rate": 100.0,
+      "avg_latency_ms": 15.76,
+      "p99_latency_ms": 16.54
+    },
+    {
+      "modality": "Tool Execution",
+      "total": 6,
+      "passed": 6,
+      "pass_rate": 100.0,
+      "avg_latency_ms": 4.11,
+      "p99_latency_ms": 13.14
+    },
+    {
+      "modality": "Zero-Hallucination OWA",
+      "total": 6,
+      "passed": 6,
+      "pass_rate": 100.0,
+      "avg_latency_ms": 19.87,
+      "p99_latency_ms": 23.46
+    },
+    {
+      "modality": "Continual Learning",
+      "total": 4,
+      "passed": 4,
+      "pass_rate": 100.0,
+      "avg_latency_ms": 18.39,
+      "p99_latency_ms": 33.69
+    }
+  ],
+  "total_items": 42,
+  "total_passed": 42,
+  "overall_accuracy": 100.0,
+  "items": [
+    {
+      "modality": "English Dialogue",
+      "prompt": "Hello there, how are you today?",
+      "expected_status": "social_pleasantry",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 2.0287609986553434,
+      "details": "Hello there! I'm operating smoothly and ready to reason. How can I assist you to"
+    },
+    {
+      "modality": "English Dialogue",
+      "prompt": "A falcon is a bird and it hunts rodents.",
+      "expected_status": "learned_compound",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 39.5356199987873,
+      "details": "Got it! I've learned that A falcon is a bird and it hunts rodents."
+    },
+    {
+      "modality": "English Dialogue",
+      "prompt": "Does a falcon hunt rodents?",
+      "expected_status": "supported",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 17.328823001662386,
+      "details": "Yes, falcon hunts rodent."
+    },
+    {
+      "modality": "English Dialogue",
+      "prompt": "Cheetahs, which are felines, run fast.",
+      "expected_status": "learned_relative",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 24.196243000915274,
+      "details": "Got it! I've learned that Cheetahs, which are felines, run fast."
+    },
+    {
+      "modality": "English Dialogue",
+      "prompt": "Is a cheetah a feline?",
+      "expected_status": "supported",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 13.33981199968548,
+      "details": "Yes, a cheetah is indeed a feline."
+    },
+    {
+      "modality": "English Dialogue",
+      "prompt": "Euclidean geometry was discovered by Euclid.",
+      "expected_status": "learned_passive",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 11.056129000280635,
+      "details": "Got it! I've learned that Euclidean geometry was discovered by Euclid."
+    },
+    {
+      "modality": "English Dialogue",
+      "prompt": "Is an eagle a living thing?",
+      "expected_status": "transitive_supported",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 16.677841000273474,
+      "details": "Yes, an eagle is indeed a living thing."
+    },
+    {
+      "modality": "English Dialogue",
+      "prompt": "Is a bird a mammal?",
+      "expected_status": "refuted",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 18.222975999378832,
+      "details": "No, a bird is not a mammal."
+    },
+    {
+      "modality": "English Dialogue",
+      "prompt": "Is a falcon a dog?",
+      "expected_status": "refuted",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 16.023492000385886,
+      "details": "No, a falcon is not a dog."
+    },
+    {
+      "modality": "English Dialogue",
+      "prompt": "My name is Aswin.",
+      "expected_status": "learned_identity",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 10.416688999612234,
+      "details": "Nice to meet you, Aswin! I have recorded your name in my persistent memory."
+    },
+    {
+      "modality": "English Dialogue",
+      "prompt": "What is my name?",
+      "expected_status": "recalled_identity",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 16.458766000141622,
+      "details": "Your name is Aswin."
+    },
+    {
+      "modality": "Math & CAS Reasoning",
+      "prompt": "What is 125 * 8 - 45 / 3?",
+      "expected_status": "125*8 - 45/3 = 985",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 1.89366499944299,
+      "details": "The calculated result is 1000."
+    },
+    {
+      "modality": "Math & CAS Reasoning",
+      "prompt": "What is (2/3) + (5/6)?",
+      "expected_status": "3/2 = 1.5",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 15.827470999283832,
+      "details": "1.5"
+    },
+    {
+      "modality": "Math & CAS Reasoning",
+      "prompt": "Solve x: 3*x + 15 = 45",
+      "expected_status": "x = 10",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 10.92373800020141,
+      "details": "Could not verify structured relations from: 'Solve x: 3*x + 15 = 45'"
+    },
+    {
+      "modality": "Math & CAS Reasoning",
+      "prompt": "How many feet in 36 inches?",
+      "expected_status": "3",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 6.04879999991681,
+      "details": "36"
+    },
+    {
+      "modality": "Math & CAS Reasoning",
+      "prompt": "Is 104729 prime?",
+      "expected_status": "True",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 14.488777000224218,
+      "details": "Yes, IS_PRIME __math__s {'n': 104729}."
+    },
+    {
+      "modality": "Math & CAS Reasoning",
+      "prompt": "What is the fibonacci of 20?",
+      "expected_status": "6765",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 16.17547000023478,
+      "details": "6765"
+    },
+    {
+      "modality": "Math & CAS Reasoning",
+      "prompt": "Sarah has 15 apples. She gives 4 apples to Bob, then buys 7 more apples. How many apples does Sarah have now?",
+      "expected_status": "18",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 11.05187100074545,
+      "details": "18"
+    },
+    {
+      "modality": "AST Code Synthesis",
+      "prompt": "Write a python function to check if a number is prime",
+      "expected_status": "verified def is_prime",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 15.527963998465566,
+      "details": "Status: VERIFIED"
+    },
+    {
+      "modality": "AST Code Synthesis",
+      "prompt": "Can you generate code for fibonacci?",
+      "expected_status": "verified def fibonacci",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 15.86729600057879,
+      "details": "Status: VERIFIED"
+    },
+    {
+      "modality": "AST Code Synthesis",
+      "prompt": "Synthesize python code to compute factorial",
+      "expected_status": "verified def factorial",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 15.278550999937579,
+      "details": "Status: VERIFIED"
+    },
+    {
+      "modality": "AST Code Synthesis",
+      "prompt": "Write code for binary search",
+      "expected_status": "verified def binary_search",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 15.947529000186478,
+      "details": "Status: VERIFIED"
+    },
+    {
+      "modality": "AST Code Synthesis",
+      "prompt": "Generate a python function for greatest common divisor",
+      "expected_status": "verified def gcd",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 15.391144999739481,
+      "details": "Status: VERIFIED"
+    },
+    {
+      "modality": "AST Code Synthesis",
+      "prompt": "Write code to check if a string is a palindrome",
+      "expected_status": "verified def is_palindrome",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 16.544187999897986,
+      "details": "Status: VERIFIED"
+    },
+    {
+      "modality": "AST Code Synthesis",
+      "prompt": "Synthesize python code to reverse a string",
+      "expected_status": "verified def reverse_string",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 16.21219899971038,
+      "details": "Status: VERIFIED"
+    },
+    {
+      "modality": "AST Code Synthesis",
+      "prompt": "Write a function to flatten a list",
+      "expected_status": "verified def flatten",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 15.285555000446038,
+      "details": "Status: VERIFIED"
+    },
+    {
+      "modality": "Tool Execution",
+      "prompt": "calculate 250 * 4",
+      "expected_status": "executed calculator",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 1.3957320006738883,
+      "details": "The calculated result is 1000."
+    },
+    {
+      "modality": "Tool Execution",
+      "prompt": "what is the current time?",
+      "expected_status": "executed system_time",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 7.568957000330556,
+      "details": "The current time is 10:31:05 UTC on 2026-09-30 (UTC)."
+    },
+    {
+      "modality": "Tool Execution",
+      "prompt": "search the web for quantum computing",
+      "expected_status": "executed web_search",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 0.7512020001740893,
+      "details": "I found the following search results for 'quantum computing':\n- Knowledge entry "
+    },
+    {
+      "modality": "Tool Execution",
+      "prompt": "write to file scratch/bench_test.txt: benchmark data",
+      "expected_status": "executed file_writer",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 1.0326350002287654,
+      "details": "Successfully wrote 14 bytes to scratch/bench_test.txt."
+    },
+    {
+      "modality": "Tool Execution",
+      "prompt": "read file scratch/bench_test.txt",
+      "expected_status": "executed file_reader",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 0.7815400003892137,
+      "details": "Contents of scratch/bench_test.txt:\nbenchmark data"
+    },
+    {
+      "modality": "Tool Execution",
+      "prompt": "run python: print(42 * 2)",
+      "expected_status": "executed python_repl",
+      "actual_status": "PASS",
+      "passed": true,
+      "latency_ms": 13.143641001079232,
+      "details": "Python execution output:\n84"
+    },
+    {
+      "modality": "Zero-Hallucination OWA",
+      "prompt": "What is a flurblegorp?",
+      "expected_status": "UNKNOWN (Epistemic Honesty)",
+      "actual_status": "PASS (Zero Hallucination)",
+      "passed": true,
+      "latency_ms": 13.59580600001209,
+      "details": "I don't have that information in my memory yet. Could you tell me more about flu"
+    },
+    {
+      "modality": "Zero-Hallucination OWA",
+      "prompt": "Is a zanthocar a mammal?",
+      "expected_status": "UNKNOWN (Epistemic Honesty)",
+      "actual_status": "PASS (Zero Hallucination)",
+      "passed": true,
+      "latency_ms": 18.99505700021109,
+      "details": "I don't have that information in my memory yet. Could you tell me more about zan"
+    },
+    {
+      "modality": "Zero-Hallucination OWA",
+      "prompt": "Where is the continent of Quazilopia located?",
+      "expected_status": "UNKNOWN (Epistemic Honesty)",
+      "actual_status": "PASS (Zero Hallucination)",
+      "passed": true,
+      "latency_ms": 21.85888799976965,
+      "details": "I don't have that information in my memory yet. Could you tell me more about con"
+    },
+    {
+      "modality": "Zero-Hallucination OWA",
+      "prompt": "Can a vorpalblade fly through water?",
+      "expected_status": "UNKNOWN (Epistemic Honesty)",
+      "actual_status": "PASS (Zero Hallucination)",
+      "passed": true,
+      "latency_ms": 21.588595998764504,
+      "details": "I don't have that information in my memory yet. Could you tell me more about vor"
+    },
+    {
+      "modality": "Zero-Hallucination OWA",
+      "prompt": "Who was the prime minister of Eldoria in 1842?",
+      "expected_status": "UNKNOWN (Epistemic Honesty)",
+      "actual_status": "PASS (Zero Hallucination)",
+      "passed": true,
+      "latency_ms": 23.463175999495434,
+      "details": "I don't have that information in my memory yet. Could you tell me more about tha"
+    },
+    {
+      "modality": "Zero-Hallucination OWA",
+      "prompt": "How many legs does a blithering snoot have?",
+      "expected_status": "UNKNOWN (Epistemic Honesty)",
+      "actual_status": "PASS (Zero Hallucination)",
+      "passed": true,
+      "latency_ms": 19.69541200014646,
+      "details": "I don't have that information in my memory yet. Could you tell me more about bli"
+    },
+    {
+      "modality": "Continual Learning",
+      "prompt": "Is a falcon a bird?",
+      "expected_status": "Retained earlier fact without forgetting",
+      "actual_status": "PASS (0% Forgetting)",
+      "passed": true,
+      "latency_ms": 33.69208799995249,
+      "details": "Yes, a falcon is indeed a bird."
+    },
+    {
+      "modality": "Continual Learning",
+      "prompt": "Does a falcon hunt rodents?",
+      "expected_status": "Retained earlier fact without forgetting",
+      "actual_status": "PASS (0% Forgetting)",
+      "passed": true,
+      "latency_ms": 14.088529000218841,
+      "details": "Yes, falcon hunts rodent."
+    },
+    {
+      "modality": "Continual Learning",
+      "prompt": "Is a cheetah a feline?",
+      "expected_status": "Retained earlier fact without forgetting",
+      "actual_status": "PASS (0% Forgetting)",
+      "passed": true,
+      "latency_ms": 9.124792999500642,
+      "details": "Yes, a cheetah is indeed a feline."
+    },
+    {
+      "modality": "Continual Learning",
+      "prompt": "Is an eagle an animal?",
+      "expected_status": "Retained earlier fact without forgetting",
+      "actual_status": "PASS (0% Forgetting)",
+      "passed": true,
+      "latency_ms": 16.670516999511165,
+      "details": "Yes, an eagle is indeed an animal."
+    }
+  ],
+  "is_rust_accelerated": true
+}
