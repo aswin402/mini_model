@@ -1,5 +1,5 @@
 ---
-id: concept_4a335d7a4867
+id: concept_c3e71e21cad5
 name: latent_satellite_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 2
-  induced_at: "2026-09-30T15:01:30Z"
+  induced_at: "2026-09-30T15:51:50Z"
 confidence: 1.0
 status: ACTIVE
 ---

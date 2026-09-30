@@ -1,5 +1,5 @@
 ---
-id: concept_c911cfd55a3c
+id: concept_80be2c607e89
 name: latent_metal_cluster
 aliases: []
 taxonomy:
@@ -14,7 +14,7 @@ attributes:
   is_latent: true
   category_utility: 0.08163265306122462
   constituent_count: 10
-  induced_at: "2026-09-30T15:01:30Z"
+  induced_at: "2026-09-30T15:51:50Z"
 confidence: 1.0
 status: ACTIVE
 ---

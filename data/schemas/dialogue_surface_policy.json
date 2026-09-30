@@ -108,6 +108,10 @@
     "tool_success_file_writer": "Successfully wrote {bytes_written} bytes to {file_path}.",
     "tool_success_bash_executor": "Command output:\n{stdout}",
     "tool_success_generic": "Tool '{tool_name}' executed successfully:\n{output}",
-    "tool_error": "I encountered an issue executing tool '{tool_name}': {error}"
+    "tool_error": "I encountered an issue executing tool '{tool_name}': {error}",
+    "agentic_plan_header": "I formulated and executed an autonomous {step_count}-step plan to accomplish your goal:\n[Trace: {trace_hash} | {execution_time_ms:.1f}ms]",
+    "agentic_plan_step": "• Step {step_idx}: {tool_name}({args_summary}) -> {output_summary} [{status}]",
+    "agentic_plan_final": "Final Result: {final_result}",
+    "agentic_plan_error": "The multi-step plan stopped at Step {step_idx} due to an error: {error}"
   }
 }

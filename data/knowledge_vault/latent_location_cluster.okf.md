@@ -1,5 +1,5 @@
 ---
-id: concept_8f9578b5039f
+id: concept_5ce62a7bf737
 name: latent_location_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 6
-  induced_at: "2026-09-30T15:01:30Z"
+  induced_at: "2026-09-30T15:51:50Z"
 confidence: 1.0
 status: ACTIVE
 ---

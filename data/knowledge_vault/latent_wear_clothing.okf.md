@@ -1,5 +1,5 @@
 ---
-id: concept_2adf9d615bb4
+id: concept_c53cb967cbe7
 name: latent_wear_clothing
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 11
-  induced_at: "2026-09-30T15:01:30Z"
+  induced_at: "2026-09-30T15:51:49Z"
 confidence: 1.0
 status: ACTIVE
 ---

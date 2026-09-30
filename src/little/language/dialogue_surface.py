@@ -548,6 +548,48 @@ class DialogueSurfaceEngine:
         )
         return tpl.format(tool_name=tool_name, output=output)
 
+    def verbalize_agentic_plan_result(self, result: Any) -> str:
+        """Verbalize an AgenticPlanExecutionResult trace with status badges and provenance."""
+        steps = getattr(result, "steps", ())
+        trace_hash = getattr(result, "trace_hash", "")[:8]
+        elapsed_ms = getattr(result, "total_execution_time_ms", 0.0)
+        success = getattr(result, "success", False)
+        final_output = getattr(result, "final_output", None)
+        error = getattr(result, "error", None)
+
+        hdr_tpl = self.policy.get_template(
+            "agentic_plan_header",
+            "I formulated and executed an autonomous {step_count}-step plan to accomplish your goal:\n[Trace: {trace_hash} | {execution_time_ms:.1f}ms]",
+        )
+        header = hdr_tpl.format(
+            step_count=len(steps),
+            trace_hash=trace_hash,
+            execution_time_ms=elapsed_ms,
+        )
+
+        lines = [header]
+
+        for s in steps:
+            args_summary = ", ".join(f"{k}={v!r}" for k, v in s.arguments_template.items())
+            if len(args_summary) > 40:
+                args_summary = args_summary[:37] + "..."
+
+            out_summary = str(s.observation or "")
+            if len(out_summary) > 50:
+                out_summary = out_summary[:47] + "..."
+
+            badge = "OK" if s.status == "SUCCESS" else s.status
+            lines.append(f"• Step {s.step_index}: {s.tool_name}({args_summary}) -> {out_summary} [{badge}]")
+
+        if success:
+            lines.append("")
+            lines.append(f"Final Result: {final_output}")
+        elif error:
+            lines.append("")
+            lines.append(f"The plan encountered an error: {error}")
+
+        return "\n".join(lines)
+
     def verbalize_code_synthesis(self, prog: Any) -> str:
         """Verbalize synthesized Python AST program and sandbox verification status."""
         lines = [

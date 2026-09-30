@@ -1,5 +1,5 @@
 ---
-id: concept_5dfdbb0649c7
+id: concept_cb89725de888
 name: latent_fruit_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 13
-  induced_at: "2026-09-30T15:01:30Z"
+  induced_at: "2026-09-30T15:51:49Z"
 confidence: 1.0
 status: ACTIVE
 ---

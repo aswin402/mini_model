@@ -1,0 +1,36 @@
+{
+  "format": "little.agentic_planning_policy.v1",
+  "max_steps": 8,
+  "max_retries_per_step": 2,
+  "step_timeout_seconds": 5.0,
+  "enable_backtracking": true,
+  "chainable_tools": [
+    "calculator",
+    "python_repl",
+    "system_time",
+    "web_search",
+    "file_reader",
+    "file_writer",
+    "bash_executor"
+  ],
+  "conjunction_delimiters": [
+    "and then",
+    "then",
+    "after that",
+    "next",
+    "and finally",
+    ";"
+  ],
+  "variable_reference_patterns": [
+    "\\$(?:result|output|prev(?:ious)?|step_\\d+)",
+    "\\b(?:the\\s+result|the\\s+output|the\\s+answer|that\\s+result)\\b"
+  ],
+  "invariant_gates": [
+    "I_dag_acyclicity",
+    "I_param_required",
+    "I_sort_type",
+    "I_security_sandbox",
+    "I_mutex_resource",
+    "I_ground_provenance"
+  ]
+}

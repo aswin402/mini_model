@@ -1,5 +1,5 @@
 ---
-id: concept_6482e730f934
+id: concept_2b00b6fd9235
 name: latent_with_wheel_vehicle
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.34074999999999994
   constituent_count: 11
-  induced_at: "2026-09-30T15:01:30Z"
+  induced_at: "2026-09-30T15:51:49Z"
 confidence: 1.0
 status: ACTIVE
 ---

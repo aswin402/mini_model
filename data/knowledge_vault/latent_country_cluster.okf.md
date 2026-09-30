@@ -1,5 +1,5 @@
 ---
-id: concept_41d35f6ff1ea
+id: concept_36803a5978d2
 name: latent_country_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.15539641203703708
   constituent_count: 42
-  induced_at: "2026-09-30T15:01:30Z"
+  induced_at: "2026-09-30T15:51:49Z"
 confidence: 1.0
 status: ACTIVE
 ---

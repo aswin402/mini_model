@@ -1,5 +1,5 @@
 ---
-id: concept_a26ed71d69af
+id: concept_a992702897b4
 name: latent_europe_mountain
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.25
   constituent_count: 2
-  induced_at: "2026-09-30T15:01:30Z"
+  induced_at: "2026-09-30T15:51:50Z"
 confidence: 1.0
 status: ACTIVE
 ---

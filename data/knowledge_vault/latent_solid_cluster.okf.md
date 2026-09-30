@@ -1,5 +1,5 @@
 ---
-id: concept_2f510998b7ea
+id: concept_33818179bfbf
 name: latent_solid_cluster
 aliases: []
 taxonomy:
@@ -14,7 +14,7 @@ attributes:
   is_latent: true
   category_utility: 0.19697563524724018
   constituent_count: 20
-  induced_at: "2026-09-30T15:01:30Z"
+  induced_at: "2026-09-30T15:51:49Z"
 confidence: 1.0
 status: ACTIVE
 ---

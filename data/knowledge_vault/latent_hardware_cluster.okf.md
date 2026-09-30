@@ -1,5 +1,5 @@
 ---
-id: concept_aa49bee463c6
+id: concept_6a5d4be02a92
 name: latent_hardware_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.25655976676384834
   constituent_count: 9
-  induced_at: "2026-09-30T15:01:30Z"
+  induced_at: "2026-09-30T15:51:50Z"
 confidence: 1.0
 status: ACTIVE
 ---

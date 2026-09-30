@@ -1,5 +1,5 @@
 ---
-id: concept_660973f4246b
+id: concept_159bd8428d56
 name: latent_entity_cluster
 aliases: []
 taxonomy:
@@ -12,7 +12,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 22
-  induced_at: "2026-09-30T15:01:30Z"
+  induced_at: "2026-09-30T15:51:49Z"
 confidence: 1.0
 status: ACTIVE
 ---

@@ -1,5 +1,5 @@
 ---
-id: concept_dd287e17ffe4
+id: concept_3583291161f7
 name: latent_swim_animal
 aliases: []
 taxonomy:
@@ -14,7 +14,7 @@ attributes:
   is_latent: true
   category_utility: 0.5
   constituent_count: 2
-  induced_at: "2026-09-30T14:59:58Z"
+  induced_at: "2026-09-30T15:22:10Z"
 confidence: 1.0
 status: ACTIVE
 ---

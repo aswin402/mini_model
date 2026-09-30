@@ -6,7 +6,10 @@ from dataclasses import dataclass
 import re
 
 from little.actions import (
+    ActionPolicy,
     ActionRouter,
+    AgenticPlanExecutionResult,
+    AgenticPlanner,
     ToolExecutionResult,
     ToolExecutor,
     ToolGroundingEngine,
@@ -50,6 +53,8 @@ class CognitiveKernel:
         controller: ThinkingController | None = None,
         runtime_policy: RuntimePolicy | None = None,
         neural_router: NeuralRouter | None = None,
+        action_policy: ActionPolicy | None = None,
+        workspace_root: Path | None = None,
     ) -> None:
         self.memory = memory
         explicit_runtime_policy = runtime_policy is not None
@@ -80,15 +85,23 @@ class CognitiveKernel:
         self.dialogue_surface = DialogueSurfaceEngine(
             policy=getattr(self.runtime_policy, "dialogue_surface", None)
         )
+        self.action_policy = action_policy or ActionPolicy.default(workspace_root=workspace_root)
         self.neural_router = neural_router or NeuralRouter()
-        self.action_router = ActionRouter(neural_router=self.neural_router)
-        self.tool_executor = ToolExecutor()
+        self.action_router = ActionRouter(action_policy=self.action_policy, neural_router=self.neural_router)
+        self.tool_executor = ToolExecutor(action_policy=self.action_policy)
         self.tool_grounder = ToolGroundingEngine(memory_store=self.memory)
         self.code_synthesizer = ASTCodeSynthesizer()
         self.headroom = HeadroomContextManager(memory=self.memory)
         self.wiki = LivingWiki(memory=self.memory)
         self.crawler = KnowledgeCrawler(memory=self.memory, wiki=self.wiki)
         self.latent_inducer = LatentKnotInducer(memory=self.memory, wiki=self.wiki)
+        self.agentic_planner = AgenticPlanner(
+            action_router=self.action_router,
+            tool_executor=self.tool_executor,
+            tool_grounder=self.tool_grounder,
+            action_policy=self.action_policy,
+            memory=self.memory,
+        )
 
     def chat(self, text: str) -> str:
         """Conversational chat interface with warm, articulate English dialogue and living wiki integration."""
@@ -204,6 +217,14 @@ class CognitiveKernel:
 
         # Neural routing over utterance
         routing = self.neural_router.route(remainder)
+
+        # Check for multi-step agentic planning loop intents
+        if self.agentic_planner.is_compound_goal(remainder):
+            plan_res = self.agentic_planner.plan_and_execute(remainder)
+            body = self.dialogue_surface.verbalize_agentic_plan_result(plan_res)
+            reply = self.dialogue_surface.compose_reply(greeting_word, body)
+            self.headroom.record_turn(role="assistant", text=reply)
+            return reply
 
         # Check action router for tool execution intents (with neural routing support)
         tool_call = self.action_router.route(remainder, routing_decision=routing)

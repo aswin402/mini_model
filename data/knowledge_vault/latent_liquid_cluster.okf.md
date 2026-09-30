@@ -1,5 +1,5 @@
 ---
-id: concept_226d6a3d59f3
+id: concept_d36220826357
 name: latent_liquid_cluster
 aliases: []
 taxonomy:
@@ -14,7 +14,7 @@ attributes:
   is_latent: true
   category_utility: 0.07407407407407406
   constituent_count: 3
-  induced_at: "2026-09-30T15:01:30Z"
+  induced_at: "2026-09-30T15:51:50Z"
 confidence: 1.0
 status: ACTIVE
 ---

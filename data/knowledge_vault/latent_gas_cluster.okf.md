@@ -1,5 +1,5 @@
 ---
-id: concept_71d4b19a17ea
+id: concept_1c2d4d58eff1
 name: latent_gas_cluster
 aliases: []
 taxonomy:
@@ -14,7 +14,7 @@ attributes:
   is_latent: true
   category_utility: 0.04081632653061231
   constituent_count: 7
-  induced_at: "2026-09-30T15:01:30Z"
+  induced_at: "2026-09-30T15:51:50Z"
 confidence: 1.0
 status: ACTIVE
 ---

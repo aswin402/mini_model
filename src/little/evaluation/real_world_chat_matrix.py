@@ -64,6 +64,14 @@ class RealWorldChatBenchmark:
 
     def _get_rss_mb(self) -> float:
         """Process resident set size in megabytes."""
+        try:
+            with open("/proc/self/status", "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        kb = float(line.split()[1])
+                        return round(kb / 1024.0, 2)
+        except OSError:
+            pass
         usage_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         return round(usage_kb / 1024.0, 2)
 
