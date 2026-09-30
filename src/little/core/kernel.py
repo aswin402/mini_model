@@ -19,6 +19,7 @@ from little.language.parser import LearningEngine, configured_parser
 from little.language.perception import DeterministicPerceptionAdapter, PerceptionAdapter
 from little.memory.store import MemoryStore
 from little.neural import NeuralRouter, RoutingDecision
+from little.procedural.code_synthesizer import ASTCodeSynthesizer, SynthesizedProgram
 from little.procedural.math_cas import UnitConversionGraph
 
 
@@ -30,6 +31,7 @@ class KernelOutcome:
     inference: InferenceResult | None = None
     tool_result: ToolExecutionResult | None = None
     routing_decision: RoutingDecision | None = None
+    code_program: SynthesizedProgram | None = None
 
 
 class CognitiveKernel:
@@ -77,6 +79,7 @@ class CognitiveKernel:
         self.action_router = ActionRouter(neural_router=self.neural_router)
         self.tool_executor = ToolExecutor()
         self.tool_grounder = ToolGroundingEngine(memory_store=self.memory)
+        self.code_synthesizer = ASTCodeSynthesizer()
 
     def chat(self, text: str) -> str:
         """Conversational chat interface with warm, articulate English dialogue."""
@@ -109,7 +112,9 @@ class CognitiveKernel:
         if not resolved_subj:
             resolved_subj = self.learner.dialogue.get_salient_subject()
 
-        if outcome.tool_result is not None:
+        if outcome.code_program is not None:
+            body = self.dialogue_surface.verbalize_code_synthesis(outcome.code_program)
+        elif outcome.tool_result is not None:
             body = self.dialogue_surface.verbalize_tool_result(outcome.tool_result)
         elif outcome.inference is not None:
             body = self.dialogue_surface.verbalize_inference(
@@ -152,6 +157,38 @@ class CognitiveKernel:
                 tool_result=exec_result,
                 routing_decision=routing,
             )
+
+        # Check programming & AST code synthesis pathway
+        has_code_intent = any(
+            kw in text.lower()
+            for kw in (
+                "write code", "generate code", "python code", "write a function",
+                "synthesize code", "implement", "code for", "code to", "python function",
+                "program to", "script to",
+            )
+        ) or (
+            routing.pathway.value == "code"
+            and any(
+                kw in text.lower()
+                for kw in ("code", "function", "write", "generate", "synthesize", "implement", "script", "program")
+            )
+        )
+        if has_code_intent:
+            prim = self.code_synthesizer.match_primitive(text)
+            if prim is not None:
+                prog = self.code_synthesizer.synthesize(prim, verify=True)
+                return KernelOutcome(
+                    frame=CandidateFrame(
+                        frame_id=generate_id("frame"),
+                        source_text=text,
+                        intent="action",
+                        claims=[],
+                        uncertainty=0.0,
+                    ),
+                    mode=CognitiveMode.FAST,
+                    routing_decision=routing,
+                    code_program=prog,
+                )
 
         frame = self.perception.perceive(
             text, memory=self.memory, context=self.learner.dialogue

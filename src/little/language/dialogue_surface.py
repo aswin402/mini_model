@@ -548,3 +548,18 @@ class DialogueSurfaceEngine:
         )
         return tpl.format(tool_name=tool_name, output=output)
 
+    def verbalize_code_synthesis(self, prog: Any) -> str:
+        """Verbalize synthesized Python AST program and sandbox verification status."""
+        lines = [
+            f"Here is the verified Python implementation for `{prog.name}`:\n",
+            "```python",
+            prog.code,
+            "```\n",
+            f"**Verification Status:** {prog.status}",
+            f"- Passed {len(prog.assertions)} test assertions in sandbox ({prog.execution_time_ms:.2f} ms).",
+        ]
+        if prog.execution_hash:
+            lines.append(f"- Execution Hash: `{prog.execution_hash[:16]}...`")
+        return "\n".join(lines)
+
+
