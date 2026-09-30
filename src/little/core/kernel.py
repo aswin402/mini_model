@@ -12,6 +12,7 @@ from little.actions import (
     ToolGroundingEngine,
 )
 from little.active.crawler import KnowledgeCrawler
+from little.active.latent_knot_inducer import LatentKnotInducer
 from little.core.contracts import CandidateFrame, SourceType
 from little.core.models import BeliefStatus, InferenceResult, LearningResult, generate_id
 from little.core.runtime_policy import RuntimePolicy
@@ -87,6 +88,7 @@ class CognitiveKernel:
         self.headroom = HeadroomContextManager(memory=self.memory)
         self.wiki = LivingWiki(memory=self.memory)
         self.crawler = KnowledgeCrawler(memory=self.memory, wiki=self.wiki)
+        self.latent_inducer = LatentKnotInducer(memory=self.memory, wiki=self.wiki)
 
     def chat(self, text: str) -> str:
         """Conversational chat interface with warm, articulate English dialogue and living wiki integration."""
@@ -148,6 +150,54 @@ class CognitiveKernel:
                 body = self.dialogue_surface.verbalize_wiki_page(page)
             else:
                 body = f"I do not have a wiki page for '{target}' in my memory yet."
+            reply = self.dialogue_surface.compose_reply(greeting_word, body)
+            self.headroom.record_turn(role="assistant", text=reply)
+            return reply
+
+        # 5. Autonomous Cobweb Concept Clustering & Latent Knot Induction Intent
+        if any(
+            lower_rem.startswith(prefix)
+            for prefix in (
+                "cluster concepts",
+                "run concept clustering",
+                "run concept induction",
+                "discover latent categories",
+                "discover latent knots",
+                "induce latent knots",
+            )
+        ):
+            report = self.latent_inducer.induce_latent_knots(min_cluster_size=2)
+            body = self.dialogue_surface.verbalize_latent_induction(report)
+            reply = self.dialogue_surface.compose_reply(greeting_word, body)
+            self.headroom.record_turn(role="assistant", text=reply)
+            return reply
+
+        # 6. List Active Latent Knots in Memory Intent
+        if any(
+            phrase in lower_rem
+            for phrase in (
+                "what latent categories have you discovered",
+                "what latent categories do you have",
+                "show latent knots",
+                "list latent knots",
+                "list latent categories",
+                "show latent categories",
+            )
+        ):
+            all_concepts = self.memory.list_concepts()
+            latent_concepts = [
+                c for c in all_concepts if c.name.startswith("latent_") or c.attributes.get("is_latent")
+            ]
+            body = self.dialogue_surface.verbalize_latent_knots(latent_concepts)
+            reply = self.dialogue_surface.compose_reply(greeting_word, body)
+            self.headroom.record_turn(role="assistant", text=reply)
+            return reply
+
+        # 7. Explain Concept Cluster Intent
+        if lower_rem.startswith("explain concept cluster for ") or lower_rem.startswith("explain cluster for "):
+            target = clean_rem.split("for", 1)[1].strip().rstrip("?.!")
+            info = self.latent_inducer.explain_concept_cluster(target)
+            body = self.dialogue_surface.verbalize_cluster_explanation(info, concept_name=target)
             reply = self.dialogue_surface.compose_reply(greeting_word, body)
             self.headroom.record_turn(role="assistant", text=reply)
             return reply

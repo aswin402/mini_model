@@ -604,5 +604,52 @@ class DialogueSurfaceEngine:
             lines.append(f"- Linked concepts: {linked_str}")
         return "\n".join(lines)
 
+    def verbalize_latent_induction(self, report: Any) -> str:
+        """Verbalize autonomous Cobweb clustering and latent knot induction results."""
+        lines = [
+            f"Autonomous Cobweb clustering completed in {report.duration_ms:.2f} ms:",
+            f"- Concepts analyzed: {report.total_concepts_analyzed}",
+            f"- Clusters formed: {report.clusters_formed}",
+            f"- Latent knots induced: {report.latent_knots_induced}",
+        ]
+        if report.latent_knots_rejected > 0:
+            lines.append(f"- Candidate knots rejected by invariant gates: {report.latent_knots_rejected}")
+        if report.inductions:
+            lines.append("\n**Induced Latent Knots:**")
+            for ind in report.inductions[:8]:
+                if ind.verification_passed:
+                    members_str = ", ".join(f"[[{c}]]" for c in ind.constituent_concepts[:6])
+                    if len(ind.constituent_concepts) > 6:
+                        members_str += f" and {len(ind.constituent_concepts) - 6} more"
+                    lines.append(f"- **{ind.latent_name}** (CU: {ind.category_utility:.2f}): unifies {members_str}")
+        return "\n".join(lines)
+
+    def verbalize_latent_knots(self, latent_concepts: list[Any]) -> str:
+        """Verbalize list of active latent knots in memory."""
+        if not latent_concepts:
+            return "No latent concept knots have been induced in memory yet. You can trigger discovery with 'cluster concepts'."
+        lines = [f"Found {len(latent_concepts)} induced latent concept knot(s) in memory:"]
+        for c in latent_concepts:
+            cnt = c.attributes.get("constituent_count", 0)
+            cnt_str = f" ({cnt} concepts)" if cnt else ""
+            lines.append(f"- **{c.name}**{cnt_str}")
+        return "\n".join(lines)
+
+    def verbalize_cluster_explanation(self, info: dict[str, Any] | None, concept_name: str) -> str:
+        """Verbalize explanation of a concept's latent cluster membership."""
+        if not info:
+            return f"Concept '{concept_name}' has not been assigned to a latent cluster yet."
+        cat = info.get("latent_category", "")
+        peers = info.get("peer_concepts", [])
+        cu = info.get("category_utility", 0.0)
+        peers_str = ", ".join(f"[[{p}]]" for p in peers[:8])
+        if len(peers) > 8:
+            peers_str += f" and {len(peers) - 8} more"
+        return (
+            f"**{concept_name.title()}** is clustered under the latent category **{cat}** (Category Utility: {cu:.2f}).\n"
+            f"- Co-clustered peer concepts: {peers_str}."
+        )
+
+
 
 

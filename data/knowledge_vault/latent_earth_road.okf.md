@@ -1,0 +1,27 @@
+---
+id: concept_b841c4c3249b
+name: latent_earth_road
+aliases: []
+taxonomy:
+  is_a:
+    - road
+  disjoint_with: []
+mereology:
+  parts: []
+procedural_skills: []
+attributes:
+  is_latent: true
+  category_utility: 1.0
+  constituent_count: 6
+  induced_at: "2026-09-30T14:58:24Z"
+confidence: 1.0
+status: ACTIVE
+---
+
+# Latent_Earth_Road
+
+**Latent_Earth_Road** is a concept registered in the LITTLE living knowledge vault.
+- **Taxonomic Hierarchy**: Belongs to [[road]].
+
+## Notes & Empirical Grounding
+Recorded in persistent SQLite memory with confidence 1.00.
