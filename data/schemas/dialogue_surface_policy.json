@@ -22,7 +22,7 @@
     },
     "thank_you": {
       "patterns": [
-        "^(?:thank\\s+you(?:\\s+so\\s+much|\\s+very\\s+much)?|thanks(?:\\s+a\\s+lot|\\s+so\\s+much)?|much\\s+appreciated|appreciate\\s+it)(?:\\s+for\\s+(?:all\\s+)?(?:your\\s+)?(?:help|assistance|time))?[!.]?$"
+        "^(?:thank\\s+you(?:\\s+so\\s+much|\\s+very\\s+much)?|thanks(?:\\s+a\\s+lot|\\s+so\\s+much)?|much\\s+appreciated|appreciate\\s+it)(?:\\s+for\\s+(?:all\\s+)?(?:your\\s+)?(?:help|assistance|time))?(?:\\s*,?\\s*(?:i\\s+)?(?:greatly\\s+)?appreciate\\s+it)?[!.]?$"
       ],
       "responses": [
         "You're very welcome!",
@@ -75,7 +75,7 @@
     }
   },
   "mixed_intent_splitter": {
-    "leading_greeting_regex": "^(hello\\s+there|hi\\s+there|hey\\s+there|good\\s+morning|good\\s+afternoon|good\\s+evening|hello|hi|hey|greetings)[,!.]?\\s+(.+)$"
+    "leading_greeting_regex": "^(hello\\s+there|hi\\s+there|hey\\s+there|good\\s+morning|good\\s+afternoon|good\\s+evening|whats\\s+up(?:\\s+bro)?|what's\\s+up(?:\\s+bro)?|sup|hello|hi|hey|greetings)[,!.]?\\s+(.+)$"
   },
   "verbalizer_templates": {
     "affirmative_taxonomy": "Yes, {subject_article} {subject} is indeed {target_article} {target}.",

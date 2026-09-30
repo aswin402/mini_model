@@ -71,6 +71,16 @@ class ActionRouter:
         """Extract arithmetic expression from conversational slang or word problems."""
         clean = text.lower().strip()
 
+        # Multi-operator / compound arithmetic expressions first (avoid equations with '='):
+        if "=" not in clean:
+            m_compound = re.search(
+                r"(\(?\s*\d+(?:\.\d+)?\s*(?:[+\-*/]|(?:\*\*))\s*[-+*/()0-9\s.^]+)", clean
+            )
+            if m_compound:
+                candidate = m_compound.group(1).rstrip("?. ").strip()
+                if any(op in candidate for op in ("+", "-", "*", "/", "**")):
+                    return candidate
+
         # Multiplication: "multiply 15 by 4", "15 times 4", "product of 15 and 4"
         m_mult = re.search(
             r"(?:multiply|times|product\s+of)\s+(\d+(?:\.\d+)?)\s+(?:by|and|\*)\s+(\d+(?:\.\d+)?)",
