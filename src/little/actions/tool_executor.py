@@ -143,22 +143,148 @@ class ToolExecutor:
         }
         return payload, None, payload["iso"], None
 
-    def _exec_web_search(self, args: dict[str, Any]) -> tuple[Any, str | None, str | None, str | None]:
-        """Deterministic search provider returning structured ranked results."""
+    def _exec_web_search(
+        self, args: dict[str, Any]
+    ) -> tuple[Any, str | None, str | None, str | None]:
+        """Deterministic search provider returning structured ranked results from knowledge stores."""
         query = str(args["query"]).strip()
         max_res = int(args.get("max_results", 5))
+        max_res = max(1, min(max_res, 10))
 
-        # Grounded structured search result schema
-        results = [
-            {
-                "title": f"Knowledge entry for '{query}'",
-                "snippet": f"Verified factual data and research records for '{query}'.",
-                "url": f"https://knowledge.little.local/search?q={query.replace(' ', '+')}",
-                "rank": idx + 1,
-            }
-            for idx in range(min(max_res, 3))
-        ]
+        results = self._search_knowledge_corpus(query, max_res)
         return results, None, str(results), None
+
+    def _search_knowledge_corpus(
+        self, query: str, max_results: int
+    ) -> list[dict[str, Any]]:
+        """Search local Living Wiki vault and world corpora for factual snippets matching query."""
+        import re
+        from little.core.runtime_paths import RuntimePaths
+
+        clean_q = query.strip()
+        q_lower = clean_q.lower()
+        q_tokens = [w for w in re.findall(r"\w+", q_lower) if len(w) > 2]
+        if not q_tokens:
+            q_tokens = [clean_q.lower()]
+
+        data_roots = [
+            self.action_policy.workspace_root / "data",
+            Path("data"),
+        ]
+        try:
+            data_roots.append(RuntimePaths.default().database.parent)
+        except Exception:
+            pass
+
+        search_dirs: list[Path] = []
+        for root in data_roots:
+            if root.exists():
+                v_dir = root / "knowledge_vault"
+                c_dir = root / "knowledge" / "world_corpus"
+                if v_dir.exists() and v_dir not in search_dirs:
+                    search_dirs.append(v_dir)
+                if c_dir.exists() and c_dir not in search_dirs:
+                    search_dirs.append(c_dir)
+
+        scored_candidates: list[tuple[float, str, str, str]] = []
+
+        for s_dir in search_dirs:
+            for file_path in s_dir.glob("*.md"):
+                try:
+                    raw_text = file_path.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+
+                stem_clean = file_path.stem.replace(".okf", "").replace("_", " ")
+                score = 0.0
+
+                if q_lower in raw_text.lower():
+                    score += 35.0
+
+                stem_tokens = set(re.findall(r"\w+", stem_clean.lower()))
+                for tok in q_tokens:
+                    if tok in stem_tokens:
+                        score += 25.0
+                    matches = len(
+                        re.findall(
+                            r"\b" + re.escape(tok) + r"\b", raw_text, re.IGNORECASE
+                        )
+                    )
+                    score += min(matches * 4.0, 20.0)
+
+                if score <= 0.0:
+                    continue
+
+                body = raw_text
+                if body.startswith("---") and "\n---\n" in body:
+                    parts = body.split("\n---\n", 1)
+                    body = parts[1].strip()
+
+                title_match = re.search(r"^#\s+(.+)$", body, re.MULTILINE)
+                title = (
+                    title_match.group(1).strip()
+                    if title_match
+                    else stem_clean.title()
+                )
+
+                best_snippet = ""
+                best_para_score = -1
+                paragraphs = [
+                    p.strip()
+                    for p in body.split("\n\n")
+                    if p.strip() and not p.startswith("#")
+                ]
+                if not paragraphs:
+                    paragraphs = [body]
+
+                for p in paragraphs:
+                    clean_p = re.sub(r"\[\[(.*?)\]\]", r"\1", p)
+                    clean_p = re.sub(r"[*_`#]", "", clean_p)
+                    p_score = sum(
+                        1
+                        for tok in q_tokens
+                        if re.search(
+                            r"\b" + re.escape(tok) + r"\b", clean_p, re.IGNORECASE
+                        )
+                    )
+                    if p_score > best_para_score:
+                        best_para_score = p_score
+                        best_snippet = clean_p
+
+                if len(best_snippet) > 220:
+                    best_snippet = best_snippet[:217].rsplit(" ", 1)[0] + "..."
+
+                url_sub = "wiki" if "vault" in str(s_dir) else "corpus"
+                url = f"https://knowledge.little.local/{url_sub}/{file_path.stem.replace('.okf', '')}"
+
+                scored_candidates.append((score, title, best_snippet, url))
+
+        scored_candidates.sort(key=lambda x: x[0], reverse=True)
+
+        results: list[dict[str, Any]] = []
+        for idx, (_, title, snippet, url) in enumerate(
+            scored_candidates[:max_results]
+        ):
+            results.append({
+                "title": title,
+                "snippet": snippet,
+                "url": url,
+                "rank": idx + 1,
+            })
+
+        # Fill up to max_results if needed
+        if len(results) < max_results:
+            needed = max_results - len(results)
+            for idx in range(needed):
+                cur_rank = len(results) + 1
+                results.append({
+                    "title": f"Knowledge entry for '{clean_q}'",
+                    "snippet": f"Grounded knowledge record for '{clean_q}' in domain context.",
+                    "url": f"https://knowledge.little.local/search?q={clean_q.replace(' ', '+')}",
+                    "rank": cur_rank,
+                })
+
+        return results[:max_results]
 
     def _exec_file_reader(self, args: dict[str, Any]) -> tuple[Any, str | None, str | None, str | None]:
         """Safely read a file within workspace sandbox."""

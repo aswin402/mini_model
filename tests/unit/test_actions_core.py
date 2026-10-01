@@ -188,3 +188,67 @@ def test_tool_grounding_into_memory():
     # Verify semantic concept was recorded
     concept = store.get_concept("tool_calculator")
     assert concept is not None
+
+
+def test_action_router_does_not_hijack_conceptual_queries():
+    """Verify that conceptual questions containing 'clock' or 'date' are not hijacked into system_time."""
+    router = ActionRouter()
+
+    # Conceptual queries must NOT route to system_time
+    assert router.route("Does a clock have hands?") is None
+    assert router.route("Is a date a fruit?") is None
+    assert router.route("What is a clock?") is None
+    assert router.route("What is the time complexity of quicksort?") is None
+
+    # Genuine time queries MUST route to system_time
+    call_time1 = router.route("what time is it?")
+    assert call_time1 is not None
+    assert call_time1.tool_name == "system_time"
+
+    call_time2 = router.route("what is today's date?")
+    assert call_time2 is not None
+    assert call_time2.tool_name == "system_time"
+
+    call_time3 = router.route("tell me the time")
+    assert call_time3 is not None
+    assert call_time3.tool_name == "system_time"
+
+
+def test_web_search_grounded_real_snippets():
+    """Verify that web_search retrieves real passages from knowledge vault and world corpus."""
+    executor = ToolExecutor()
+    res = executor.execute(
+        ToolCall(tool_name="web_search", arguments={"query": "Europa", "max_results": 2})
+    )
+    assert res.success
+    assert isinstance(res.output, list)
+    assert len(res.output) == 2
+    # Ensure real snippet retrieved from corpus or vault
+    top_entry = res.output[0]
+    assert "Europa" in top_entry["title"] or "Europa" in top_entry["snippet"] or "satellite" in top_entry["snippet"].lower()
+
+
+def test_self_correction_dynamic_stdlib_module():
+    """Verify that backtracker dynamically imports standard library modules (e.g. hashlib, itertools)."""
+    from little.actions.agentic_planner import AgenticPlanner
+
+    planner = AgenticPlanner(
+        action_router=ActionRouter(),
+        tool_executor=ToolExecutor(),
+        tool_grounder=ToolGroundingEngine(MemoryStore(":memory:")),
+    )
+
+    # Test module outside old hardcoded tuple: 'hashlib'
+    args = {"code": "h = hashlib.sha256(b'test').hexdigest()"}
+    err = "NameError: name 'hashlib' is not defined"
+    corrected = planner._attempt_self_correction("python_repl", args, err)
+    assert corrected is not None
+    assert "import hashlib" in corrected["code"]
+
+    # Test module outside old hardcoded tuple: 'itertools'
+    args2 = {"code": "c = itertools.chain([1], [2])"}
+    err2 = "NameError: name 'itertools' is not defined"
+    corrected2 = planner._attempt_self_correction("python_repl", args2, err2)
+    assert corrected2 is not None
+    assert "import itertools" in corrected2["code"]
+

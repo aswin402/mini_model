@@ -121,17 +121,33 @@ class ActionRouter:
 
         return None
 
+    _TIME_QUERY_PATTERN = re.compile(
+        r"^(?:"
+        r"what(?:'s|\s+is)?\s+(?:the\s+)?(?:current\s+)?(?:time(?:\s+and\s+date)?|date(?:\s+and\s+time)?|day|timestamp)(?:\s+today)?"
+        r"|what\s+time\s+is\s+it(?:\s+now)?"
+        r"|what\s+(?:day|date)\s+is\s+it(?:\s+today)?"
+        r"|what(?:'s|\s+is)\s+today(?:'s)?(?:\s+date)?"
+        r"|what\s+date\s+is\s+today"
+        r"|tell\s+me\s+the\s+(?:current\s+)?(?:time(?:\s+and\s+date)?|date(?:\s+and\s+time)?)"
+        r"|current\s+(?:time(?:\s+and\s+date)?|date(?:\s+and\s+time)?|timestamp)"
+        r"|system\s+(?:time|date)"
+        r"|(?:current\s+)?system\s+clock"
+        r"|(?:the\s+)?(?:current\s+)?time\?*$"
+        r")\??$",
+        re.IGNORECASE,
+    )
+
     def _extract_natural_tool(self, text: str) -> ToolCall | None:
         """Extract tool invocation from conversational tool requests."""
         clean = text.lower().strip()
 
-        # System time & date
-        if any(w in clean for w in ("time", "date", "clock", "today")):
+        # System time & date query
+        if self._TIME_QUERY_PATTERN.search(clean):
             return ToolCall(tool_name="system_time", arguments={"timezone": "UTC"})
 
         # Web search
         m_search = re.search(
-            r"(?:search(?:\s+(?:the\s+web\s+for|for))?|google|lookup)\s+(.+?)\??$",
+            r"^(?:search(?:\s+(?:the\s+web\s+for|for))?|google|lookup)\s+(.+?)\??$",
             clean,
         )
         if m_search:

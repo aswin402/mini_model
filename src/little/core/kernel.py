@@ -16,6 +16,7 @@ from little.actions import (
 )
 from little.active.crawler import KnowledgeCrawler
 from little.active.latent_knot_inducer import LatentKnotInducer
+from little.core.cognitive_command import CognitiveCommandRegistry
 from little.core.contracts import CandidateFrame, SourceType
 from little.core.models import BeliefStatus, InferenceResult, LearningResult, generate_id
 from little.core.runtime_policy import RuntimePolicy
@@ -102,6 +103,7 @@ class CognitiveKernel:
             action_policy=self.action_policy,
             memory=self.memory,
         )
+        self.command_dispatcher = CognitiveCommandRegistry()
 
     def chat(self, text: str) -> str:
         """Conversational chat interface with warm, articulate English dialogue and living wiki integration."""
@@ -121,97 +123,11 @@ class CognitiveKernel:
                 return reply
 
         clean_rem = remainder.strip()
-        lower_rem = clean_rem.lower()
 
-        # 1. Autonomous Knowledge Ingestion & Crawling Intent
-        if any(
-            lower_rem.startswith(prefix)
-            for prefix in ("study text:", "crawl text:", "ingest text:", "ingest document:")
-        ):
-            _, doc_text = clean_rem.split(":", 1)
-            report = self.crawler.crawl_text(doc_text.strip(), source_reference="chat_ingest")
-            body = self.dialogue_surface.verbalize_crawl_report(report)
-            reply = self.dialogue_surface.compose_reply(greeting_word, body)
-            self.headroom.record_turn(role="assistant", text=reply)
-            return reply
-
-        # 2. Living Wiki TurboQuant Semantic Search Intent
-        if lower_rem.startswith("search wiki for ") or lower_rem.startswith("search the wiki for "):
-            query_str = clean_rem.split("for", 1)[1].strip() if "for" in clean_rem else clean_rem
-            search_results = self.wiki.search_semantic(query_str, top_k=5)
-            body = self.dialogue_surface.verbalize_wiki_search(query_str, search_results)
-            reply = self.dialogue_surface.compose_reply(greeting_word, body)
-            self.headroom.record_turn(role="assistant", text=reply)
-            return reply
-
-        # 3. Living Wiki Backlinks Intent
-        if lower_rem.startswith("backlinks to ") or "what are the backlinks to " in lower_rem or "what links to " in lower_rem:
-            m = re.search(r"(?:backlinks to|what links to)\s+([^?.!]+)", clean_rem, re.IGNORECASE)
-            target = m.group(1).strip().lower() if m else clean_rem
-            backlinks = self.wiki.get_backlinks(target)
-            body = self.dialogue_surface.verbalize_backlinks(target, backlinks)
-            reply = self.dialogue_surface.compose_reply(greeting_word, body)
-            self.headroom.record_turn(role="assistant", text=reply)
-            return reply
-
-        # 4. Living Wiki OKF Page Summary Intent
-        if lower_rem.startswith("wiki page for ") or lower_rem.startswith("show wiki page for "):
-            m = re.search(r"(?:wiki page for|show wiki page for)\s+([^?.!]+)", clean_rem, re.IGNORECASE)
-            target = m.group(1).strip().lower() if m else clean_rem
-            page = self.wiki.get_page(target)
-            if page is not None:
-                body = self.dialogue_surface.verbalize_wiki_page(page)
-            else:
-                body = f"I do not have a wiki page for '{target}' in my memory yet."
-            reply = self.dialogue_surface.compose_reply(greeting_word, body)
-            self.headroom.record_turn(role="assistant", text=reply)
-            return reply
-
-        # 5. Autonomous Cobweb Concept Clustering & Latent Knot Induction Intent
-        if any(
-            lower_rem.startswith(prefix)
-            for prefix in (
-                "cluster concepts",
-                "run concept clustering",
-                "run concept induction",
-                "discover latent categories",
-                "discover latent knots",
-                "induce latent knots",
-            )
-        ):
-            report = self.latent_inducer.induce_latent_knots(min_cluster_size=2)
-            body = self.dialogue_surface.verbalize_latent_induction(report)
-            reply = self.dialogue_surface.compose_reply(greeting_word, body)
-            self.headroom.record_turn(role="assistant", text=reply)
-            return reply
-
-        # 6. List Active Latent Knots in Memory Intent
-        if any(
-            phrase in lower_rem
-            for phrase in (
-                "what latent categories have you discovered",
-                "what latent categories do you have",
-                "show latent knots",
-                "list latent knots",
-                "list latent categories",
-                "show latent categories",
-            )
-        ):
-            all_concepts = self.memory.list_concepts()
-            latent_concepts = [
-                c for c in all_concepts if c.name.startswith("latent_") or c.attributes.get("is_latent")
-            ]
-            body = self.dialogue_surface.verbalize_latent_knots(latent_concepts)
-            reply = self.dialogue_surface.compose_reply(greeting_word, body)
-            self.headroom.record_turn(role="assistant", text=reply)
-            return reply
-
-        # 7. Explain Concept Cluster Intent
-        if lower_rem.startswith("explain concept cluster for ") or lower_rem.startswith("explain cluster for "):
-            target = clean_rem.split("for", 1)[1].strip().rstrip("?.!")
-            info = self.latent_inducer.explain_concept_cluster(target)
-            body = self.dialogue_surface.verbalize_cluster_explanation(info, concept_name=target)
-            reply = self.dialogue_surface.compose_reply(greeting_word, body)
+        # Cognitive directives & meta-knowledge command dispatch
+        command_body = self.command_dispatcher.dispatch(clean_rem, self)
+        if command_body is not None:
+            reply = self.dialogue_surface.compose_reply(greeting_word, command_body)
             self.headroom.record_turn(role="assistant", text=reply)
             return reply
 

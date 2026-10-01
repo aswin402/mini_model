@@ -474,8 +474,77 @@ class DialogueSurfaceEngine:
 
         return _clean(raw_ans) if raw_ans else ""
 
+    def _format_calculator_result(self, output: Any, args: dict[str, Any], tool_name: str) -> str:
+        tpl = self.policy.get_template(
+            "tool_success_calculator", "The calculated result is {output}."
+        )
+        return tpl.format(output=output)
+
+    def _format_python_repl_result(self, output: Any, args: dict[str, Any], tool_name: str) -> str:
+        tpl = self.policy.get_template(
+            "tool_success_python_repl", "Python execution output:\n{output}"
+        )
+        return tpl.format(output=output)
+
+    def _format_system_time_result(self, output: Any, args: dict[str, Any], tool_name: str) -> str:
+        if isinstance(output, dict):
+            tpl = self.policy.get_template(
+                "tool_success_system_time", "The current time is {time} on {date} ({timezone})."
+            )
+            return tpl.format(
+                time=output.get("time", ""),
+                date=output.get("date", ""),
+                timezone=output.get("timezone", "UTC"),
+            )
+        return self._format_generic_tool_result(output, args, tool_name)
+
+    def _format_web_search_result(self, output: Any, args: dict[str, Any], tool_name: str) -> str:
+        if isinstance(output, list):
+            tpl = self.policy.get_template(
+                "tool_success_web_search", "I found the following search results for '{query}':\n{results}"
+            )
+            res_lines = [
+                f"- {item.get('title')}: {item.get('snippet')}"
+                for item in output
+                if isinstance(item, dict)
+            ]
+            query_val = args.get("query", "")
+            return tpl.format(query=query_val, results="\n".join(res_lines))
+        return self._format_generic_tool_result(output, args, tool_name)
+
+    def _format_file_reader_result(self, output: Any, args: dict[str, Any], tool_name: str) -> str:
+        tpl = self.policy.get_template(
+            "tool_success_file_reader", "Contents of {file_path}:\n{output}"
+        )
+        return tpl.format(file_path=args.get("file_path", ""), output=output)
+
+    def _format_file_writer_result(self, output: Any, args: dict[str, Any], tool_name: str) -> str:
+        if isinstance(output, dict):
+            tpl = self.policy.get_template(
+                "tool_success_file_writer", "Successfully wrote {bytes_written} bytes to {file_path}."
+            )
+            return tpl.format(
+                bytes_written=output.get("bytes_written", 0),
+                file_path=output.get("file_path", ""),
+            )
+        return self._format_generic_tool_result(output, args, tool_name)
+
+    def _format_bash_executor_result(self, output: Any, args: dict[str, Any], tool_name: str) -> str:
+        if isinstance(output, dict):
+            tpl = self.policy.get_template(
+                "tool_success_bash_executor", "Command output:\n{stdout}"
+            )
+            return tpl.format(stdout=output.get("stdout", ""))
+        return self._format_generic_tool_result(output, args, tool_name)
+
+    def _format_generic_tool_result(self, output: Any, args: dict[str, Any], tool_name: str) -> str:
+        tpl = self.policy.get_template(
+            "tool_success_generic", "Tool '{tool_name}' executed successfully:\n{output}"
+        )
+        return tpl.format(tool_name=tool_name, output=output)
+
     def verbalize_tool_result(self, result: Any) -> str:
-        """Verbalize a ToolExecutionResult using externalized schema templates."""
+        """Verbalize a ToolExecutionResult using schema-driven strategy dispatch."""
         tool_name = getattr(result, "tool_name", "tool")
         success = getattr(result, "success", False)
         output = getattr(result, "output", None)
@@ -488,65 +557,18 @@ class DialogueSurfaceEngine:
             )
             return tpl.format(tool_name=tool_name, error=error or "Unknown error")
 
-        if tool_name == "calculator":
-            tpl = self.policy.get_template(
-                "tool_success_calculator", "The calculated result is {output}."
-            )
-            return tpl.format(output=output)
+        dispatch_table = {
+            "calculator": self._format_calculator_result,
+            "python_repl": self._format_python_repl_result,
+            "system_time": self._format_system_time_result,
+            "web_search": self._format_web_search_result,
+            "file_reader": self._format_file_reader_result,
+            "file_writer": self._format_file_writer_result,
+            "bash_executor": self._format_bash_executor_result,
+        }
 
-        if tool_name == "python_repl":
-            tpl = self.policy.get_template(
-                "tool_success_python_repl", "Python execution output:\n{output}"
-            )
-            return tpl.format(output=output)
-
-        if tool_name == "system_time" and isinstance(output, dict):
-            tpl = self.policy.get_template(
-                "tool_success_system_time", "The current time is {time} on {date} ({timezone})."
-            )
-            return tpl.format(
-                time=output.get("time", ""),
-                date=output.get("date", ""),
-                timezone=output.get("timezone", "UTC"),
-            )
-
-        if tool_name == "web_search" and isinstance(output, list):
-            tpl = self.policy.get_template(
-                "tool_success_web_search", "I found the following search results for '{query}':\n{results}"
-            )
-            res_lines = [
-                f"- {item.get('title')}: {item.get('snippet')}"
-                for item in output
-                if isinstance(item, dict)
-            ]
-            query_val = args.get("query", "")
-            return tpl.format(query=query_val, results="\n".join(res_lines))
-
-        if tool_name == "file_reader":
-            tpl = self.policy.get_template(
-                "tool_success_file_reader", "Contents of {file_path}:\n{output}"
-            )
-            return tpl.format(file_path=args.get("file_path", ""), output=output)
-
-        if tool_name == "file_writer" and isinstance(output, dict):
-            tpl = self.policy.get_template(
-                "tool_success_file_writer", "Successfully wrote {bytes_written} bytes to {file_path}."
-            )
-            return tpl.format(
-                bytes_written=output.get("bytes_written", 0),
-                file_path=output.get("file_path", ""),
-            )
-
-        if tool_name == "bash_executor" and isinstance(output, dict):
-            tpl = self.policy.get_template(
-                "tool_success_bash_executor", "Command output:\n{stdout}"
-            )
-            return tpl.format(stdout=output.get("stdout", ""))
-
-        tpl = self.policy.get_template(
-            "tool_success_generic", "Tool '{tool_name}' executed successfully:\n{output}"
-        )
-        return tpl.format(tool_name=tool_name, output=output)
+        formatter = dispatch_table.get(tool_name, self._format_generic_tool_result)
+        return formatter(output, args, tool_name)
 
     def verbalize_agentic_plan_result(self, result: Any) -> str:
         """Verbalize an AgenticPlanExecutionResult trace with status badges and provenance."""

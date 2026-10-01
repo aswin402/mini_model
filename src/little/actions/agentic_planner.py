@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime
 import re
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -490,13 +491,18 @@ class AgenticPlanner:
         """Heuristic backtracker: inspect error and synthesize corrected arguments."""
         err_lower = error_msg.lower()
 
-        # Case 1: Python REPL missing standard import (e.g. math, json, sys, os)
+        # Case 1: Python REPL missing standard import
         if tool_name == "python_repl" and "code" in arguments:
             code = str(arguments["code"])
             m_name = re.search(r"name\s+'([a-zA-Z0-9_]+)'\s+is\s+not\s+defined", error_msg)
             if m_name:
                 missing_mod = m_name.group(1)
-                if missing_mod in ("math", "json", "sys", "os", "re", "datetime", "random", "statistics"):
+                stdlib_modules = getattr(
+                    sys,
+                    "stdlib_module_names",
+                    {"math", "json", "sys", "os", "re", "datetime", "random", "statistics"},
+                )
+                if missing_mod in stdlib_modules:
                     fixed_code = f"import {missing_mod}\n{code}"
                     corrected = dict(arguments)
                     corrected["code"] = fixed_code
