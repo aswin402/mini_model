@@ -387,8 +387,15 @@ class AgenticPlanner:
                 arguments={"file_path": m_read.group("file_path").strip()},
             )
 
-        # 4. Calculator shortcuts: "calculate X" or math expressions
+        # 4. Calculator shortcuts: "calculate X", "what is 250 * 4", etc.
         m_calc = re.search(r"^(?:calc(?:ulate)?|compute)\s+(.+)$", text, re.IGNORECASE)
+        if not m_calc:
+            m_what_math = re.search(r"^(?:what\s+is|how\s+much\s+is|evaluate)\s+(.+?)\??$", text, re.IGNORECASE)
+            if m_what_math:
+                math_cand = m_what_math.group(1).strip()
+                if any(c.isdigit() for c in math_cand) and any(op in math_cand for op in ("+", "-", "*", "/", "%", "of")):
+                    m_calc = m_what_math
+
         if m_calc:
             return ToolCall(
                 tool_name="calculator",

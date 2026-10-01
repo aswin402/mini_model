@@ -4,7 +4,7 @@
     "calculator": [
       "^calc(?:ulate)?\\s+(?P<expression>.+)$",
       "^compute\\s+(?P<expression>.+)$",
-      "^what\\s+is\\s+(?P<expression>[0-9\\.\\+\\-\\*/\\^\\(\\)\\s]{3,})$"
+      "^what\\s+is\\s+(?P<expression>[0-9\\.\\+\\-\\*/\\^\\(\\)\\%\\s]+(?:of\\s+[0-9\\.]+)?)\\??$"
     ],
     "python_repl": [
       "^(?:run|exec(?:ute)?)\\s+python\\s*:?\\s*(?P<code>.+)$",

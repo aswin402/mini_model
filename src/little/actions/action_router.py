@@ -50,16 +50,15 @@ class ActionRouter:
                         arguments=typed_args,
                     )
 
-        # 2. Neural pathway semantic dispatch
-        decision = routing_decision or self.neural_router.route(text)
-        if decision.pathway == Pathway.MATH:
-            math_expr = self._extract_natural_arithmetic(text)
-            if math_expr:
-                return ToolCall(
-                    tool_name="calculator",
-                    arguments={"expression": math_expr},
-                )
+        # 2. Natural arithmetic and neural pathway semantic dispatch
+        math_expr = self._extract_natural_arithmetic(text)
+        if math_expr:
+            return ToolCall(
+                tool_name="calculator",
+                arguments={"expression": math_expr},
+            )
 
+        decision = routing_decision or self.neural_router.route(text)
         if decision.pathway == Pathway.TOOL:
             tool_call = self._extract_natural_tool(text)
             if tool_call:
@@ -80,6 +79,11 @@ class ActionRouter:
                 candidate = m_compound.group(1).rstrip("?. ").strip()
                 if any(op in candidate for op in ("+", "-", "*", "/", "**")):
                     return candidate
+
+        # Percentage calculation: "15% of 800", "what is 15 percent of 800"
+        m_pct = re.search(r"(\d+(?:\.\d+)?)\s*(?:%|percent)\s*(?:of)?\s*(\d+(?:\.\d+)?)", clean)
+        if m_pct:
+            return f"({m_pct.group(1)} / 100) * {m_pct.group(2)}"
 
         # Multiplication: "multiply 15 by 4", "15 times 4", "product of 15 and 4"
         m_mult = re.search(

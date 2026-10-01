@@ -5,6 +5,8 @@ aliases: []
 taxonomy:
   is_a:
     - artifact
+    - latent_artifact_cluster
+    - latent_transportation_artifact
     - motor vehicle
     - vehicle
   disjoint_with: []
@@ -36,7 +38,7 @@ relations:
 # Car
 
 **Car** is a concept registered in the LITTLE living knowledge vault.
-- **Taxonomic Hierarchy**: Belongs to [[vehicle]], [[motor vehicle]], [[artifact]].
+- **Taxonomic Hierarchy**: Belongs to [[vehicle]], [[motor vehicle]], [[artifact]], [[latent_artifact_cluster]], [[latent_transportation_artifact]].
 - **Mereological Structure**: Composed of [[wheel]], [[engine]], [[windshield]].
 - **Procedural Capabilities**: Exhibits skills [[drive]].
 

@@ -442,15 +442,22 @@ class LayaDecisionHead:
         in_dim = self.encoder.dim
         num_classes = len(self._intent_labels)
 
-        intent_keywords: dict[str, list[str]] = {
+        # Dynamic mapping of cognitive intents to policy pathways
+        from little.neural.models import Pathway
+        pathway_map = {
+            "math": Pathway.MATH,
+            "action": Pathway.TOOL,
+            "code": Pathway.CODE,
+            "physics": Pathway.PHYSICS,
+            "social": Pathway.CHAT,
+        }
+
+        # Structural linguistic and curiosity markers
+        structural_markers: dict[str, list[str]] = {
             "statement": ["is", "are", "has", "have", "fact", "record", "named", "known", "called"],
             "question": ["what", "who", "where", "when", "why", "how", "which", "?"],
-            "action": ["run", "do", "execute", "write", "read", "tool", "call", "file", "system"],
-            "math": ["add", "sum", "plus", "minus", "multiply", "divide", "prime", "calculate", "solve", "convert", "equation"],
-            "curiosity": ["gap", "dream", "study", "explore", "learn", "hypothesize", "curious"],
+            "curiosity": ["gap", "gaps", "dream", "study", "explore", "learn", "hypothesize", "curious", "knowledge", "epistemic"],
             "social": ["hello", "hi", "hey", "thanks", "thank", "welcome", "bye", "goodbye"],
-            "physics": ["simulate", "decay", "slice", "peel", "heat", "chill", "mass", "temperature", "hours", "days"],
-            "code": ["def", "function", "python", "script", "algorithm", "implement", "synthesize", "code"],
         }
 
         w: list[list[float]] = []
@@ -458,20 +465,20 @@ class LayaDecisionHead:
 
         for lbl in self._intent_labels:
             vec = [0.0] * in_dim
-            for kw in intent_keywords.get(lbl, []):
+            # 1. Load dynamic keywords from policy semantic clusters if available
+            pw = pathway_map.get(lbl)
+            if pw and pw in self.encoder.policy.semantic_clusters:
+                for kw in self.encoder.policy.semantic_clusters[pw]:
+                    self.encoder._project_string(kw, 3.0, vec)
+                self.encoder._project_string(f"pathway:{pw.value}", 8.0, vec)
+
+            # 2. Add structural linguistic markers
+            for kw in structural_markers.get(lbl, []):
                 self.encoder._project_string(kw, 3.0, vec)
+
             self.encoder._project_string(f"intent:{lbl}", 5.0, vec)
             if lbl == "math":
                 self.encoder._project_string("type:numeric", 5.0, vec)
-                self.encoder._project_string("pathway:math", 8.0, vec)
-            elif lbl == "code":
-                self.encoder._project_string("pathway:code", 8.0, vec)
-            elif lbl == "physics":
-                self.encoder._project_string("pathway:physics", 8.0, vec)
-            elif lbl == "action":
-                self.encoder._project_string("pathway:tool", 6.0, vec)
-            elif lbl == "social":
-                self.encoder._project_string("pathway:chat", 6.0, vec)
             norm = math.sqrt(sum(x * x for x in vec))
             if norm > 1e-12:
                 vec = [x / norm for x in vec]

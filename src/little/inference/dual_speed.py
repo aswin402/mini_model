@@ -61,7 +61,7 @@ class DualSpeedInfillingEngine:
                 return c.name.strip().upper().replace(" ", "_")
         return id_or_name.strip().upper().replace(" ", "_")
 
-    def _get_outgoing(self, node: str, predicate: str) -> List[str]:
+    def _get_outgoing(self, node: str, predicate: str | None = None) -> List[str]:
         objs: Set[str] = set()
         for variant in self._resolve_variants(node):
             for r in self.memory.get_relations(subject_id=variant, predicate=predicate):
@@ -69,7 +69,7 @@ class DualSpeedInfillingEngine:
                     objs.add(self._to_name(r.object_id))
         return list(objs)
 
-    def _get_incoming(self, node: str, predicate: str) -> List[str]:
+    def _get_incoming(self, node: str, predicate: str | None = None) -> List[str]:
         subjs: Set[str] = set()
         for variant in self._resolve_variants(node):
             for r in self.memory.get_relations(object_id=variant, predicate=predicate):
@@ -336,24 +336,25 @@ class DualSpeedInfillingEngine:
         bwd_frontier: Set[str] = {target_clean}
 
         collision_results: List[InfillingResult] = []
+        seen_paths: Set[tuple[str, ...]] = set()
         depth = 0
 
-        predicates = list(self.verifier.registry.predicates()) or ["is_a", "part_of", "has"]
-
-        while depth < max_depth and fwd_frontier and bwd_frontier:
+        while depth < max_depth and fwd_frontier and bwd_frontier and len(collision_results) < 10:
             depth += 1
 
             # Expand Forward
             next_fwd: Set[str] = set()
             for node in fwd_frontier:
                 curr_path = fwd_paths[node]
-                for p in predicates:
-                    for obj in self._get_outgoing(node, p):
-                        if obj not in fwd_paths and obj != subj_clean:
-                            fwd_paths[obj] = curr_path + [obj]
-                            next_fwd.add(obj)
-                            if obj in bwd_paths:
-                                full_p = curr_path + [obj] + bwd_paths[obj][1:]
+                for obj in self._get_outgoing(node, None):
+                    if obj not in fwd_paths and obj != subj_clean:
+                        fwd_paths[obj] = curr_path + [obj]
+                        next_fwd.add(obj)
+                        if obj in bwd_paths:
+                            full_p = curr_path + [obj] + bwd_paths[obj][1:]
+                            p_tup = tuple(full_p)
+                            if p_tup not in seen_paths:
+                                seen_paths.add(p_tup)
                                 lat = (time.perf_counter() - t0) * 1000.0
                                 collision_results.append(
                                     InfillingResult(
@@ -372,13 +373,15 @@ class DualSpeedInfillingEngine:
             next_bwd: Set[str] = set()
             for node in bwd_frontier:
                 curr_path = bwd_paths[node]
-                for p in predicates:
-                    for sub in self._get_incoming(node, p):
-                        if sub not in bwd_paths and sub != target_clean:
-                            bwd_paths[sub] = [sub] + curr_path
-                            next_bwd.add(sub)
-                            if sub in fwd_paths:
-                                full_p = fwd_paths[sub] + curr_path
+                for sub in self._get_incoming(node, None):
+                    if sub not in bwd_paths and sub != target_clean:
+                        bwd_paths[sub] = [sub] + curr_path
+                        next_bwd.add(sub)
+                        if sub in fwd_paths:
+                            full_p = fwd_paths[sub] + curr_path
+                            p_tup = tuple(full_p)
+                            if p_tup not in seen_paths:
+                                seen_paths.add(p_tup)
                                 lat = (time.perf_counter() - t0) * 1000.0
                                 collision_results.append(
                                     InfillingResult(

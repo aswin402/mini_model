@@ -91,6 +91,8 @@ class ToolExecutor:
     def _exec_calculator(self, args: dict[str, Any]) -> tuple[Any, str | None, str | None, str | None]:
         """Execute exact math CAS expression."""
         expr_str = str(args["expression"]).strip()
+        import re
+        expr_str = re.sub(r"(\d+(?:\.\d+)?)\s*%\s*(?:of\s*)?", r"(\1 / 100) * ", expr_str)
         cas = SymbolicCAS()
         try:
             sol = cas.solve_rational_expression(expr_str)
