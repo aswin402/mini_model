@@ -765,6 +765,60 @@ class DialogueSurfaceEngine:
         else:
             return f"Curiosity study for '{step.target_concept}': {step.reason}"
 
+    def verbalize_physical_simulation(self, sim: Any) -> str:
+        """Verbalize a continuous-time physical simulation."""
+        lines = [
+            f"Physical simulation for **{sim.concept_name.title()}** over {sim.delta_t_hours:.1f} hours at {sim.ambient_temperature_c:.1f}°C:",
+            f"- **Freshness**: {sim.initial_state.freshness:.2f} ➔ {sim.final_state.freshness:.2f}",
+            f"- **Oxidation**: {sim.initial_state.oxidation:.2f} ➔ {sim.final_state.oxidation:.2f}",
+            f"- **Moisture**: {sim.initial_state.moisture:.2f} ➔ {sim.final_state.moisture:.2f}",
+            f"- **Skin Boundary**: {'Intact protective skin' if sim.skin_intact else 'Severed / exposed tissue'}",
+        ]
+        if sim.milestones:
+            lines.append("\n**Key Dynamic Milestones:**")
+            for m in sim.milestones:
+                lines.append(f"- T+{m.time_hours:.1f}h: {m.description}")
+        return "\n".join(lines)
+
+    def verbalize_action_jump(
+        self, action: str, target: str, pieces: list[Any], details: str = ""
+    ) -> str:
+        """Verbalize a discrete physical action jump and QPT mass conservation."""
+        total_mass = sum(getattr(p, "invariant_mass", 0.0) for p in pieces)
+        lines = [
+            f"Applied physical action **{action}** to **{target.title()}**:",
+            f"- Produced {len(pieces)} piece(s) under Qualitative Process Theory (QPT).",
+            f"- Total invariant mass conserved: {total_mass:.1f}g.",
+        ]
+        for p in pieces:
+            p_id = getattr(p, "concept_id", "piece")
+            p_mass = getattr(p, "invariant_mass", 0.0)
+            lines.append(f"  • {p_id}: mass {p_mass:.1f}g")
+        if details:
+            lines.append(f"\n{details}")
+        return "\n".join(lines)
+
+    def verbalize_sensory_grounding(self, res: Any) -> str:
+        """Verbalize multimodal sensory grounding to 0° episodic axis."""
+        if res.status == "GROUNDED":
+            features_str = ", ".join(f"{k}={v}" for k, v in res.observation.features.items())
+            return (
+                f"Sensory Observation Grounded:\n"
+                f"- Concept: **{res.matched_concept.title()}** (confidence: {res.confidence * 100:.1f}%)\n"
+                f"- Episodic Axis: Anchored at 0° Episodic Instance axis (Entity: `{res.entity_id}`)\n"
+                f"- Perceived Features: [{features_str}]\n"
+                f"- State: Verified against physical invariant bounds."
+            )
+        elif res.status == "MUTEX_REJECTED":
+            return (
+                f"Sensory Observation Rejected by Invariant Gate:\n"
+                f"- Reason: {res.reason}\n"
+                f"- Zero Hallucination Guarantee: Conflicting sensory reading was not assimilated."
+            )
+        else:
+            return f"Sensory observation ambiguous: {res.reason}"
+
+
 
 
 

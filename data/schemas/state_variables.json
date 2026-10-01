@@ -13,6 +13,27 @@
       "unit": "ratio",
       "valid_range": [0.0, 1.0],
       "transition_model": "exponential_growth"
+    },
+    {
+      "name": "moisture",
+      "value_type": "float",
+      "unit": "ratio",
+      "valid_range": [0.0, 1.0],
+      "transition_model": "linear_evaporation"
+    },
+    {
+      "name": "temperature",
+      "value_type": "float",
+      "unit": "celsius",
+      "valid_range": [-50.0, 200.0],
+      "transition_model": "newtons_cooling"
+    },
+    {
+      "name": "mass",
+      "value_type": "float",
+      "unit": "grams",
+      "valid_range": [0.0, 100000.0],
+      "transition_model": "mass_conservation"
     }
   ]
 }

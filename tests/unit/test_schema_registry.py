@@ -57,3 +57,18 @@ def test_registry_exposes_reasoning_roles_from_relation_data():
     engine = InferenceEngine(MemoryStore(":memory:"), registry=registry)
     assert engine.transitive_predicates == registry.predicates(transitive=True)
     assert engine.disjoint_predicates == registry.predicates(disjoint=True)
+
+
+def test_registry_loads_extended_physical_actions_and_state_variables():
+    registry = SchemaRegistry.load(Path("data/schemas"))
+
+    for action_name in ("slice", "peel", "heat", "chill", "dehydrate"):
+        action = registry.action(action_name)
+        assert action is not None, f"Action {action_name} should be registered"
+        assert action.name == action_name
+
+    for var_name in ("freshness", "oxidation", "moisture", "temperature", "mass"):
+        state_var = registry.state_variable(var_name)
+        assert state_var is not None, f"State variable {var_name} should be registered"
+        assert state_var.name == var_name
+

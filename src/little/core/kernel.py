@@ -21,6 +21,8 @@ from little.core.cognitive_command import CognitiveCommandRegistry
 from little.core.contracts import CandidateFrame, SourceType
 from little.core.models import BeliefStatus, InferenceResult, LearningResult, generate_id
 from little.core.runtime_policy import RuntimePolicy
+from little.dynamics.continuous_simulation import PhysicalSimulationEngine
+from little.perception.sensory import SensoryGroundingEngine
 from little.inference.thinking_controller import CognitiveMode, ThinkingController
 from little.knowledge.living_wiki import LivingWiki
 from little.language.dialogue_surface import DialogueSurfaceEngine
@@ -109,6 +111,8 @@ class CognitiveKernel:
             wiki=self.wiki,
             crawler=self.crawler,
         )
+        self.simulation_engine = PhysicalSimulationEngine()
+        self.sensory_engine = SensoryGroundingEngine(self.memory)
         self.command_dispatcher = CognitiveCommandRegistry()
 
     def chat(self, text: str) -> str:

@@ -156,6 +156,39 @@ class CognitiveCommandRegistry:
                 ),
                 handler=cls._handle_study_concept,
             ),
+            CognitiveCommand(
+                command_id="simulate_dynamics",
+                description="Predict continuous-time physical state evolution over arbitrary time deltas",
+                patterns=(
+                    re.compile(
+                        r"^(?:simulate|predict|what\s+happens\s+to|what\s+would\s+happen\s+if\s+I\s+leave)\s+(?:an?\s+)?(?P<target>[a-zA-Z0-9_\-]+)(?:\s+(?:for|over|after)\s+(?P<duration>\d+(?:\.\d+)?)\s*(?P<unit>hours?|days?|minutes?|hrs?|mins?))?(?:\s+at\s+(?P<temp>\d+(?:\.\d+)?)\s*(?:°?C|degrees?))?\??$",
+                        re.IGNORECASE,
+                    ),
+                ),
+                handler=cls._handle_simulate_dynamics,
+            ),
+            CognitiveCommand(
+                command_id="physical_action",
+                description="Perform physical action jump (slice, peel, heat, chill, dehydrate) with QPT mass conservation",
+                patterns=(
+                    re.compile(
+                        r"^(?:apply\s+action|perform\s+action|what\s+happens\s+if\s+I|if\s+I)\s+(?P<action>slice|peel|heat|chill|cool|dehydrate|dry)\s+(?:an?\s+)?(?P<target>[a-zA-Z0-9_\-]+)(?:\s+(?:into|in)\s+(?P<count>\d+)\s*(?:pieces|slices|wedges)?)?(?:.*)?\??$",
+                        re.IGNORECASE,
+                    ),
+                ),
+                handler=cls._handle_physical_action,
+            ),
+            CognitiveCommand(
+                command_id="sensory_observation",
+                description="Ground multimodal sensory observations to 0° episodic instance axis",
+                patterns=(
+                    re.compile(
+                        r"^(?:sensory\s+observation|observe\s+sensor|perceive\s+sensor):\s*(?P<reading>.+)$",
+                        re.IGNORECASE,
+                    ),
+                ),
+                handler=cls._handle_sensory_observation,
+            ),
         ]
 
     @staticmethod
@@ -246,3 +279,106 @@ class CognitiveCommandRegistry:
         if res is not None:
             return kernel.dialogue_surface.verbalize_curiosity_step(res)
         return f"No active knowledge gaps found for concept '{target}'."
+
+    @staticmethod
+    def _handle_simulate_dynamics(
+        kernel: CognitiveKernel, text: str, match: re.Match[str]
+    ) -> str:
+        target = match.group("target").strip().lower()
+        duration_val = match.groupdict().get("duration")
+        unit_val = match.groupdict().get("unit")
+        temp_val = match.groupdict().get("temp")
+
+        hours = 24.0
+        if duration_val:
+            d = float(duration_val)
+            if unit_val and "day" in unit_val.lower():
+                hours = d * 24.0
+            elif unit_val and ("min" in unit_val.lower()):
+                hours = d / 60.0
+            else:
+                hours = d
+
+        temp = float(temp_val) if temp_val else 22.0
+
+        from little.core.concept_knot import ConceptKnot
+        knot = None
+        if target == "apple":
+            knot = ConceptKnot.create_apple_exemplar()
+        sim_res = kernel.simulation_engine.simulate(
+            knot if knot else target,
+            delta_t_hours=hours,
+            ambient_temperature_c=temp,
+            skin_intact=True,
+        )
+        return kernel.dialogue_surface.verbalize_physical_simulation(sim_res)
+
+    @staticmethod
+    def _handle_physical_action(
+        kernel: CognitiveKernel, text: str, match: re.Match[str]
+    ) -> str:
+        from little.core.concept_knot import ConceptKnot
+        from little.dynamics.cfc_ode import apply_action_jump
+        from little.dynamics.transformations import TransformationEngine
+
+        action = match.group("action").strip().lower()
+        target = match.group("target").strip().lower()
+        count_str = match.groupdict().get("count")
+        count = int(count_str) if count_str else 4
+
+        knot = ConceptKnot.create_apple_exemplar() if target == "apple" else ConceptKnot(
+            concept_id=target.upper(),
+            taxonomy_hypernyms=["PhysicalObject"],
+            mereology_parts={"skin": "external_boundary", "pulp": "interior"},
+            invariant_mass=180.0,
+            procedural_skills=[action],
+        )
+
+        if action in ("slice", "split"):
+            pieces = apply_action_jump(knot, "slice", num_pieces=count)
+            TransformationEngine.slice_object(kernel.memory, target, num_pieces=count)
+            return kernel.dialogue_surface.verbalize_action_jump(
+                action, target, pieces,
+                details=f"Decomposed into {count} pieces. Total invariant mass conserved under QPT."
+            )
+        elif action == "peel":
+            pieces = apply_action_jump(knot, "peel")
+            TransformationEngine.peel_object(kernel.memory, target)
+            return kernel.dialogue_surface.verbalize_action_jump(
+                action, target, pieces,
+                details="Separated external protective skin from interior flesh. Total invariant mass conserved under QPT."
+            )
+        elif action == "heat":
+            pieces = apply_action_jump(knot, "heat", delta_celsius=20.0)
+            TransformationEngine.heat_object(kernel.memory, target, delta_celsius=20.0)
+            return kernel.dialogue_surface.verbalize_action_jump(
+                action, target, pieces,
+                details="Temperature increased by +20.0°C. Arrhenius reaction rates accelerated."
+            )
+        elif action in ("chill", "cool"):
+            pieces = apply_action_jump(knot, "chill", delta_celsius=15.0)
+            TransformationEngine.chill_object(kernel.memory, target, delta_celsius=15.0)
+            return kernel.dialogue_surface.verbalize_action_jump(
+                action, target, pieces,
+                details="Temperature reduced by -15.0°C. Freshness preserved."
+            )
+        elif action in ("dehydrate", "dry"):
+            pieces = apply_action_jump(knot, "dehydrate")
+            return kernel.dialogue_surface.verbalize_action_jump(
+                action, target, pieces,
+                details="Moisture reduced to minimal bound. Dry solid mass strictly conserved."
+            )
+        else:
+            pieces = apply_action_jump(knot, action)
+            return kernel.dialogue_surface.verbalize_action_jump(action, target, pieces)
+
+    @staticmethod
+    def _handle_sensory_observation(
+        kernel: CognitiveKernel, text: str, match: re.Match[str]
+    ) -> str:
+        obs = kernel.sensory_engine.parse_sensory_directive(text)
+        if not obs:
+            return "Could not parse structured sensory directive format."
+        res = kernel.sensory_engine.ground_observation(obs)
+        return kernel.dialogue_surface.verbalize_sensory_grounding(res)
+

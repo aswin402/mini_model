@@ -23,6 +23,45 @@
         {"type": "relation", "subject": "{result}", "predicate": "is_a", "object": "{object}"}
       ],
       "invariants": ["mass_conservation", "boundary_exposure"]
+    },
+    {
+      "name": "peel",
+      "executor": "peel_object",
+      "argument_types": {"object": "entity"},
+      "defaults": {},
+      "preconditions": [],
+      "effects": [
+        {"type": "relation", "subject": "{skin}", "predicate": "part_of", "object": "{object}"},
+        {"type": "relation", "subject": "{pulp}", "predicate": "part_of", "object": "{object}"}
+      ],
+      "invariants": ["mass_conservation", "boundary_exposure"]
+    },
+    {
+      "name": "heat",
+      "executor": "heat_object",
+      "argument_types": {"object": "entity", "delta_celsius": "quantity"},
+      "defaults": {"delta_celsius": 20.0},
+      "preconditions": [],
+      "effects": [],
+      "invariants": ["thermal_energy_conservation"]
+    },
+    {
+      "name": "chill",
+      "executor": "chill_object",
+      "argument_types": {"object": "entity", "delta_celsius": "quantity"},
+      "defaults": {"delta_celsius": 15.0},
+      "preconditions": [],
+      "effects": [],
+      "invariants": ["thermal_energy_conservation"]
+    },
+    {
+      "name": "dehydrate",
+      "executor": "dehydrate_object",
+      "argument_types": {"object": "entity"},
+      "defaults": {},
+      "preconditions": [],
+      "effects": [],
+      "invariants": ["dry_mass_conservation"]
     }
   ]
 }

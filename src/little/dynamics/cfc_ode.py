@@ -98,11 +98,134 @@ class CfCContinuousODE:
 def apply_action_jump(
     knot: ConceptKnot, action: str, **kwargs
 ) -> list[ConceptKnot]:
-    """Applies a discrete Hybrid Automaton jump to a Concept Knot."""
+    """Applies a discrete Hybrid Automaton jump to a Concept Knot with QPT invariants."""
     schema = SchemaRegistry.default().action(action)
     if schema is None:
         raise ValueError(f"Unknown procedural action: {action}")
 
+    action_name = schema.name.lower()
+
+    if action_name == "peel":
+        # Separate external boundary skin from interior pulp with strict mass conservation
+        peel_ratio = float(kwargs.get("peel_fraction", 0.15))
+        skin_mass = round(knot.invariant_mass * peel_ratio, 2)
+        flesh_mass = round(knot.invariant_mass - skin_mass, 2)
+
+        skin_parts = {
+            k: v for k, v in knot.mereology_parts.items()
+            if v == "external_boundary" or "skin" in k or "peel" in k or "shell" in k
+        }
+        if not skin_parts:
+            skin_parts = {"skin": "external_boundary"}
+
+        flesh_parts = {
+            k: ("removed" if k in skin_parts else "exposed")
+            for k in knot.mereology_parts
+        }
+        if "pulp" not in flesh_parts and "core" not in flesh_parts:
+            flesh_parts["pulp"] = "exposed"
+
+        skin_piece = ConceptKnot(
+            concept_id=f"{knot.concept_id}_PEEL",
+            taxonomy_hypernyms=list(knot.taxonomy_hypernyms),
+            taxonomy_hyponyms=[],
+            mereology_parts=skin_parts,
+            dynamics_state=ContinuousPhysicalState(
+                freshness=knot.dynamics_state.freshness,
+                oxidation=knot.dynamics_state.oxidation,
+                moisture=knot.dynamics_state.moisture,
+                temperature=knot.dynamics_state.temperature,
+            ),
+            invariant_disjoints=list(knot.invariant_disjoints),
+            invariant_mass=skin_mass,
+            procedural_skills=["dry", "dehydrate"],
+            episodic_instances=[{"action": "peel", "parent": knot.concept_id, "part": "skin"}],
+        )
+
+        flesh_piece = ConceptKnot(
+            concept_id=f"{knot.concept_id}_FLESH",
+            taxonomy_hypernyms=list(knot.taxonomy_hypernyms),
+            taxonomy_hyponyms=[],
+            mereology_parts=flesh_parts,
+            dynamics_state=ContinuousPhysicalState(
+                freshness=knot.dynamics_state.freshness,
+                oxidation=knot.dynamics_state.oxidation,
+                moisture=knot.dynamics_state.moisture,
+                temperature=knot.dynamics_state.temperature,
+            ),
+            invariant_disjoints=list(knot.invariant_disjoints),
+            invariant_mass=flesh_mass,
+            procedural_skills=["slice", "juice"],
+            episodic_instances=[{"action": "peel", "parent": knot.concept_id, "part": "flesh"}],
+        )
+        return [skin_piece, flesh_piece]
+
+    elif action_name == "heat":
+        delta_c = float(kwargs.get("delta_celsius", schema.defaults.get("delta_celsius", 20.0)))
+        new_temp = round(knot.dynamics_state.temperature + delta_c, 2)
+        heated = ConceptKnot(
+            concept_id=f"{knot.concept_id}_HEATED",
+            taxonomy_hypernyms=list(knot.taxonomy_hypernyms),
+            taxonomy_hyponyms=[],
+            mereology_parts=dict(knot.mereology_parts),
+            dynamics_state=ContinuousPhysicalState(
+                freshness=knot.dynamics_state.freshness,
+                oxidation=knot.dynamics_state.oxidation,
+                moisture=max(0.05, knot.dynamics_state.moisture - 0.02),
+                temperature=new_temp,
+            ),
+            invariant_disjoints=list(knot.invariant_disjoints),
+            invariant_mass=knot.invariant_mass,
+            procedural_skills=list(knot.procedural_skills),
+            episodic_instances=[{"action": "heat", "parent": knot.concept_id, "delta_celsius": delta_c}],
+        )
+        return [heated]
+
+    elif action_name in ("chill", "cool"):
+        delta_c = float(kwargs.get("delta_celsius", schema.defaults.get("delta_celsius", 15.0)))
+        new_temp = round(max(0.0, knot.dynamics_state.temperature - delta_c), 2)
+        chilled = ConceptKnot(
+            concept_id=f"{knot.concept_id}_CHILLED",
+            taxonomy_hypernyms=list(knot.taxonomy_hypernyms),
+            taxonomy_hyponyms=[],
+            mereology_parts=dict(knot.mereology_parts),
+            dynamics_state=ContinuousPhysicalState(
+                freshness=knot.dynamics_state.freshness,
+                oxidation=knot.dynamics_state.oxidation,
+                moisture=knot.dynamics_state.moisture,
+                temperature=new_temp,
+            ),
+            invariant_disjoints=list(knot.invariant_disjoints),
+            invariant_mass=knot.invariant_mass,
+            procedural_skills=list(knot.procedural_skills),
+            episodic_instances=[{"action": "chill", "parent": knot.concept_id, "delta_celsius": delta_c}],
+        )
+        return [chilled]
+
+    elif action_name in ("dehydrate", "dry"):
+        min_moisture = 0.05
+        current_moisture = knot.dynamics_state.moisture
+        dry_mass = knot.invariant_mass * (1.0 - current_moisture)
+        new_mass = round(dry_mass / (1.0 - min_moisture), 2)
+        dried = ConceptKnot(
+            concept_id=f"{knot.concept_id}_DRIED",
+            taxonomy_hypernyms=list(knot.taxonomy_hypernyms),
+            taxonomy_hyponyms=[],
+            mereology_parts=dict(knot.mereology_parts),
+            dynamics_state=ContinuousPhysicalState(
+                freshness=knot.dynamics_state.freshness,
+                oxidation=min(1.0, knot.dynamics_state.oxidation + 0.05),
+                moisture=min_moisture,
+                temperature=knot.dynamics_state.temperature,
+            ),
+            invariant_disjoints=list(knot.invariant_disjoints),
+            invariant_mass=new_mass,
+            procedural_skills=list(knot.procedural_skills),
+            episodic_instances=[{"action": "dehydrate", "parent": knot.concept_id}],
+        )
+        return [dried]
+
+    # Default to slicing / partitioning
     n = int(kwargs.get("num_pieces", schema.defaults.get("count", 1)))
     if n < 1:
         raise ValueError("num_pieces must be positive")

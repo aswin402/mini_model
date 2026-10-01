@@ -199,3 +199,157 @@ class TransformationEngine:
                 f"Initial state: fresh, interior exposed to air (tau = {initial_state.tau_seconds:.0f}s)."
             ),
         )
+
+    @classmethod
+    def peel_object(
+        cls,
+        memory: MemoryStore,
+        object_name: str,
+        *,
+        peel_fraction: float = 0.15,
+        commit_relations: bool = True,
+        record_experience: bool = True,
+        policy: TransformationPolicy | None = None,
+        profile_registry: DynamicsProfileRegistry | None = None,
+    ) -> PeelingResult:
+        """Perform topological peeling: separate external skin from interior flesh with mass conservation."""
+        active_policy = policy or TransformationPolicy.default()
+        predicate_policy = active_policy.predicates
+        clean_name = object_name.strip().lower()
+        parent_concept = memory.get_concept(clean_name)
+        if not parent_concept:
+            parent_concept = memory.create_concept(name=clean_name)
+
+        skin_concept_name = f"{clean_name} peel"
+        skin_concept = memory.get_concept(skin_concept_name)
+        if not skin_concept:
+            skin_concept = memory.create_concept(name=skin_concept_name)
+
+        flesh_concept_name = f"{clean_name} flesh"
+        flesh_concept = memory.get_concept(flesh_concept_name)
+        if not flesh_concept:
+            flesh_concept = memory.create_concept(name=flesh_concept_name)
+
+        relations_created: list[str] = []
+        if commit_relations:
+            for part_c in (skin_concept, flesh_concept):
+                if not memory.get_relations(subject_id=part_c.id, predicate=predicate_policy["part"], object_id=parent_concept.id):
+                    memory.add_relation(part_c.id, predicate_policy["part"], parent_concept.id)
+                    relations_created.append(f"{part_c.name} {predicate_policy['part']} {parent_concept.name}")
+
+        active_profile_registry = profile_registry or DynamicsProfileRegistry.default()
+        profile = active_profile_registry.for_concept(parent_concept.category, parent_concept.attributes)
+        flesh_state = PhysicalState(
+            freshness=1.0,
+            oxidation=0.0,
+            temperature=active_profile_registry.ode.reference_temperature_c,
+            exposed_to_air=True,
+            tau_seconds=profile.tau_exposed_seconds,
+            timestamp=0.0,
+        )
+
+        skin_entity = memory.create_entity(
+            name=f"{clean_name}_skin_1",
+            concept_id=skin_concept.id,
+            properties={"mass_fraction": round(peel_fraction, 4), "part": "skin"},
+        )
+        flesh_entity = memory.create_entity(
+            name=f"{clean_name}_flesh_1",
+            concept_id=flesh_concept.id,
+            properties={"mass_fraction": round(1.0 - peel_fraction, 4), "part": "flesh", "physical_state": flesh_state.to_dict()},
+        )
+
+        if record_experience:
+            memory.add_experience(
+                input_text=f"Peeled {clean_name}.",
+                extracted_triples=[
+                    {"subject": skin_concept.name, "predicate": predicate_policy["part"], "object": parent_concept.name},
+                    {"subject": flesh_concept.name, "predicate": predicate_policy["part"], "object": parent_concept.name},
+                ],
+                source="physical_action",
+            )
+
+        return PeelingResult(
+            parent_concept=parent_concept.name,
+            skin_concept=skin_concept.name,
+            flesh_concept=flesh_concept.name,
+            entities_created=[skin_entity, flesh_entity],
+            relations_created=relations_created,
+            initial_flesh_state=flesh_state,
+            message=(
+                f"Successfully peeled {clean_name}. Separated external skin (mass fraction {peel_fraction:.2f}) "
+                f"and exposed interior flesh (mass fraction {1.0 - peel_fraction:.2f}). "
+                f"Total mass strictly conserved."
+            ),
+        )
+
+    @classmethod
+    def heat_object(
+        cls,
+        memory: MemoryStore,
+        object_name: str,
+        delta_celsius: float = 20.0,
+    ) -> ThermalResult:
+        """Apply thermal heating jump to an object, increasing temperature and reaction rate."""
+        clean_name = object_name.strip().lower()
+        concept = memory.get_concept(clean_name)
+        if not concept:
+            concept = memory.create_concept(name=clean_name)
+
+        t0 = float(concept.attributes.get("temperature", 22.0))
+        t1 = round(t0 + delta_celsius, 2)
+        memory.update_concept_attributes(concept.id, {"temperature": t1})
+
+        return ThermalResult(
+            concept_name=clean_name,
+            initial_temperature=t0,
+            resulting_temperature=t1,
+            delta_celsius=delta_celsius,
+            message=f"Heated {clean_name} by +{delta_celsius:.1f}°C (from {t0:.1f}°C to {t1:.1f}°C). Arrhenius reaction rates accelerated.",
+        )
+
+    @classmethod
+    def chill_object(
+        cls,
+        memory: MemoryStore,
+        object_name: str,
+        delta_celsius: float = 15.0,
+    ) -> ThermalResult:
+        """Apply thermal chilling jump to an object, decreasing temperature and slowing decay."""
+        clean_name = object_name.strip().lower()
+        concept = memory.get_concept(clean_name)
+        if not concept:
+            concept = memory.create_concept(name=clean_name)
+
+        t0 = float(concept.attributes.get("temperature", 22.0))
+        t1 = round(max(0.0, t0 - delta_celsius), 2)
+        memory.update_concept_attributes(concept.id, {"temperature": t1})
+
+        return ThermalResult(
+            concept_name=clean_name,
+            initial_temperature=t0,
+            resulting_temperature=t1,
+            delta_celsius=-delta_celsius,
+            message=f"Chilled {clean_name} by -{delta_celsius:.1f}°C (from {t0:.1f}°C to {t1:.1f}°C). Preserves freshness.",
+        )
+
+
+@dataclass
+class PeelingResult:
+    parent_concept: str
+    skin_concept: str
+    flesh_concept: str
+    entities_created: list[Entity]
+    relations_created: list[str]
+    initial_flesh_state: PhysicalState
+    message: str
+
+
+@dataclass
+class ThermalResult:
+    concept_name: str
+    initial_temperature: float
+    resulting_temperature: float
+    delta_celsius: float
+    message: str
+
