@@ -1,5 +1,5 @@
 ---
-id: concept_f125af3d3718
+id: concept_94496a368f18
 name: latent_australia_continent
 aliases: []
 taxonomy:
@@ -14,7 +14,7 @@ attributes:
   is_latent: true
   category_utility: 0.125
   constituent_count: 2
-  induced_at: "2026-09-30T14:53:52Z"
+  induced_at: "2026-10-01T18:18:47Z"
 confidence: 1.0
 status: ACTIVE
 ---

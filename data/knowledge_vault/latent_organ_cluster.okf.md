@@ -1,5 +1,5 @@
 ---
-id: concept_6004bf5cc7c3
+id: concept_49b13fe92f30
 name: latent_organ_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.0790123456790123
   constituent_count: 9
-  induced_at: "2026-10-01T08:12:30Z"
+  induced_at: "2026-10-01T18:18:47Z"
 confidence: 1.0
 status: ACTIVE
 ---

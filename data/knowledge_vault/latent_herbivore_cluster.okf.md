@@ -1,5 +1,5 @@
 ---
-id: concept_30b7f736c55b
+id: concept_a4dfcaf115f9
 name: latent_herbivore_cluster
 aliases: []
 taxonomy:
@@ -14,7 +14,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 7
-  induced_at: "2026-10-01T08:12:30Z"
+  induced_at: "2026-10-01T18:18:47Z"
 confidence: 1.0
 status: ACTIVE
 ---

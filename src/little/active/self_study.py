@@ -109,31 +109,39 @@ class AutonomousSelfStudyEngine:
         conflict = self.inference._check_disjoint_conflict(id1, id2)
         return conflict is not None
 
+    def _get_experienced_concept_names(self) -> set[str]:
+        if getattr(self, "_cached_experienced_names", None) is None:
+            experienced: set[str] = set()
+            for experience in self.memory.list_experiences(limit=None):
+                for triple in experience.extracted_triples:
+                    if isinstance(triple, dict):
+                        s = str(triple.get("subject", "")).strip().lower()
+                        o = str(triple.get("object", "")).strip().lower()
+                        if s:
+                            experienced.add(s)
+                        if o:
+                            experienced.add(o)
+            self._cached_experienced_names = experienced
+        return self._cached_experienced_names
+
     def _experience_covers(self, concept_name: str) -> bool:
         clean_name = concept_name.strip().lower()
-        for experience in self.memory.list_experiences(limit=None):
-            for triple in experience.extracted_triples:
-                if not isinstance(triple, dict):
-                    continue
-                endpoints = (
-                    str(triple.get("subject", "")).strip().lower(),
-                    str(triple.get("object", "")).strip().lower(),
-                )
-                if clean_name in endpoints:
-                    return True
-        return False
+        return clean_name in self._get_experienced_concept_names()
 
     def _axis_is_covered(self, concept_name: str, axis_name: str) -> bool:
         concept = self.memory.get_concept(concept_name)
         if not concept:
             return False
+        return self._axis_is_covered_fast(concept, axis_name, self._get_experienced_concept_names())
+
+    def _axis_is_covered_fast(self, concept: Any, axis_name: str, exp_names: set[str]) -> bool:
         axis = self.policy.axis(axis_name)
         if axis is None:
             return False
         if axis.coverage == "attributes":
             return bool(concept.attributes)
         if axis.coverage == "experience":
-            return self._experience_covers(concept.name)
+            return concept.name.strip().lower() in exp_names
         relations = self.memory.get_relations(subject_id=concept.id)
         active_preds = {
             relation.predicate.lower()
@@ -157,9 +165,50 @@ class AutonomousSelfStudyEngine:
     def compute_all_knot_entropies(self) -> dict[str, float]:
         """Compute radial spoke entropy for all concepts, sorted by highest entropy first."""
         concepts = self.memory.list_concepts()
+        exp_names = self._get_experienced_concept_names()
+
+        # Batch load all active relations grouped by subject_id for sub-millisecond evaluation
+        active_preds_by_subj: dict[str, set[str]] = {}
+        try:
+            with self.memory.connection() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT subject_id, predicate FROM relations WHERE weight_positive > weight_negative"
+                )
+                for sid, pred in cur.fetchall():
+                    active_preds_by_subj.setdefault(sid, set()).add(pred.lower())
+        except Exception:
+            active_preds_by_subj = {}
+
+        axis_pred_sets = {
+            ax_name: set(self._axis_predicates(ax_name))
+            for ax_name in self.policy.axis_names
+        }
+
         entropies: dict[str, float] = {}
+        total_axes = float(max(1, len(self.policy.axes)))
+
         for c in concepts:
-            entropies[c.name] = self.compute_knot_entropy(c.name)
+            missing_count = 0
+            subj_preds = active_preds_by_subj.get(c.id, set())
+            c_name_clean = c.name.strip().lower()
+
+            for axis_name in self.policy.axis_names:
+                axis = self.policy.axis(axis_name)
+                if axis is None:
+                    continue
+                if axis.coverage == "attributes":
+                    covered = bool(c.attributes)
+                elif axis.coverage == "experience":
+                    covered = c_name_clean in exp_names
+                else:
+                    target_preds = axis_pred_sets.get(axis_name, set())
+                    covered = bool(subj_preds.intersection(target_preds))
+                if not covered:
+                    missing_count += 1
+
+            entropies[c.name] = missing_count / total_axes
+
         return dict(sorted(entropies.items(), key=lambda kv: kv[1], reverse=True))
 
     def identify_missing_axes(self, concept_name: str) -> list[str]:
@@ -206,10 +255,15 @@ class AutonomousSelfStudyEngine:
             best_candidate: tuple[tuple[int, int], dict[str, str], str] | None = None
             best_score = (-1, -1)
 
+            # Root hypernyms are too broad for meaningful analogical transfer
+            _ROOT_EXCLUSIONS = frozenset({"entity", "physical entity", "abstract entity", "thing", "object", "item"})
+
             # Find siblings under ancestors that possess spokes in the target axis
             for anc_id in ancestor_ids:
                 anc = self.memory.get_concept(anc_id)
                 anc_name = anc.name if anc else anc_id
+                if anc and anc.name.strip().lower() in _ROOT_EXCLUSIONS:
+                    continue
                 trace.append(f"Examining hypernym ancestor: '{anc_name}'")
 
                 # Siblings are concepts that also have is_a -> anc_id
@@ -220,22 +274,28 @@ class AutonomousSelfStudyEngine:
                     for sr in sib_rels:
                         if sr.subject_id == concept.id:
                             continue  # Skip self
-                        sib_concept = self.memory.get_concept(sr.subject_id)
-                        if not sib_concept:
-                            continue
-
                         # Sibling must NOT be an ancestor of target concept
                         if sr.subject_id in ancestor_ids:
+                            continue
+
+                        # Check if sibling has candidate relations matching allowed_preds first
+                        cand_rels = self.memory.get_relations(subject_id=sr.subject_id)
+                        matching_rels = [
+                            cr for cr in cand_rels
+                            if cr.predicate in allowed_preds and cr.weight_positive > cr.weight_negative
+                        ]
+                        if not matching_rels:
+                            continue
+
+                        sib_concept = self.memory.get_concept(sr.subject_id)
+                        if not sib_concept:
                             continue
 
                         # Sibling must NOT be disjoint with the target concept or its ancestors
                         if self._are_concepts_disjoint(concept.id, sib_concept.id):
                             continue
 
-                        # Query sibling relations
-                        cand_rels = self.memory.get_relations(subject_id=sib_concept.id)
-                        for cr in cand_rels:
-                            if cr.predicate in allowed_preds and cr.weight_positive > cr.weight_negative:
+                        for cr in matching_rels:
                                 target_obj = self.memory.get_concept(cr.object_id)
                                 if not target_obj:
                                     continue
@@ -276,6 +336,26 @@ class AutonomousSelfStudyEngine:
         trace.append("No sibling candidates with transferable spokes found.")
         return None
 
+    def _get_corpus_files_content(self, search_dirs: list[Path], specific_files: list[Path] | None = None) -> list[str]:
+        if getattr(self, "_cached_corpus_texts", None) is None:
+            texts: list[str] = []
+            for s_dir in search_dirs:
+                if s_dir.exists():
+                    for f_path in s_dir.glob("*.md"):
+                        try:
+                            texts.append(f_path.read_text(encoding="utf-8"))
+                        except OSError:
+                            continue
+            self._cached_corpus_texts = texts
+        res = list(self._cached_corpus_texts)
+        if specific_files:
+            for sf in specific_files:
+                try:
+                    res.append(sf.read_text(encoding="utf-8"))
+                except OSError:
+                    pass
+        return res
+
     def propose_corpus_spoke(
         self, target_concept: str
     ) -> tuple[str, dict[str, str], list[str]] | None:
@@ -292,14 +372,17 @@ class AutonomousSelfStudyEngine:
             pass
 
         search_dirs: list[Path] = []
+        specific_files: list[Path] = []
         for root in data_roots:
             if root.exists():
                 c_dir = root / "knowledge" / "world_corpus"
-                v_dir = root / "knowledge_vault"
                 if c_dir.exists() and c_dir not in search_dirs:
                     search_dirs.append(c_dir)
-                if v_dir.exists() and v_dir not in search_dirs:
-                    search_dirs.append(v_dir)
+                v_dir = root / "knowledge_vault"
+                if v_dir.exists():
+                    sf = v_dir / f"{clean_target}.okf.md"
+                    if sf.exists():
+                        specific_files.append(sf)
 
         patterns = [
             ("is_a", re.compile(rf"\b{re.escape(clean_target)}\s+is\s+(?:a|an)\s+([a-zA-Z0-9_\-]+)", re.IGNORECASE)),
@@ -312,15 +395,9 @@ class AutonomousSelfStudyEngine:
 
         target_c = self.memory.get_concept(clean_target)
 
-        for s_dir in search_dirs:
-            for f_path in s_dir.glob("*.md"):
-                try:
-                    text = f_path.read_text(encoding="utf-8")
-                except OSError:
-                    continue
-
-                if clean_target not in text.lower():
-                    continue
+        for text in self._get_corpus_files_content(search_dirs, specific_files):
+            if clean_target not in text.lower():
+                continue
 
                 for pred, pat in patterns:
                     match = pat.search(text)
@@ -608,49 +685,47 @@ class AutonomousSelfStudyEngine:
         attempted_concepts: set[str] = set()
         step_limit = self.policy.max_steps if max_steps is None else max_steps
 
-        for _ in range(step_limit):
-            entropies = self.compute_all_knot_entropies()
-            target = next(
-                (
-                    concept
-                    for concept, entropy in entropies.items()
-                    if entropy > 0.0
-                    and concept not in attempted_concepts
-                    and (
-                        self.propose_analogical_spoke(concept) is not None
-                        or self.propose_corpus_spoke(concept) is not None
-                    )
-                ),
-                None,
-            )
-            if target is None and self.wiki is not None:
-                try:
-                    stubs = self.wiki.get_unexplored_frontier()
-                    target = next((s for s in stubs if s not in attempted_concepts), None)
-                except Exception:
-                    pass
+        entropies = self.compute_all_knot_entropies()
+        candidate_queue = [c for c, h in entropies.items() if h > 0.0]
 
-            if target is None:
-                break
-
+        cand_idx = 0
+        while len(results) < step_limit and cand_idx < len(candidate_queue):
+            target = candidate_queue[cand_idx]
+            cand_idx += 1
+            if target in attempted_concepts:
+                continue
             attempted_concepts.add(target)
             step_res = self.study_step(target_concept=target)
-            if step_res:
+            if step_res and step_res.status != "NO_ANALOGY":
                 results.append(step_res)
+
+        if len(results) < step_limit and self.wiki is not None:
+            try:
+                stubs = self.wiki.get_unexplored_frontier()
+                for s in stubs:
+                    if len(results) >= step_limit:
+                        break
+                    if s not in attempted_concepts:
+                        attempted_concepts.add(s)
+                        step_res = self.study_step(target_concept=s)
+                        if step_res:
+                            results.append(step_res)
+            except Exception:
+                pass
 
         return results
 
     def get_epistemic_gaps(self, top_n: int = 5) -> list[dict[str, Any]]:
         """Identify concepts with highest missing radial spoke entropy and wiki stubs."""
         entropies = self.compute_all_knot_entropies()
+        candidate_items = [(c, h) for c, h in entropies.items() if h > 0.0][: top_n * 2]
         sorted_gaps = [
             {
                 "concept": c,
                 "entropy": round(h, 3),
                 "missing_axes": self.identify_missing_axes(c),
             }
-            for c, h in entropies.items()
-            if h > 0.0
+            for c, h in candidate_items
         ]
         if self.wiki is not None:
             try:
@@ -672,24 +747,20 @@ class AutonomousSelfStudyEngine:
         """Run an autonomous cognitive dreaming session: identify epistemic gaps, formulate hypotheses, verify gates, and commit."""
         start_time = time.perf_counter()
         initial_entropies = self.compute_all_knot_entropies()
-        avg_h_before = (
-            sum(initial_entropies.values()) / max(len(initial_entropies), 1)
-        )
+        total_concepts = max(len(initial_entropies), 1)
 
         steps = self.study_cycle(max_steps=max_steps)
 
-        final_entropies = self.compute_all_knot_entropies()
-        avg_h_after = (
-            sum(final_entropies.values()) / max(len(final_entropies), 1)
-        )
-        entropy_reduction = max(0.0, avg_h_before - avg_h_after)
-
+        entropy_reduction = 0.0
         persisted_claims: list[dict[str, str]] = []
         rejection_reasons: list[str] = []
         pages_synced = 0
 
         for s in steps:
             if s.status == "PERSISTED":
+                c_before = initial_entropies.get(s.target_concept, 1.0)
+                c_after = self.compute_knot_entropy(s.target_concept)
+                entropy_reduction += max(0.0, c_before - c_after) / total_concepts
                 persisted_claims.append(s.hypothesis)
                 if self.wiki is not None:
                     pages_synced += 1

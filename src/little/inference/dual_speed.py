@@ -21,6 +21,8 @@ class InfillingResult:
     confidence: float
     inspectable_trace: str
     latency_ms: float
+    infilled_value: Optional[str] = None
+    query_type: str = "PATH"
 
 
 class DualSpeedInfillingEngine:
@@ -199,4 +201,196 @@ class DualSpeedInfillingEngine:
             confidence=self.policy.unknown_confidence,
             inspectable_trace="\n".join(trace_log),
             latency_ms=lat,
+            query_type="PATH",
         )
+
+    def infill_object(
+        self, subject: str, predicate: str, max_results: int = 10
+    ) -> List[InfillingResult]:
+        """Bidirectional infilling of missing object: (S, P, [?])."""
+        t0 = time.perf_counter()
+        subj_clean = subject.strip().upper().replace(" ", "_")
+        pred_clean = predicate.strip().lower()
+
+        results: List[InfillingResult] = []
+
+        # 1. FAST MODE: Single-hop direct out-edges (<0.2ms)
+        direct_objs = self._get_outgoing(subj_clean, pred_clean)
+        for obj in direct_objs[:max_results]:
+            lat = (time.perf_counter() - t0) * 1000.0
+            results.append(
+                InfillingResult(
+                    mode="FAST",
+                    path=[subj_clean, obj],
+                    confidence=self.policy.fast_confidence,
+                    inspectable_trace=f"Direct reflex hit: ({subj_clean}, {pred_clean}, {obj})",
+                    latency_ms=lat,
+                    infilled_value=obj,
+                    query_type="OBJECT",
+                )
+            )
+
+        # 2. THINKING MODE: If transitive predicate and more results requested
+        is_transitive = pred_clean in self.verifier.registry.predicates(transitive=True)
+        if is_transitive and len(results) < max_results:
+            frontier: Set[str] = {subj_clean}
+            visited_paths: Dict[str, List[str]] = {subj_clean: [subj_clean]}
+            depth = 0
+            while frontier and depth < self.policy.max_depth and len(results) < max_results:
+                depth += 1
+                next_frontier: Set[str] = set()
+                for curr in frontier:
+                    curr_path = visited_paths[curr]
+                    for nxt in self._get_outgoing(curr, pred_clean):
+                        if nxt not in visited_paths and nxt != subj_clean:
+                            nxt_path = curr_path + [nxt]
+                            visited_paths[nxt] = nxt_path
+                            next_frontier.add(nxt)
+                            if not any(r.infilled_value == nxt for r in results):
+                                lat = (time.perf_counter() - t0) * 1000.0
+                                results.append(
+                                    InfillingResult(
+                                        mode="THINKING",
+                                        path=nxt_path,
+                                        confidence=self.policy.verified_confidence,
+                                        inspectable_trace=f"Transitive forward expansion ({depth} hops): {' -> '.join(nxt_path)}",
+                                        latency_ms=lat,
+                                        infilled_value=nxt,
+                                        query_type="OBJECT",
+                                    )
+                                )
+                frontier = next_frontier
+
+        return results[:max_results]
+
+    def infill_subject(
+        self, target: str, predicate: str, max_results: int = 10
+    ) -> List[InfillingResult]:
+        """Bidirectional infilling of missing subject: ([?], P, O)."""
+        t0 = time.perf_counter()
+        target_clean = target.strip().upper().replace(" ", "_")
+        pred_clean = predicate.strip().lower()
+
+        results: List[InfillingResult] = []
+
+        # 1. FAST MODE: Single-hop direct incoming edges (<0.2ms)
+        direct_subjs = self._get_incoming(target_clean, pred_clean)
+        for subj in direct_subjs[:max_results]:
+            lat = (time.perf_counter() - t0) * 1000.0
+            results.append(
+                InfillingResult(
+                    mode="FAST",
+                    path=[subj, target_clean],
+                    confidence=self.policy.fast_confidence,
+                    inspectable_trace=f"Direct reflex hit: ({subj}, {pred_clean}, {target_clean})",
+                    latency_ms=lat,
+                    infilled_value=subj,
+                    query_type="SUBJECT",
+                )
+            )
+
+        # 2. THINKING MODE: If transitive predicate and more results requested
+        is_transitive = pred_clean in self.verifier.registry.predicates(transitive=True)
+        if is_transitive and len(results) < max_results:
+            frontier: Set[str] = {target_clean}
+            visited_paths: Dict[str, List[str]] = {target_clean: [target_clean]}
+            depth = 0
+            while frontier and depth < self.policy.max_depth and len(results) < max_results:
+                depth += 1
+                next_frontier: Set[str] = set()
+                for curr in frontier:
+                    curr_path = visited_paths[curr]
+                    for prev in self._get_incoming(curr, pred_clean):
+                        if prev not in visited_paths and prev != target_clean:
+                            prev_path = [prev] + curr_path
+                            visited_paths[prev] = prev_path
+                            next_frontier.add(prev)
+                            if not any(r.infilled_value == prev for r in results):
+                                lat = (time.perf_counter() - t0) * 1000.0
+                                results.append(
+                                    InfillingResult(
+                                        mode="THINKING",
+                                        path=prev_path,
+                                        confidence=self.policy.verified_confidence,
+                                        inspectable_trace=f"Transitive backward expansion ({depth} hops): {' -> '.join(prev_path)}",
+                                        latency_ms=lat,
+                                        infilled_value=prev,
+                                        query_type="SUBJECT",
+                                    )
+                                )
+                frontier = next_frontier
+
+        return results[:max_results]
+
+    def infill_path(
+        self, subject: str, target: str, max_depth: int = 4
+    ) -> List[InfillingResult]:
+        """Bidirectional Frontier Collision Search connecting S and O across any relation: (S, [?], O)."""
+        t0 = time.perf_counter()
+        subj_clean = subject.strip().upper().replace(" ", "_")
+        target_clean = target.strip().upper().replace(" ", "_")
+
+        fwd_paths: Dict[str, List[str]] = {subj_clean: [subj_clean]}
+        bwd_paths: Dict[str, List[str]] = {target_clean: [target_clean]}
+        fwd_frontier: Set[str] = {subj_clean}
+        bwd_frontier: Set[str] = {target_clean}
+
+        collision_results: List[InfillingResult] = []
+        depth = 0
+
+        predicates = list(self.verifier.registry.predicates()) or ["is_a", "part_of", "has"]
+
+        while depth < max_depth and fwd_frontier and bwd_frontier:
+            depth += 1
+
+            # Expand Forward
+            next_fwd: Set[str] = set()
+            for node in fwd_frontier:
+                curr_path = fwd_paths[node]
+                for p in predicates:
+                    for obj in self._get_outgoing(node, p):
+                        if obj not in fwd_paths and obj != subj_clean:
+                            fwd_paths[obj] = curr_path + [obj]
+                            next_fwd.add(obj)
+                            if obj in bwd_paths:
+                                full_p = curr_path + [obj] + bwd_paths[obj][1:]
+                                lat = (time.perf_counter() - t0) * 1000.0
+                                collision_results.append(
+                                    InfillingResult(
+                                        mode="THINKING",
+                                        path=full_p,
+                                        confidence=self.policy.verified_confidence,
+                                        inspectable_trace=f"Meeting-in-the-middle collision at '{obj}': {' -> '.join(full_p)}",
+                                        latency_ms=lat,
+                                        infilled_value=obj,
+                                        query_type="PATH",
+                                    )
+                                )
+            fwd_frontier = next_fwd
+
+            # Expand Backward
+            next_bwd: Set[str] = set()
+            for node in bwd_frontier:
+                curr_path = bwd_paths[node]
+                for p in predicates:
+                    for sub in self._get_incoming(node, p):
+                        if sub not in bwd_paths and sub != target_clean:
+                            bwd_paths[sub] = [sub] + curr_path
+                            next_bwd.add(sub)
+                            if sub in fwd_paths:
+                                full_p = fwd_paths[sub] + curr_path
+                                lat = (time.perf_counter() - t0) * 1000.0
+                                collision_results.append(
+                                    InfillingResult(
+                                        mode="THINKING",
+                                        path=full_p,
+                                        confidence=self.policy.verified_confidence,
+                                        inspectable_trace=f"Meeting-in-the-middle collision at '{sub}': {' -> '.join(full_p)}",
+                                        latency_ms=lat,
+                                        infilled_value=sub,
+                                        query_type="PATH",
+                                    )
+                                )
+            bwd_frontier = next_bwd
+
+        return collision_results

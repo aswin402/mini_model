@@ -258,7 +258,11 @@ class CognitiveCommandRegistry:
     def _handle_dream_cycle(
         kernel: CognitiveKernel, text: str, match: re.Match[str]
     ) -> str:
-        report = kernel.self_study.dream(max_steps=3)
+        steps = 1
+        m_steps = re.search(r"\b(\d+)\s+steps?\b", text, re.IGNORECASE)
+        if m_steps:
+            steps = min(5, int(m_steps.group(1)))
+        report = kernel.self_study.dream(max_steps=steps)
         return kernel.dialogue_surface.verbalize_dream_report(report)
 
     @staticmethod

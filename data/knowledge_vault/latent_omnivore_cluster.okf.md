@@ -1,5 +1,5 @@
 ---
-id: concept_26761c285d1c
+id: concept_c865cabb9252
 name: latent_omnivore_cluster
 aliases: []
 taxonomy:
@@ -15,7 +15,7 @@ attributes:
   is_latent: true
   category_utility: 0.18518518518518523
   constituent_count: 6
-  induced_at: "2026-10-01T08:12:30Z"
+  induced_at: "2026-10-01T18:18:47Z"
 confidence: 1.0
 status: ACTIVE
 ---

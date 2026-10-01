@@ -1,5 +1,5 @@
 ---
-id: concept_5fcfb2df0814
+id: concept_9ce97b816736
 name: latent_organism_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.125
   constituent_count: 3
-  induced_at: "2026-10-01T08:12:31Z"
+  induced_at: "2026-10-01T18:18:47Z"
 confidence: 1.0
 status: ACTIVE
 ---

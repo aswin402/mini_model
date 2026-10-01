@@ -1,5 +1,5 @@
 ---
-id: concept_4bc112fd3fec
+id: concept_ecd15c97e7e6
 name: latent_continent_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 6
-  induced_at: "2026-10-01T08:12:30Z"
+  induced_at: "2026-10-01T18:18:47Z"
 confidence: 1.0
 status: ACTIVE
 ---

@@ -1,5 +1,5 @@
 ---
-id: concept_e0b75483c412
+id: concept_248b3ce0f803
 name: latent_planet_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.125
   constituent_count: 6
-  induced_at: "2026-10-01T08:12:30Z"
+  induced_at: "2026-10-01T18:18:47Z"
 confidence: 1.0
 status: ACTIVE
 ---

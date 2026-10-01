@@ -158,7 +158,11 @@ class SensoryGroundingEngine:
 
             # Color / Visual feature match
             if color:
-                if c.attributes.get("color", "").lower() == color:
+                c_color = c.attributes.get("color", "")
+                if isinstance(c_color, (list, tuple, set)):
+                    if any(color == str(item).lower() for item in c_color):
+                        score += 1.5
+                elif isinstance(c_color, str) and c_color.lower() == color:
                     score += 1.5
                 for r in self.memory.get_relations(subject_id=c.id):
                     if r.predicate == "color":

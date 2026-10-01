@@ -1,7 +1,7 @@
 """Automated Integration Test: Real-World Conversational Understanding & Knowledge Verification.
 
 Ensures that the comprehensive real-world multi-domain dialogue suite maintains 100% pass rate
-across all 9 core conversational modalities.
+across all 11 core conversational modalities.
 """
 
 from __future__ import annotations
@@ -12,11 +12,11 @@ from little.evaluation.real_world_chat_matrix import RealWorldChatBenchmark
 
 
 def test_real_world_chat_comprehensive_matrix() -> None:
-    """Execute the full 38-turn real-world dialogue matrix and verify 100% accuracy."""
+    """Execute the full 44-turn real-world dialogue matrix and verify 100% accuracy."""
     benchmark = RealWorldChatBenchmark()
     report = benchmark.run()
 
-    assert report["total_turns"] == 38, f"Expected 38 turns, got {report['total_turns']}"
+    assert report["total_turns"] == 44, f"Expected 44 turns, got {report['total_turns']}"
     assert report["overall_accuracy"] == 100.0, f"Expected 100% pass rate, got {report['overall_accuracy']}% ({report['total_passed']}/{report['total_turns']})"
 
     # Verify each individual category achieved 100% pass rate

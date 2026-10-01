@@ -1,6 +1,6 @@
 """Real-World Conversational Understanding & Multi-Domain Dialogue Benchmark Matrix.
 
-Evaluates LITTLE (MIVI) across 38 real-world interactive dialogue turns:
+Evaluates LITTLE (MIVI) across 44 real-world interactive dialogue turns:
 1. Casual Human Chit-Chat & Social Protocols
 2. Slang & Colloquial Phrasing
 3. Multi-Domain Deductive Reasoning (CS, Astronomy, Biology, Geography, Physics)
@@ -10,6 +10,8 @@ Evaluates LITTLE (MIVI) across 38 real-world interactive dialogue turns:
 7. Typed Tool Calling & Sandboxed Environmental I/O
 8. Living Wiki & TurboQuant 4-Bit/1-Bit Semantic Retrieval
 9. Open-World Assumption (OWA) Zero-Hallucination Honesty
+10. Epistemic Self-Study & Curiosity Dreaming (The Cognitive Dreamer)
+11. Continuous Dynamic Physics & Multimodal Sensory Grounding
 
 Profiles latency (ms), Headroom context token compression, and process RSS memory (< 50 MB).
 """
@@ -188,6 +190,26 @@ class RealWorldChatBenchmark:
              lambda r: any(w in r.lower() for w in ("do not know", "don't have that information", "unknown"))),
             ("Zero-Hallucination OWA", "Where is the continent of Quazilopia located?", "unknown_location",
              lambda r: any(w in r.lower() for w in ("do not know", "don't have that information", "unknown"))),
+
+            # -------------------------------------------------------------
+            # Category 10: Epistemic Self-Study & Curiosity Dreaming
+            # -------------------------------------------------------------
+            ("Epistemic Self-Study & Dreaming", "run dream cycle", "dream_cycle_execution",
+             lambda r: any(w in r.lower() for w in ("dream", "step", "assimilated", "frontier", "entropy"))),
+            ("Epistemic Self-Study & Dreaming", "what are your knowledge gaps", "knowledge_gaps_inquiry",
+             lambda r: any(w in r.lower() for w in ("knowledge gap", "radial entropy", "missing axes"))),
+            ("Epistemic Self-Study & Dreaming", "study concept hawk", "autonomous_curiosity_study",
+             lambda r: "hawk" in r.lower() and any(w in r.lower() for w in ("curiosity study", "verified", "assimilated", "radial axis"))),
+
+            # -------------------------------------------------------------
+            # Category 11: Continuous Dynamic Physics & Sensory Grounding
+            # -------------------------------------------------------------
+            ("Dynamic Physics & Sensory Grounding", "What happens to apple over 10 days?", "continuous_ode_decay_simulation",
+             lambda r: "apple" in r.lower() and "freshness" in r.lower() and any(w in r.lower() for w in ("decay", "simulation", "milestone", "oxidation"))),
+            ("Dynamic Physics & Sensory Grounding", "What happens if I peel an apple?", "procedural_action_jump_peel",
+             lambda r: "peel" in r.lower() and any(w in r.lower() for w in ("mass", "skin", "flesh", "conserved", "qpt"))),
+            ("Dynamic Physics & Sensory Grounding", "observe sensor: [color: red, mass: 180g]", "multimodal_sensory_grounding",
+             lambda r: "apple" in r.lower() and any(w in r.lower() for w in ("sensory", "grounded", "episodic", "anchored"))),
         ]
 
         item_results: list[TurnResult] = []
