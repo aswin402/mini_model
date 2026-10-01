@@ -739,7 +739,6 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             q = q[:-1].strip()
         elif q.endswith("!") and not re.search(r"\d+!$", q):
             q = q[:-1].strip()
-
         for pattern in cls._question_prefix_patterns().patterns:
             if pattern.strategy != "prefix_delegate":
                 continue
@@ -1826,30 +1825,35 @@ class LearningEngine:
                 )
 
             desc_parts: list[str] = []
+            def _is_public_concept(c_obj: Any) -> bool:
+                if not c_obj:
+                    return False
+                return not c_obj.name.lower().startswith("latent_") and not c_obj.attributes.get("is_latent")
+
             out_rels = self.memory.get_relations(subject_id=concept.id)
             is_a_rels = [
                 self.memory.get_concept(r.object_id).name
                 for r in out_rels
                 if r.predicate == self.semantic.taxonomy
-                and self.memory.get_concept(r.object_id)
+                and _is_public_concept(self.memory.get_concept(r.object_id))
             ]
             part_of_rels = [
                 self.memory.get_concept(r.object_id).name
                 for r in out_rels
                 if r.predicate == self.semantic.part
-                and self.memory.get_concept(r.object_id)
+                and _is_public_concept(self.memory.get_concept(r.object_id))
             ]
             has_rels = [
                 self.memory.get_concept(r.object_id).name
                 for r in out_rels
                 if r.predicate == self.semantic.whole
-                and self.memory.get_concept(r.object_id)
+                and _is_public_concept(self.memory.get_concept(r.object_id))
             ]
             disjoint_rels = [
                 self.memory.get_concept(r.object_id).name
                 for r in out_rels
                 if r.predicate == "disjoint_with"
-                and self.memory.get_concept(r.object_id)
+                and _is_public_concept(self.memory.get_concept(r.object_id))
             ]
 
             in_rels = self.memory.get_relations(object_id=concept.id)
@@ -1857,7 +1861,7 @@ class LearningEngine:
                 self.memory.get_concept(r.subject_id).name
                 for r in in_rels
                 if r.predicate == self.semantic.part
-                and self.memory.get_concept(r.subject_id)
+                and _is_public_concept(self.memory.get_concept(r.subject_id))
             ]
 
             if is_a_rels:
@@ -1875,9 +1879,16 @@ class LearningEngine:
             if attrs:
                 attr_strs = []
                 for k, v in attrs.items():
+                    k_str = str(k).strip()
+                    if (
+                        k_str.lower().startswith("latent_")
+                        or k_str.lower() in {"is_latent", "category_utility", "constituent_count", "induced_at"}
+                    ):
+                        continue
                     val = ", ".join(v) if isinstance(v, list) else str(v)
-                    attr_strs.append(f"{k}={val}")
-                desc_parts.append(f"attributes: ({', '.join(attr_strs)})")
+                    attr_strs.append(f"{k_str}={val}")
+                if attr_strs:
+                    desc_parts.append(f"attributes: ({', '.join(attr_strs)})")
 
             if not desc_parts:
                 explanation = f"'{concept.name}' is registered in memory (confidence: {concept.confidence:.1f})."

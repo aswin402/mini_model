@@ -114,3 +114,71 @@ def test_multi_turn_anaphora_and_concept_summarization():
     turn_recall = kernel.chat("Do you remember my name?")
     assert "Aswin" in turn_recall
 
+
+def test_conversational_teaching_and_explanatory_chat():
+    """Verify teaching, explanatory definitions, multi-hop deduction, math, and parting in chat dialogue."""
+    store = MemoryStore(":memory:", seed_ontology=True)
+    kernel = CognitiveKernel(store)
+
+    # 1. Courtesy greeting
+    r1 = kernel.chat("Hello! Nice to meet you.")
+    assert "hello" in r1.lower()
+    assert "nice to meet you" in r1.lower() or "pleasure" in r1.lower()
+
+    # 2. Compound identity & learning inquiry
+    r2 = kernel.chat("Can you tell me about yourself and how do you learn?")
+    assert "LITTLE" in r2
+    assert "dialogue" in r2.lower() or "neuro-symbolic" in r2.lower()
+
+    # 3. Epistemic unknown before teaching
+    r3 = kernel.chat("Tell me what you know about ocelot.")
+    assert "don't have that information in my memory yet" in r3.lower()
+
+    # 4. Teaching taxonomy
+    r4 = kernel.chat("An ocelot is a feline.")
+    assert "learned that An ocelot is a feline" in r4
+
+    # 5. Teaching features
+    r5 = kernel.chat("An ocelot has sharp claws and nocturnal vision.")
+    assert "learned that An ocelot has sharp claws and nocturnal vision" in r5
+
+    # 6. Teaching disjoint invariant
+    r6 = kernel.chat("An ocelot is not a canine.")
+    assert "learned that An ocelot is not a canine" in r6
+
+    # 7. Conversational explanatory definition
+    r7 = kernel.chat("Describe what you know about ocelot.")
+    assert "ocelot is a feline" in r7.lower()
+    assert "sharp claw" in r7.lower()
+    assert "nocturnal vision" in r7.lower()
+    assert "canine" in r7.lower()
+    assert "latent_" not in r7.lower()
+
+    # 8. Alternative explanatory query
+    r8 = kernel.chat("Explain what an ocelot is.")
+    assert "ocelot is a feline" in r8.lower()
+    assert "latent_" not in r8.lower()
+
+    # 9. Multi-hop transitive deduction (ocelot -> feline -> mammal -> animal)
+    r9 = kernel.chat("Is an ocelot an animal?")
+    assert "Yes" in r9
+    assert "is indeed an animal" in r9.lower()
+
+    # 10. Capability refutation
+    r10 = kernel.chat("Can an ocelot fly?")
+    assert "No" in r10
+    assert "cannot fly" in r10.lower()
+
+    # 11. Natural arithmetic
+    r11 = kernel.chat("What is 15% of 800?")
+    assert "120" in r11
+
+    # 12. Strict poset reasoning
+    r12 = kernel.chat("The ocelot is faster than the badger, and the cheetah is faster than the ocelot. Who is the fastest?")
+    assert "Cheetah is the fastest" in r12
+
+    # 13. Gratitude & compound farewell
+    r13 = kernel.chat("Thank you so much for chatting with me! Goodbye for now!")
+    assert "welcome" in r13.lower()
+    assert "goodbye" in r13.lower() or "preserved" in r13.lower()
+

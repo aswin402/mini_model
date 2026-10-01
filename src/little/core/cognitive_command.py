@@ -161,7 +161,7 @@ class CognitiveCommandRegistry:
                 description="Predict continuous-time physical state evolution over arbitrary time deltas",
                 patterns=(
                     re.compile(
-                        r"^(?:simulate|predict|what\s+happens\s+to|what\s+would\s+happen\s+if\s+I\s+leave)\s+(?:an?\s+)?(?P<target>[a-zA-Z0-9_\-]+)(?:\s+(?:for|over|after)\s+(?P<duration>\d+(?:\.\d+)?)\s*(?P<unit>hours?|days?|minutes?|hrs?|mins?))?(?:\s+at\s+(?P<temp>\d+(?:\.\d+)?)\s*(?:°?C|degrees?(?:\s+celsius)?|celsius|centigrade)?)?(?:.*)?\??$",
+                        r"^(?:simulate\s+(?:physical\s+)?dynamics\s+(?:of|for)|predict|what\s+happens\s+to|what\s+would\s+happen\s+if\s+I\s+leave)\s+(?:an?\s+)?(?P<target>[a-zA-Z0-9_\-]+)(?:\s+(?:for|over|after)\s+(?P<duration>\d+(?:\.\d+)?)\s*(?P<unit>hours?|days?|minutes?|hrs?|mins?))?(?:\s+at\s+(?P<temp>\d+(?:\.\d+)?)\s*(?:°?C|degrees?(?:\s+celsius)?|celsius|centigrade)?)?(?:.*)?\??$",
                         re.IGNORECASE,
                     ),
                 ),

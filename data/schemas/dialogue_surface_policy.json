@@ -22,12 +22,21 @@
     },
     "thank_you": {
       "patterns": [
-        "^(?:thank\\s+you(?:\\s+so\\s+much|\\s+very\\s+much)?|thanks(?:\\s+a\\s+lot|\\s+so\\s+much)?|much\\s+appreciated|appreciate\\s+it)(?:\\s+for\\s+(?:all\\s+)?(?:your\\s+)?(?:help|assistance|time))?(?:\\s*,?\\s*(?:i\\s+)?(?:greatly\\s+)?appreciate\\s+it)?[!.]?$"
+        "^(?:thank\\s+you|thanks|much\\s+appreciated|appreciate\\s+it)(?:\\s+(?:so\\s+much|very\\s+much|a\\s+lot|kindly))?(?:\\s+for\\s+[^.!?]+)?(?:\\s*,?\\s*(?:i\\s+)?(?:greatly\\s+)?appreciate\\s+it)?[!.]?$"
       ],
       "responses": [
         "You're very welcome!",
         "Glad I could help!",
         "Anytime! Feel free to ask if you have more questions."
+      ]
+    },
+    "greeting_courtesy": {
+      "patterns": [
+        "^(?:nice\\s+to\\s+meet\\s+you|pleased\\s+to\\s+meet\\s+you|pleasure\\s+meeting\\s+you|great\\s+to\\s+meet\\s+you)[!.]?$"
+      ],
+      "responses": [
+        "Nice to meet you as well! I'm excited to converse and learn together.",
+        "A pleasure to meet you! How can I assist you today?"
       ]
     },
     "goodbye": {
@@ -42,10 +51,18 @@
     },
     "identity": {
       "patterns": [
-        "^(?:who\\s+are\\s+you|what\\s+are\\s+you|what\\s+is\\s+your\\s+name|tell\\s+me\\s+about\\s+yourself)[?!.]?$"
+        "^(?:who\\s+are\\s+you|what\\s+are\\s+you|what\\s+is\\s+your\\s+name|(?:can\\s+you\\s+)?tell\\s+me\\s+about\\s+yourself)[?!.]?$"
       ],
       "responses": [
         "I am LITTLE (MIVI), a verifiable neuro-symbolic cognitive architecture. I learn continuously, reason over 360° concept knots, and never hallucinate."
+      ]
+    },
+    "learning_mechanism": {
+      "patterns": [
+        "^(?:how\\s+do\\s+you\\s+learn|how\\s+does\\s+your\\s+learning\\s+work|explain\\s+how\\s+you\\s+learn)[?!.]?$"
+      ],
+      "responses": [
+        "I learn continuously from our dialogue! When you teach me new relationships, taxonomic facts, physical properties, or concepts, I integrate them into my 360° neuro-symbolic concept web with strict logical verification and zero hallucination."
       ]
     },
     "compliment": {

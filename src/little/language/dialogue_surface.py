@@ -38,6 +38,11 @@ class DialogueSurfaceEngine:
             return response
 
         clauses = [p.strip() for p in re.split(r"[.!?]+", text) if p.strip()]
+        if len(clauses) <= 1 and re.search(r"\band\b", text, re.IGNORECASE):
+            and_clauses = [p.strip() for p in re.split(r"\band\b", text, flags=re.IGNORECASE) if p.strip()]
+            if len(and_clauses) > 1 and all(self.policy.match_social_intent(c) for c in and_clauses):
+                clauses = and_clauses
+
         if len(clauses) > 1:
             matched_clauses: list[tuple[str, str]] = []
             for clause in clauses:
@@ -117,7 +122,11 @@ class DialogueSurfaceEngine:
 
         tax_raw = m.group(2).strip().rstrip(".")
         raw_items = [re.sub(r"^(?:is\s+(?:a\s+)?)", "", item).strip() for item in tax_raw.split(",")]
-        tax_items = [f"{self._article(item)} {item}" for item in raw_items if item]
+        tax_items = [
+            f"{self._article(item)} {item}"
+            for item in raw_items
+            if item and not item.lower().startswith("latent_")
+        ]
         if tax_items:
             tax_str = self._format_conjoined(tax_items)
             tpl_tax = self.policy.get_template("definition_taxonomy", "{subject_article} {subject} is {taxonomy}.")
@@ -126,31 +135,53 @@ class DialogueSurfaceEngine:
         for part in parts[1:]:
             p_strip = part.strip()
             if p_strip.startswith("has "):
-                items = [it.strip() for it in p_strip[4:].split(",") if it.strip()]
+                items = [
+                    it.strip()
+                    for it in p_strip[4:].split(",")
+                    if it.strip() and not it.strip().lower().startswith("latent_")
+                ]
                 if items:
                     f_str = self._format_conjoined(items)
                     tpl_has = self.policy.get_template("definition_has", "It has {features}.")
                     sentences.append(tpl_has.format(features=f_str))
             elif p_strip.startswith("is part of "):
                 target = p_strip[11:].strip()
-                tpl_po = self.policy.get_template("definition_part_of", "It is part of {target_article} {target}.")
-                sentences.append(tpl_po.format(target_article=self._article(target), target=target))
+                if not target.lower().startswith("latent_"):
+                    tpl_po = self.policy.get_template("definition_part_of", "It is part of {target_article} {target}.")
+                    sentences.append(tpl_po.format(target_article=self._article(target), target=target))
             elif p_strip.startswith("consists of parts:"):
-                items = [it.strip() for it in p_strip[18:].split(",") if it.strip()]
+                items = [
+                    it.strip()
+                    for it in p_strip[18:].split(",")
+                    if it.strip() and not it.strip().lower().startswith("latent_")
+                ]
                 if items:
                     f_str = self._format_conjoined(items)
                     tpl_parts = self.policy.get_template("definition_parts", "It consists of {parts}.")
                     sentences.append(tpl_parts.format(parts=f_str))
             elif p_strip.startswith(("is not a ", "is not ")):
                 raw_disj = re.sub(r"^is\s+not\s+(?:a\s+)?", "", p_strip).strip()
-                items = [it.strip() for it in raw_disj.split(",") if it.strip()]
+                items = [
+                    it.strip()
+                    for it in raw_disj.split(",")
+                    if it.strip() and not it.strip().lower().startswith("latent_")
+                ]
                 if items:
                     f_str = self._format_conjoined(items)
                     tpl_disj = self.policy.get_template("definition_disjoint", "It is distinct from {disjoint}.")
                     sentences.append(tpl_disj.format(disjoint=f_str))
             elif p_strip.startswith("attributes:"):
-                tpl_attr = self.policy.get_template("definition_attributes", "Its attributes include {attributes}.")
-                sentences.append(tpl_attr.format(attributes=p_strip[11:].strip()))
+                raw_attrs = p_strip[11:].strip().strip("()")
+                attr_pairs = [pair.strip() for pair in raw_attrs.split(",") if pair.strip()]
+                clean_pairs = []
+                for pair in attr_pairs:
+                    k = pair.split("=")[0].strip().lower()
+                    if k in {"is_latent", "category_utility", "constituent_count", "induced_at"} or k.startswith("latent_"):
+                        continue
+                    clean_pairs.append(pair)
+                if clean_pairs:
+                    tpl_attr = self.policy.get_template("definition_attributes", "Its attributes include {attributes}.")
+                    sentences.append(tpl_attr.format(attributes=", ".join(clean_pairs)))
 
         return " ".join(sentences)
 
