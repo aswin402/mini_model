@@ -1,5 +1,5 @@
 ---
-id: concept_631cc2c7ae0c
+id: concept_2305b34e5d6e
 name: latent_vegetable_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 10
-  induced_at: "2026-09-30T15:51:50Z"
+  induced_at: "2026-10-01T08:12:30Z"
 confidence: 1.0
 status: ACTIVE
 ---

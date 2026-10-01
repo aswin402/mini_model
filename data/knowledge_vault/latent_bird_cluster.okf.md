@@ -1,5 +1,5 @@
 ---
-id: concept_e70f98dd6595
+id: concept_93d9092dc4f7
 name: latent_bird_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.2569444444444444
   constituent_count: 20
-  induced_at: "2026-09-30T15:51:49Z"
+  induced_at: "2026-10-01T08:12:30Z"
 confidence: 1.0
 status: ACTIVE
 ---

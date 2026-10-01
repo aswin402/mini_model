@@ -1,5 +1,5 @@
 ---
-id: concept_55a7e9682e40
+id: concept_f6d0e506640f
 name: latent_arachnid_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 3
-  induced_at: "2026-09-30T15:51:50Z"
+  induced_at: "2026-10-01T08:12:31Z"
 confidence: 1.0
 status: ACTIVE
 ---

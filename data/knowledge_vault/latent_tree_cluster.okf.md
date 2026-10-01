@@ -1,5 +1,5 @@
 ---
-id: concept_8ef7411baa07
+id: concept_fe42b7eb8d6c
 name: latent_tree_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 9
-  induced_at: "2026-09-30T15:51:50Z"
+  induced_at: "2026-10-01T08:12:30Z"
 confidence: 1.0
 status: ACTIVE
 ---

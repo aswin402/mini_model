@@ -381,6 +381,138 @@ pub extern "C" fn little_core_free_string(ptr: *mut c_char) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// TurboQuant Vector Compression & Sub-Millisecond Search FFI
+// ---------------------------------------------------------------------------
+
+pub mod turbo;
+use turbo::TurboIndexRust;
+
+#[no_mangle]
+pub extern "C" fn little_core_turbo_index_create(
+    dimension: usize,
+    signs_ptr: *const f32,
+    signs_len: usize,
+) -> *mut TurboIndexRust {
+    if signs_ptr.is_null() || signs_len != dimension {
+        return std::ptr::null_mut();
+    }
+    let signs = unsafe { std::slice::from_raw_parts(signs_ptr, signs_len) };
+    let index = Box::new(TurboIndexRust::new(dimension, signs));
+    Box::into_raw(index)
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_turbo_index_destroy(index_ptr: *mut TurboIndexRust) {
+    if !index_ptr.is_null() {
+        unsafe {
+            let _ = Box::from_raw(index_ptr);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_turbo_index_add(
+    index_ptr: *mut TurboIndexRust,
+    id_cstr: *const c_char,
+    vector_ptr: *const f32,
+    vector_len: usize,
+    metadata_json_cstr: *const c_char,
+) -> i32 {
+    if index_ptr.is_null() || vector_ptr.is_null() {
+        return 0;
+    }
+    let id_str = match from_c_str(id_cstr) {
+        Some(s) => s,
+        None => return 0,
+    };
+    let meta_str = match from_c_str(metadata_json_cstr) {
+        Some(s) => s,
+        None => "{}",
+    };
+
+    let index = unsafe { &mut *index_ptr };
+    if vector_len != index.dimension {
+        return 0;
+    }
+    let vector = unsafe { std::slice::from_raw_parts(vector_ptr, vector_len) };
+
+    index.add(id_str, vector, meta_str);
+    1
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_turbo_index_remove(
+    index_ptr: *mut TurboIndexRust,
+    id_cstr: *const c_char,
+) -> i32 {
+    if index_ptr.is_null() {
+        return 0;
+    }
+    let id_str = match from_c_str(id_cstr) {
+        Some(s) => s,
+        None => return 0,
+    };
+    let index = unsafe { &mut *index_ptr };
+    if index.remove(id_str) {
+        1
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_turbo_index_size(index_ptr: *mut TurboIndexRust) -> usize {
+    if index_ptr.is_null() {
+        return 0;
+    }
+    let index = unsafe { &*index_ptr };
+    index.vectors.len()
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_turbo_index_search(
+    index_ptr: *mut TurboIndexRust,
+    query_ptr: *const f32,
+    query_len: usize,
+    top_k: usize,
+    threshold: f32,
+    coarse_multiplier: usize,
+) -> *mut c_char {
+    if index_ptr.is_null() || query_ptr.is_null() {
+        let empty: Vec<turbo::SearchResultRust> = vec![];
+        return to_c_string(&empty);
+    }
+    let index = unsafe { &*index_ptr };
+    if query_len != index.dimension {
+        let empty: Vec<turbo::SearchResultRust> = vec![];
+        return to_c_string(&empty);
+    }
+    let query = unsafe { std::slice::from_raw_parts(query_ptr, query_len) };
+    let results = index.search(query, top_k, threshold, coarse_multiplier);
+    to_c_string(&results)
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_turbo_rotate(
+    index_ptr: *mut TurboIndexRust,
+    vector_ptr: *const f32,
+    vector_len: usize,
+    out_ptr: *mut f32,
+) -> i32 {
+    if index_ptr.is_null() || vector_ptr.is_null() || out_ptr.is_null() {
+        return 0;
+    }
+    let index = unsafe { &*index_ptr };
+    if vector_len != index.dimension {
+        return 0;
+    }
+    let vector = unsafe { std::slice::from_raw_parts(vector_ptr, vector_len) };
+    let out = unsafe { std::slice::from_raw_parts_mut(out_ptr, vector_len) };
+    index.rotate(vector, out);
+    1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,5 +552,23 @@ mod tests {
         ];
         let order = topological_sort(&nodes, &edges).unwrap();
         assert_eq!(order, vec!["A", "B", "C"]);
+    }
+
+    #[test]
+    fn test_turbo_index_search() {
+        let signs = vec![1.0; 512];
+        let mut index = TurboIndexRust::new(512, &signs);
+        let mut v1 = vec![0.0f32; 512];
+        v1[0] = 1.0;
+        index.add("v1", &v1, "{}");
+
+        let mut v2 = vec![0.0f32; 512];
+        v2[1] = 1.0;
+        index.add("v2", &v2, "{}");
+
+        let results = index.search(&v1, 5, 0.5, 10);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "v1");
+        assert!(results[0].score > 0.9);
     }
 }

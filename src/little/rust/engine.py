@@ -30,6 +30,11 @@ class RustAccelerationCore:
         """Return True if native Rust shared library is successfully loaded."""
         return self._lib is not None
 
+    @property
+    def has_turbo_acceleration(self) -> bool:
+        """Return True if native Rust TurboQuant vector acceleration is available."""
+        return self._lib is not None and hasattr(self._lib, "little_core_turbo_index_create")
+
     def _load_library(self) -> ctypes.CDLL | None:
         """Search workspace and system paths for liblittle_core shared library."""
         search_dirs = [
@@ -67,6 +72,51 @@ class RustAccelerationCore:
 
         lib.little_core_free_string.argtypes = [ctypes.c_void_p]
         lib.little_core_free_string.restype = None
+
+        # TurboQuant vector index bindings
+        if hasattr(lib, "little_core_turbo_index_create"):
+            lib.little_core_turbo_index_create.argtypes = [
+                ctypes.c_size_t,
+                ctypes.POINTER(ctypes.c_float),
+                ctypes.c_size_t,
+            ]
+            lib.little_core_turbo_index_create.restype = ctypes.c_void_p
+
+            lib.little_core_turbo_index_destroy.argtypes = [ctypes.c_void_p]
+            lib.little_core_turbo_index_destroy.restype = None
+
+            lib.little_core_turbo_index_add.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_char_p,
+                ctypes.POINTER(ctypes.c_float),
+                ctypes.c_size_t,
+                ctypes.c_char_p,
+            ]
+            lib.little_core_turbo_index_add.restype = ctypes.c_int32
+
+            lib.little_core_turbo_index_remove.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+            lib.little_core_turbo_index_remove.restype = ctypes.c_int32
+
+            lib.little_core_turbo_index_size.argtypes = [ctypes.c_void_p]
+            lib.little_core_turbo_index_size.restype = ctypes.c_size_t
+
+            lib.little_core_turbo_index_search.argtypes = [
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_float),
+                ctypes.c_size_t,
+                ctypes.c_size_t,
+                ctypes.c_float,
+                ctypes.c_size_t,
+            ]
+            lib.little_core_turbo_index_search.restype = ctypes.c_void_p
+
+            lib.little_core_turbo_rotate.argtypes = [
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_float),
+                ctypes.c_size_t,
+                ctypes.POINTER(ctypes.c_float),
+            ]
+            lib.little_core_turbo_rotate.restype = ctypes.c_int32
 
     # -------------------------------------------------------------------------
     # Public Accelerated Graph API
@@ -218,3 +268,84 @@ class RustAccelerationCore:
                         visited_bwd[n] = path + [n]
                         q_bwd.append(n)
         return None
+
+    # -------------------------------------------------------------------------
+    # Public Accelerated TurboQuant Vector Index API
+    # -------------------------------------------------------------------------
+
+    def turbo_index_create(self, dimension: int, signs: Sequence[float]) -> Any:
+        """Create a native Rust TurboQuant index handle."""
+        if self._lib is None or not hasattr(self._lib, "little_core_turbo_index_create"):
+            return None
+        c_signs = (ctypes.c_float * len(signs))(*signs)
+        return self._lib.little_core_turbo_index_create(dimension, c_signs, len(signs))
+
+    def turbo_index_destroy(self, handle: Any) -> None:
+        """Destroy native Rust TurboQuant index handle."""
+        if self._lib is not None and handle and hasattr(self._lib, "little_core_turbo_index_destroy"):
+            self._lib.little_core_turbo_index_destroy(handle)
+
+    def turbo_index_add(
+        self,
+        handle: Any,
+        id_str: str,
+        vector: Sequence[float],
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
+        """Add a continuous vector into native Rust TurboQuant index."""
+        if self._lib is None or not handle or not hasattr(self._lib, "little_core_turbo_index_add"):
+            return False
+        c_vec = (ctypes.c_float * len(vector))(*vector)
+        id_bytes = id_str.encode("utf-8")
+        meta_bytes = json.dumps(metadata or {}).encode("utf-8")
+        res = self._lib.little_core_turbo_index_add(
+            handle, id_bytes, c_vec, len(vector), meta_bytes
+        )
+        return bool(res == 1)
+
+    def turbo_index_remove(self, handle: Any, id_str: str) -> bool:
+        """Remove a vector from native Rust TurboQuant index by ID."""
+        if self._lib is None or not handle or not hasattr(self._lib, "little_core_turbo_index_remove"):
+            return False
+        id_bytes = id_str.encode("utf-8")
+        res = self._lib.little_core_turbo_index_remove(handle, id_bytes)
+        return bool(res == 1)
+
+    def turbo_index_size(self, handle: Any) -> int:
+        """Return total number of vectors stored in native Rust index."""
+        if self._lib is None or not handle or not hasattr(self._lib, "little_core_turbo_index_size"):
+            return 0
+        return int(self._lib.little_core_turbo_index_size(handle))
+
+    def turbo_index_search(
+        self,
+        handle: Any,
+        query_vector: Sequence[float],
+        top_k: int = 5,
+        threshold: float = 0.08,
+        coarse_multiplier: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Execute sub-millisecond coarse-to-fine vector search in native Rust."""
+        if self._lib is None or not handle or not hasattr(self._lib, "little_core_turbo_index_search"):
+            return []
+        c_query = (ctypes.c_float * len(query_vector))(*query_vector)
+        ptr = self._lib.little_core_turbo_index_search(
+            handle, c_query, len(query_vector), top_k, ctypes.c_float(threshold), coarse_multiplier
+        )
+        if not ptr:
+            return []
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return json.loads(res_str)
+
+    def turbo_rotate(self, handle: Any, vector: Sequence[float]) -> list[float]:
+        """Apply fast in-place FWHT rotation using native Rust."""
+        if self._lib is None or not handle or not hasattr(self._lib, "little_core_turbo_rotate"):
+            return []
+        dim = len(vector)
+        c_vec = (ctypes.c_float * dim)(*vector)
+        c_out = (ctypes.c_float * dim)()
+        res = self._lib.little_core_turbo_rotate(handle, c_vec, dim, c_out)
+        if res == 1:
+            return list(c_out)
+        return []

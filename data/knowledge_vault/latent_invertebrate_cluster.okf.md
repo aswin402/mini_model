@@ -1,5 +1,5 @@
 ---
-id: concept_866744522f3d
+id: concept_8a0e48ac28a4
 name: latent_invertebrate_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 3
-  induced_at: "2026-09-30T15:51:50Z"
+  induced_at: "2026-10-01T08:12:31Z"
 confidence: 1.0
 status: ACTIVE
 ---

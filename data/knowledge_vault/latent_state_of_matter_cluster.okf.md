@@ -1,5 +1,5 @@
 ---
-id: concept_f4665f2169c5
+id: concept_8f55312c943a
 name: latent_state_of_matter_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 4
-  induced_at: "2026-09-30T15:51:50Z"
+  induced_at: "2026-10-01T08:12:31Z"
 confidence: 1.0
 status: ACTIVE
 ---

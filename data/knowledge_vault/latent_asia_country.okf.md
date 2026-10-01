@@ -1,5 +1,5 @@
 ---
-id: concept_e01fd3c7425c
+id: concept_959e908f38ca
 name: latent_asia_country
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.17672610882487427
   constituent_count: 19
-  induced_at: "2026-09-30T15:51:49Z"
+  induced_at: "2026-10-01T08:12:30Z"
 confidence: 1.0
 status: ACTIVE
 ---

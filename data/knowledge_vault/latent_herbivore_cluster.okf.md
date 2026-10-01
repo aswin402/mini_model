@@ -1,5 +1,5 @@
 ---
-id: concept_997a668dfac8
+id: concept_30b7f736c55b
 name: latent_herbivore_cluster
 aliases: []
 taxonomy:
@@ -12,9 +12,9 @@ mereology:
 procedural_skills: []
 attributes:
   is_latent: true
-  category_utility: 0.125
-  constituent_count: 3
-  induced_at: "2026-09-30T14:58:27Z"
+  category_utility: 1.0
+  constituent_count: 7
+  induced_at: "2026-10-01T08:12:30Z"
 confidence: 1.0
 status: ACTIVE
 ---

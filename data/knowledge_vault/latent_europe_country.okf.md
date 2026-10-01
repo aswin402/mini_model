@@ -1,5 +1,5 @@
 ---
-id: concept_ce368d8bdebc
+id: concept_225c736e7fb5
 name: latent_europe_country
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 16
-  induced_at: "2026-09-30T15:51:49Z"
+  induced_at: "2026-10-01T08:12:30Z"
 confidence: 1.0
 status: ACTIVE
 ---

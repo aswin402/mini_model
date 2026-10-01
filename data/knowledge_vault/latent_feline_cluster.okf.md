@@ -1,5 +1,5 @@
 ---
-id: concept_7ce85c562a7b
+id: concept_a466bc050d14
 name: latent_feline_cluster
 aliases: []
 taxonomy:
@@ -15,7 +15,7 @@ attributes:
   is_latent: true
   category_utility: 0.19727891156462596
   constituent_count: 7
-  induced_at: "2026-09-30T15:22:10Z"
+  induced_at: "2026-10-01T08:12:30Z"
 confidence: 1.0
 status: ACTIVE
 ---

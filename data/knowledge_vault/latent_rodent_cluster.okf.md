@@ -1,5 +1,5 @@
 ---
-id: concept_6de075b5f5d0
+id: concept_d55e5266bc1e
 name: latent_rodent_cluster
 aliases: []
 taxonomy:
@@ -14,7 +14,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 4
-  induced_at: "2026-09-30T15:22:10Z"
+  induced_at: "2026-10-01T08:12:31Z"
 confidence: 1.0
 status: ACTIVE
 ---

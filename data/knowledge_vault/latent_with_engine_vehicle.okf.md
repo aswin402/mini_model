@@ -1,5 +1,5 @@
 ---
-id: concept_0211b81572e6
+id: concept_a2aab70e5902
 name: latent_with_engine_vehicle
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.22222222222222218
   constituent_count: 3
-  induced_at: "2026-09-30T15:51:50Z"
+  induced_at: "2026-10-01T08:12:31Z"
 confidence: 1.0
 status: ACTIVE
 ---

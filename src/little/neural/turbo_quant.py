@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from little.neural.turbo_quant_policy import TurboQuantPolicy
+from little.rust.engine import RustAccelerationCore
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,15 @@ class TurboQuantCompressor:
             1.0 if rng.random() > 0.5 else -1.0 for _ in range(self.dim)
         )
         self._scale: float = 1.0 / math.sqrt(self.dim)
+        self.rust = RustAccelerationCore.get()
+        self._rust_handle = None
+        if self.rust.has_turbo_acceleration:
+            self._rust_handle = self.rust.turbo_index_create(self.dim, self._signs)
+
+    def __del__(self) -> None:
+        if getattr(self, "_rust_handle", None) and getattr(self, "rust", None):
+            self.rust.turbo_index_destroy(self._rust_handle)
+            self._rust_handle = None
 
     def rotate(self, vector: Sequence[float]) -> list[float]:
         """Apply deterministic orthogonal rotation R = (1/sqrt(d)) * H * D.
@@ -70,6 +80,13 @@ class TurboQuantCompressor:
         if len(vector) != self.dim:
             raise ValueError(f"Expected vector of dimension {self.dim}, got {len(vector)}")
 
+        # Fast-Path: Native Rust FWHT
+        if self._rust_handle is not None:
+            rot = self.rust.turbo_rotate(self._rust_handle, vector)
+            if rot:
+                return rot
+
+        # Pure Python Fallback
         # 1. Coordinate sign flip D * x
         a = [vector[i] * self._signs[i] for i in range(self.dim)]
 
@@ -199,6 +216,17 @@ class TurboQuantIndex:
         self.compressor = compressor or TurboQuantCompressor(policy)
         self.policy = self.compressor.policy
         self._vectors: dict[str, QuantizedVector] = {}
+        self.rust = RustAccelerationCore.get()
+        self._rust_handle = None
+        if self.rust.has_turbo_acceleration:
+            self._rust_handle = self.rust.turbo_index_create(
+                self.compressor.dim, self.compressor._signs
+            )
+
+    def __del__(self) -> None:
+        if getattr(self, "_rust_handle", None) and getattr(self, "rust", None):
+            self.rust.turbo_index_destroy(self._rust_handle)
+            self._rust_handle = None
 
     def __len__(self) -> int:
         return len(self._vectors)
@@ -212,6 +240,8 @@ class TurboQuantIndex:
         """Compress and insert a continuous vector into the index."""
         qv = self.compressor.compress(id, vector, metadata)
         self._vectors[id] = qv
+        if self._rust_handle is not None:
+            self.rust.turbo_index_add(self._rust_handle, id, vector, metadata)
         return qv
 
     def add_quantized(self, quantized: QuantizedVector) -> None:
@@ -222,6 +252,8 @@ class TurboQuantIndex:
         return self._vectors.get(id)
 
     def remove(self, id: str) -> bool:
+        if self._rust_handle is not None:
+            self.rust.turbo_index_remove(self._rust_handle, id)
         return self._vectors.pop(id, None) is not None
 
     def memory_bytes(self) -> int:
@@ -244,6 +276,26 @@ class TurboQuantIndex:
         if not self._vectors:
             return []
 
+        # Fast-Path: Native Rust sub-millisecond search
+        if self._rust_handle is not None:
+            raw_results = self.rust.turbo_index_search(
+                self._rust_handle,
+                query_vector,
+                top_k=k,
+                threshold=min_sim,
+                coarse_multiplier=self.policy.coarse_filter_multiplier,
+            )
+            return [
+                VectorSearchResult(
+                    id=r["id"],
+                    score=r["score"],
+                    hamming_distance=r["hamming_distance"],
+                    metadata=r["metadata"],
+                )
+                for r in raw_results
+            ]
+
+        # Pure Python Fallback
         # Normalize query vector
         norm = math.sqrt(sum(v * v for v in query_vector))
         if norm > 1e-12:

@@ -1,5 +1,5 @@
 ---
-id: concept_97a49f864f0c
+id: concept_332fb2c3cce1
 name: latent_celestial_body_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 4
-  induced_at: "2026-09-30T15:51:50Z"
+  induced_at: "2026-10-01T08:12:31Z"
 confidence: 1.0
 status: ACTIVE
 ---

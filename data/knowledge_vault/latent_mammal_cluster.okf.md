@@ -1,5 +1,5 @@
 ---
-id: concept_c4d14d35eed7
+id: concept_7c2188a04fa4
 name: latent_mammal_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.1504407485201629
   constituent_count: 44
-  induced_at: "2026-09-30T15:51:49Z"
+  induced_at: "2026-10-01T08:12:30Z"
 confidence: 1.0
 status: ACTIVE
 ---

@@ -1,5 +1,5 @@
 ---
-id: concept_0214cb52ee43
+id: concept_b5ea61cc8cbc
 name: latent_africa_country
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 7
-  induced_at: "2026-09-30T15:51:50Z"
+  induced_at: "2026-10-01T08:12:30Z"
 confidence: 1.0
 status: ACTIVE
 ---

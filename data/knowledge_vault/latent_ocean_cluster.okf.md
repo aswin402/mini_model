@@ -1,5 +1,5 @@
 ---
-id: concept_c6bfec91c898
+id: concept_0d1fc36086d3
 name: latent_ocean_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 5
-  induced_at: "2026-09-30T15:51:50Z"
+  induced_at: "2026-10-01T08:12:30Z"
 confidence: 1.0
 status: ACTIVE
 ---
