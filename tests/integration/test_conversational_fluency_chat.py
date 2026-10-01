@@ -182,3 +182,56 @@ def test_conversational_teaching_and_explanatory_chat():
     assert "welcome" in r13.lower()
     assert "goodbye" in r13.lower() or "preserved" in r13.lower()
 
+
+def test_metacognitive_introspection_and_history_recall():
+    """Verify informal greeting normalization, identity, math introspection, concept queries, working memory recall, and assurance."""
+    store = MemoryStore(":memory:", seed_ontology=True)
+    kernel = CognitiveKernel(store)
+
+    # 1. Informal lengthened greeting
+    t1 = kernel.chat("hii")
+    assert "hello" in t1.lower() or "hi" in t1.lower()
+    assert "based on my knowledge" not in t1.lower()
+
+    # 2. Discourse marker + slang identity
+    t2 = kernel.chat("so who are u")
+    assert "LITTLE (MIVI)" in t2
+    assert "1. 🧠 Multi-Hop Deductive" not in t2
+
+    # 3. Arithmetic query
+    t3 = kernel.chat("so whats 4+4")
+    assert "8" in t3
+
+    # 4. Introspective reasoning explanation of prior calculation
+    t4 = kernel.chat("how u get that answer")
+    assert "4+4" in t4
+    assert "deterministic" in t4.lower() or "arithmetic" in t4.lower() or "8" in t4
+
+    # 5. Concept inquiry 1
+    t5 = kernel.chat("so what is a bird")
+    assert "bird is a vertebrate" in t5.lower()
+    assert "feather" in t5.lower()
+
+    # 6. Concept inquiry 2
+    t6 = kernel.chat("so what is animal")
+    assert "animal is an organism" in t6.lower()
+
+    # 7. Episodic history recall from working memory
+    t7 = kernel.chat("so what i asked before")
+    assert "so what is animal" in t7
+    assert "so what is a bird" in t7
+
+    # 8. Reassurance and invariant sanity
+    t8 = kernel.chat("is we done anything wrong")
+    assert "not at all" in t8.lower()
+    assert "consistent" in t8.lower() or "sound" in t8.lower()
+
+    # 9. Multi-hop proof trace introspection
+    kernel.chat("An ocelot is a feline.")
+    t9_ans = kernel.chat("Is an ocelot an animal?")
+    assert "Yes" in t9_ans
+    t9_why = kernel.chat("how did you know that?")
+    assert "OCELOT" in t9_why
+    assert "ANIMAL" in t9_why
+
+

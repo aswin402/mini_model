@@ -491,11 +491,11 @@ class DialogueSurfaceEngine:
             # Property / Textual answers
             if isinstance(inference.answer, str):
                 if (
-                    raw_ans.startswith(("A ", "An ", "Because ", "Here is ", "Your ", "You are ", "I am "))
+                    raw_ans.startswith(("A ", "An ", "Because ", "Here is ", "Your ", "You are ", "I am ", "Hello", "Hi", "Hey", "Greetings", "Not at all"))
                     or " lives in " in raw_ans
                     or " is a " in raw_ans
                     or " is located in " in raw_ans
-                    or raw_ans.endswith((".", "!"))
+                    or raw_ans.endswith((".", "!", "?"))
                 ):
                     return _clean(raw_ans)
                 if not raw_ans.startswith(("Yes", "No")):

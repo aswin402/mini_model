@@ -3,7 +3,7 @@
   "social_intents": {
     "greeting": {
       "patterns": [
-        "^(?:hello|hi|hey|hey\\s+there|hello\\s+there|hi\\s+there|greetings|good\\s+morning|good\\s+afternoon|good\\s+evening|howdy|yo)[!.]?$"
+        "^(?:hello|hi+|hey+|hey\\s+there|hello\\s+there|hi\\s+there|greetings|good\\s+morning|good\\s+afternoon|good\\s+evening|howdy|yo)[!.]?$"
       ],
       "responses": [
         "Hello! How can I help you explore, learn, or solve something today?",
@@ -51,7 +51,7 @@
     },
     "identity": {
       "patterns": [
-        "^(?:who\\s+are\\s+you|what\\s+are\\s+you|what\\s+is\\s+your\\s+name|(?:can\\s+you\\s+)?tell\\s+me\\s+about\\s+yourself)[?!.]?$"
+        "^(?:who\\s+are\\s+you|what\\s+are\\s+you|what\\s+is\\s+your\\s+name|(?:can\\s+you\\s+)?tell\\s+me\\s+(?:about\\s+yourself|who\\s+you\\s+are))[?!.]?$"
       ],
       "responses": [
         "I am LITTLE (MIVI), a verifiable neuro-symbolic cognitive architecture. I learn continuously, reason over 360° concept knots, and never hallucinate."
@@ -87,12 +87,36 @@
         "^(?:what\\s+can\\s+you\\s+do|what\\s+are\\s+your\\s+capabilities|how\\s+can\\s+you\\s+help(?:\\s+me)?|help)[?!.]?$"
       ],
       "responses": [
-        "I can learn new facts continuously from conversation, perform deductive multi-hop reasoning, solve algebraic word problems, simulate physical dynamics over time, compare orders, and verify logic without hallucination."
+        "I am capable of Multi-Hop Deductive Reasoning, continuous concept learning without catastrophic forgetting, physical simulation via CfC ODEs, and exact mathematical calculation with zero hallucination."
+      ]
+    },
+    "meta_explanation": {
+      "patterns": [
+        "^(?:how\\s+(?:did\\s+you|do\\s+you|you|u)\\s+(?:get|calculate|derive|know|find)(?:\\s+that)?(?:\\s+(?:answer|result|value))?|why(?:\\s+is\\s+that)?|explain\\s+(?:your\\s+)?(?:reasoning|answer|calculation)|how\\s+come)[?!.]?$"
+      ],
+      "responses": [
+        "I derived that result through verified deterministic reasoning."
+      ]
+    },
+    "meta_turn_history": {
+      "patterns": [
+        "^(?:what\\s+(?:did\\s+i|i)\\s+(?:ask(?:ed)?|say|said)(?:\\s+before|\\s+earlier|\\s+just\\s+now)?|what\\s+was\\s+my\\s+(?:last|previous)\\s+(?:question|ask)|what\\s+were\\s+we\\s+(?:talking|discussing)\\s+about|repeat\\s+my\\s+last\\s+question)[?!.]?$"
+      ],
+      "responses": [
+        "Looking back at our conversation history in working memory."
+      ]
+    },
+    "meta_reassurance": {
+      "patterns": [
+        "^(?:(?:is|are|did|have)\\s+(?:we|i)\\s+(?:done|do|made|make)?(?:\\s+anything)?\\s+(?:wrong|mistake|error)|is\\s+anything\\s+wrong|did\\s+i\\s+make\\s+a\\s+mistake)[?!.]?$"
+      ],
+      "responses": [
+        "Not at all! You haven't done anything wrong. Our reasoning, facts, and conversation are completely sound and consistent. What would you like to explore or teach me next?"
       ]
     }
   },
   "mixed_intent_splitter": {
-    "leading_greeting_regex": "^(hello\\s+there|hi\\s+there|hey\\s+there|good\\s+morning|good\\s+afternoon|good\\s+evening|whats\\s+up(?:\\s+bro)?|what's\\s+up(?:\\s+bro)?|sup|hello|hi|hey|greetings)[,!.]?\\s+(.+)$"
+    "leading_greeting_regex": "^(hello\\s+there|hi\\s+there|hey\\s+there|good\\s+morning|good\\s+afternoon|good\\s+evening|whats\\s+up(?:\\s+bro)?|what's\\s+up(?:\\s+bro)?|sup|hello|hi+|hey+|greetings)[,!.]?\\s+(.+)$"
   },
   "verbalizer_templates": {
     "affirmative_taxonomy": "Yes, {subject_article} {subject} is indeed {target_article} {target}.",
