@@ -16,6 +16,7 @@ from little.actions import (
 )
 from little.active.crawler import KnowledgeCrawler
 from little.active.latent_knot_inducer import LatentKnotInducer
+from little.active.self_study import AutonomousSelfStudyEngine, DreamReport
 from little.core.cognitive_command import CognitiveCommandRegistry
 from little.core.contracts import CandidateFrame, SourceType
 from little.core.models import BeliefStatus, InferenceResult, LearningResult, generate_id
@@ -102,6 +103,11 @@ class CognitiveKernel:
             tool_grounder=self.tool_grounder,
             action_policy=self.action_policy,
             memory=self.memory,
+        )
+        self.self_study = AutonomousSelfStudyEngine(
+            memory=self.memory,
+            wiki=self.wiki,
+            crawler=self.crawler,
         )
         self.command_dispatcher = CognitiveCommandRegistry()
 

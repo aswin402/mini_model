@@ -9,6 +9,10 @@ I_MUTEX, I_SORT, I_GROUND), and persists verified relations live to SQLite.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
+import re
+import time
+from typing import Any
 
 from little.core.contracts import (
     CandidateClaim,
@@ -21,6 +25,21 @@ from little.inference.engine import InferenceEngine
 from little.knowledge.registry import SchemaRegistry
 from little.memory.store import MemoryStore
 from little.active.self_study_policy import SelfStudyPolicy
+
+
+@dataclass
+class DreamReport:
+    """Consolidated summary of an autonomous dreaming / self-study session."""
+
+    steps_attempted: int
+    steps_persisted: int
+    steps_rejected: int
+    entropy_reduction: float
+    rejection_reasons: list[str] = field(default_factory=list)
+    persisted_claims: list[dict[str, str]] = field(default_factory=list)
+    wiki_pages_synced: int = 0
+    duration_ms: float = 0.0
+    details: list[CuriosityStepResult] = field(default_factory=list)
 
 
 @dataclass
@@ -44,11 +63,15 @@ class AutonomousSelfStudyEngine:
         memory: MemoryStore,
         registry: SchemaRegistry | None = None,
         policy: SelfStudyPolicy | None = None,
+        wiki: Any | None = None,
+        crawler: Any | None = None,
     ) -> None:
         self.memory = memory
         self.registry = registry or SchemaRegistry.default()
         self.policy = policy or SelfStudyPolicy.default()
         self.inference = InferenceEngine(memory, registry=self.registry)
+        self.wiki = wiki
+        self.crawler = crawler
         self.last_gate_verdicts: dict[str, bool] = {}
 
     def _axis_predicates(self, axis: str) -> set[str]:
@@ -76,6 +99,15 @@ class AutonomousSelfStudyEngine:
                 if ancestor_id not in ancestors:
                     ancestors.append(ancestor_id)
         return ancestors
+
+    def _are_concepts_disjoint(self, concept_or_id1: str, concept_or_id2: str) -> bool:
+        """Check if two concepts or any of their taxonomic ancestors are disjoint."""
+        c1 = self.memory.get_concept(concept_or_id1)
+        c2 = self.memory.get_concept(concept_or_id2)
+        id1 = c1.id if c1 else concept_or_id1
+        id2 = c2.id if c2 else concept_or_id2
+        conflict = self.inference._check_disjoint_conflict(id1, id2)
+        return conflict is not None
 
     def _experience_covers(self, concept_name: str) -> bool:
         clean_name = concept_name.strip().lower()
@@ -157,74 +189,172 @@ class AutonomousSelfStudyEngine:
             return None
 
         missing_axes = self.identify_missing_axes(target_concept)
-        target_axis = (
-            preferred_axis
-            if preferred_axis and preferred_axis in missing_axes
-            else missing_axes[0]
-            if missing_axes
-            else self.policy.default_axis
-        )
-        trace.append(f"Targeting missing radial axis: {target_axis}")
+        if preferred_axis:
+            candidate_axes = [preferred_axis]
+        else:
+            candidate_axes = list(missing_axes)
+            for ax in self.policy.axis_names:
+                if ax not in candidate_axes:
+                    candidate_axes.append(ax)
 
-        allowed_preds = self._axis_predicates(target_axis)
-        best_candidate: tuple[tuple[int, int], dict[str, str], str] | None = None
-        best_score = (-1, -1)
+        # Iterate through axes to find transferable candidate spokes
+        for target_axis in candidate_axes:
+            allowed_preds = self._axis_predicates(target_axis)
+            if not allowed_preds:
+                continue
 
-        # Find siblings under ancestors that possess spokes in the target axis
-        for anc_id in ancestor_ids:
-            anc = self.memory.get_concept(anc_id)
-            anc_name = anc.name if anc else anc_id
-            trace.append(f"Examining hypernym ancestor: '{anc_name}'")
+            best_candidate: tuple[tuple[int, int], dict[str, str], str] | None = None
+            best_score = (-1, -1)
 
-            # Siblings are concepts that also have is_a -> anc_id
-            for hierarchy_predicate in self._hierarchy_predicates():
-                sib_rels = self.memory.get_relations(
-                    predicate=hierarchy_predicate, object_id=anc_id
-                )
-                for sr in sib_rels:
-                    if sr.subject_id == concept.id:
-                        continue  # Skip self
-                    sib_concept = self.memory.get_concept(sr.subject_id)
-                    if not sib_concept:
-                        continue
+            # Find siblings under ancestors that possess spokes in the target axis
+            for anc_id in ancestor_ids:
+                anc = self.memory.get_concept(anc_id)
+                anc_name = anc.name if anc else anc_id
+                trace.append(f"Examining hypernym ancestor: '{anc_name}'")
 
-                    # Query sibling relations
-                    cand_rels = self.memory.get_relations(subject_id=sib_concept.id)
-                    for cr in cand_rels:
-                        if cr.predicate in allowed_preds and cr.weight_positive > cr.weight_negative:
-                            target_obj = self.memory.get_concept(cr.object_id)
-                            if not target_obj:
-                                continue
+                # Siblings are concepts that also have is_a -> anc_id
+                for hierarchy_predicate in self._hierarchy_predicates():
+                    sib_rels = self.memory.get_relations(
+                        predicate=hierarchy_predicate, object_id=anc_id
+                    )
+                    for sr in sib_rels:
+                        if sr.subject_id == concept.id:
+                            continue  # Skip self
+                        sib_concept = self.memory.get_concept(sr.subject_id)
+                        if not sib_concept:
+                            continue
 
-                            # Check if target already has this relation
-                            existing = self.memory.get_relations(
-                                subject_id=concept.id,
-                                predicate=cr.predicate,
-                                object_id=target_obj.id,
-                            )
-                            if not existing:
-                                hyp = {
-                                    "subject": target_concept,
-                                    "predicate": cr.predicate,
-                                    "object": target_obj.name,
-                                    "donor": sib_concept.name,
-                                }
-                                score = (
-                                    1 if cr.source_experience_id else 0,
-                                    cr.weight_positive - cr.weight_negative,
+                        # Sibling must NOT be an ancestor of target concept
+                        if sr.subject_id in ancestor_ids:
+                            continue
+
+                        # Sibling must NOT be disjoint with the target concept or its ancestors
+                        if self._are_concepts_disjoint(concept.id, sib_concept.id):
+                            continue
+
+                        # Query sibling relations
+                        cand_rels = self.memory.get_relations(subject_id=sib_concept.id)
+                        for cr in cand_rels:
+                            if cr.predicate in allowed_preds and cr.weight_positive > cr.weight_negative:
+                                target_obj = self.memory.get_concept(cr.object_id)
+                                if not target_obj:
+                                    continue
+
+                                # Check if target already has positive evidence for this relation
+                                existing = self.memory.get_relations(
+                                    subject_id=concept.id,
+                                    predicate=cr.predicate,
+                                    object_id=target_obj.id,
                                 )
-                                if score > best_score:
-                                    best_score = score
-                                    best_candidate = (score, hyp, sib_concept.name)
+                                if not any(r.weight_positive > r.weight_negative for r in existing):
+                                    hyp = {
+                                        "subject": target_concept,
+                                        "predicate": cr.predicate,
+                                        "object": target_obj.name,
+                                        "donor": sib_concept.name,
+                                    }
+                                    score = (
+                                        1 if cr.source_experience_id else 0,
+                                        cr.weight_positive - cr.weight_negative,
+                                    )
+                                    if score > best_score:
+                                        best_score = score
+                                        best_candidate = (score, hyp, sib_concept.name)
 
-        if best_candidate:
-            _, hyp, donor = best_candidate
-            trace.append(
-                f"Found analogical donor: '{donor}' with ({hyp['subject']} {hyp['predicate']} {hyp['object']})"
-            )
-            return (target_axis, hyp, trace)
+                # Prioritize closer hypernym ancestor (e.g. bird before animal)
+                if best_candidate:
+                    break
 
-        trace.append("No sibling candidates with transferable spokes on missing axes found.")
+            if best_candidate:
+                _, hyp, donor = best_candidate
+                trace.append(f"Targeting radial axis: {target_axis}")
+                trace.append(
+                    f"Found analogical donor: '{donor}' with ({hyp['subject']} {hyp['predicate']} {hyp['object']})"
+                )
+                return (target_axis, hyp, trace)
+
+        trace.append("No sibling candidates with transferable spokes found.")
+        return None
+
+    def propose_corpus_spoke(
+        self, target_concept: str
+    ) -> tuple[str, dict[str, str], list[str]] | None:
+        """Scan world corpus and vault for verified relational statements mentioning target concept."""
+        clean_target = target_concept.strip().lower()
+        trace: list[str] = [f"Initiating corpus-grounded discovery for '{clean_target}'"]
+
+        from little.core.runtime_paths import RuntimePaths
+
+        data_roots = [Path("data")]
+        try:
+            data_roots.append(RuntimePaths.default().database.parent)
+        except Exception:
+            pass
+
+        search_dirs: list[Path] = []
+        for root in data_roots:
+            if root.exists():
+                c_dir = root / "knowledge" / "world_corpus"
+                v_dir = root / "knowledge_vault"
+                if c_dir.exists() and c_dir not in search_dirs:
+                    search_dirs.append(c_dir)
+                if v_dir.exists() and v_dir not in search_dirs:
+                    search_dirs.append(v_dir)
+
+        patterns = [
+            ("is_a", re.compile(rf"\b{re.escape(clean_target)}\s+is\s+(?:a|an)\s+([a-zA-Z0-9_\-]+)", re.IGNORECASE)),
+            ("can", re.compile(rf"\b{re.escape(clean_target)}\s+(?:can|is\s+capable\s+of)\s+([a-zA-Z0-9_\-]+)", re.IGNORECASE)),
+            ("has_part", re.compile(rf"\b{re.escape(clean_target)}\s+has\s+(?:a|an|the)?\s*([a-zA-Z0-9_\-]+)", re.IGNORECASE)),
+            ("lives_in", re.compile(rf"\b{re.escape(clean_target)}\s+lives\s+in\s+([a-zA-Z0-9_\-]+)", re.IGNORECASE)),
+            ("eats", re.compile(rf"\b{re.escape(clean_target)}\s+eats\s+([a-zA-Z0-9_\-]+)", re.IGNORECASE)),
+            ("orbits", re.compile(rf"\b{re.escape(clean_target)}\s+orbits\s+([a-zA-Z0-9_\-]+)", re.IGNORECASE)),
+        ]
+
+        target_c = self.memory.get_concept(clean_target)
+
+        for s_dir in search_dirs:
+            for f_path in s_dir.glob("*.md"):
+                try:
+                    text = f_path.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+
+                if clean_target not in text.lower():
+                    continue
+
+                for pred, pat in patterns:
+                    match = pat.search(text)
+                    if match:
+                        obj_word = match.group(1).strip().lower().rstrip(".,;!")
+                        if not obj_word or obj_word == clean_target:
+                            continue
+
+                        # Check if relation already exists
+                        if target_c:
+                            obj_c = self.memory.get_concept(obj_word)
+                            if obj_c:
+                                existing = self.memory.get_relations(
+                                    subject_id=target_c.id, predicate=pred, object_id=obj_c.id
+                                )
+                                if existing:
+                                    continue
+
+                        hyp = {
+                            "subject": clean_target,
+                            "predicate": pred,
+                            "object": obj_word,
+                            "source": f"corpus:{f_path.name}",
+                        }
+                        axis = self.policy.default_axis
+                        for ax in self.policy.axes:
+                            if pred in self._axis_predicates(ax.name):
+                                axis = ax.name
+                                break
+
+                        trace.append(f"Extracted candidate claim from {f_path.name}: ({clean_target} {pred} {obj_word})")
+                        return (axis, hyp, trace)
+
+        trace.append(f"No novel relational triples found in world corpus for '{clean_target}'")
         return None
 
     def verify_invariant_gates(
@@ -326,6 +456,19 @@ class AutonomousSelfStudyEngine:
                             f"I_MUTEX failed: Reverse disjoint constraint triggered between {obj_name} and {a_id}",
                             verdicts,
                         )
+
+        # Disjoint constraint on donor concept if analogical transfer was used
+        donor_name = hypothesis.get("donor", "").strip().lower()
+        if donor_name and subj_c:
+            donor_c = self.memory.get_concept(donor_name)
+            if donor_c:
+                if self._are_concepts_disjoint(subj_c.id, donor_c.id):
+                    return (
+                        False,
+                        f"I_MUTEX failed: Analogical donor '{donor_name}' is disjoint with '{subj_name}'",
+                        verdicts,
+                    )
+
         verdicts["I_MUTEX"] = True
 
         # Gate 4: I_GROUND (Grounding and confidence check)
@@ -333,7 +476,9 @@ class AutonomousSelfStudyEngine:
 
         return (True, "Passed all 4 DeepSeek deterministic invariant gates.", verdicts)
 
-    def study_step(self, target_concept: str | None = None) -> CuriosityStepResult | None:
+    def study_step(
+        self, target_concept: str | None = None, preferred_axis: str | None = None
+    ) -> CuriosityStepResult | None:
         """Perform one autonomous curiosity step: scan, propose, verify, and persist."""
         # 1. Select target concept with highest spoke entropy if not provided
         if not target_concept:
@@ -343,16 +488,19 @@ class AutonomousSelfStudyEngine:
                 return None
             target_concept = cand_concepts[0]
 
-        # 2. Formulate analogical hypothesis
-        proposal = self.propose_analogical_spoke(target_concept)
+        # 2. Formulate analogical or corpus hypothesis
+        proposal = self.propose_analogical_spoke(target_concept, preferred_axis=preferred_axis)
+        if not proposal:
+            proposal = self.propose_corpus_spoke(target_concept)
+
         if not proposal:
             return CuriosityStepResult(
                 target_concept=target_concept,
                 missing_axis=self.policy.no_analogy_axis,
                 hypothesis={},
                 status="NO_ANALOGY",
-                reason=f"No sibling analog available in taxonomic DAG for '{target_concept}'",
-                trace=[f"Knot '{target_concept}' has unpopulated spokes, but hypernym DAG lacks donor siblings."],
+                reason=f"No sibling analog or corpus evidence found for '{target_concept}'",
+                trace=[f"Knot '{target_concept}' has unpopulated spokes, but hypernym DAG lacks donor siblings and no corpus mentions found."],
             )
 
         missing_axis, hyp, trace = proposal
@@ -435,6 +583,15 @@ class AutonomousSelfStudyEngine:
             ],
         )
 
+        # Synchronize with Living Wiki vault if attached
+        if self.wiki is not None:
+            try:
+                self.wiki.sync_concept(subj_c.name)
+                if obj_c:
+                    self.wiki.sync_concept(obj_c.name)
+            except Exception:
+                pass
+
         return CuriosityStepResult(
             target_concept=target_concept,
             missing_axis=missing_axis,
@@ -459,10 +616,20 @@ class AutonomousSelfStudyEngine:
                     for concept, entropy in entropies.items()
                     if entropy > 0.0
                     and concept not in attempted_concepts
-                    and self.propose_analogical_spoke(concept) is not None
+                    and (
+                        self.propose_analogical_spoke(concept) is not None
+                        or self.propose_corpus_spoke(concept) is not None
+                    )
                 ),
                 None,
             )
+            if target is None and self.wiki is not None:
+                try:
+                    stubs = self.wiki.get_unexplored_frontier()
+                    target = next((s for s in stubs if s not in attempted_concepts), None)
+                except Exception:
+                    pass
+
             if target is None:
                 break
 
@@ -470,8 +637,75 @@ class AutonomousSelfStudyEngine:
             step_res = self.study_step(target_concept=target)
             if step_res:
                 results.append(step_res)
-                if step_res.status == "PERSISTED":
-                    # Successful growth
-                    pass
 
         return results
+
+    def get_epistemic_gaps(self, top_n: int = 5) -> list[dict[str, Any]]:
+        """Identify concepts with highest missing radial spoke entropy and wiki stubs."""
+        entropies = self.compute_all_knot_entropies()
+        sorted_gaps = [
+            {
+                "concept": c,
+                "entropy": round(h, 3),
+                "missing_axes": self.identify_missing_axes(c),
+            }
+            for c, h in entropies.items()
+            if h > 0.0
+        ]
+        if self.wiki is not None:
+            try:
+                stubs = self.wiki.get_unexplored_frontier()
+                for s in stubs:
+                    if not any(g["concept"] == s for g in sorted_gaps):
+                        sorted_gaps.append({
+                            "concept": s,
+                            "entropy": 1.0,
+                            "missing_axes": list(self.policy.axis_names),
+                            "is_stub": True,
+                        })
+            except Exception:
+                pass
+
+        return sorted_gaps[:top_n]
+
+    def dream(self, max_steps: int = 3) -> DreamReport:
+        """Run an autonomous cognitive dreaming session: identify epistemic gaps, formulate hypotheses, verify gates, and commit."""
+        start_time = time.perf_counter()
+        initial_entropies = self.compute_all_knot_entropies()
+        avg_h_before = (
+            sum(initial_entropies.values()) / max(len(initial_entropies), 1)
+        )
+
+        steps = self.study_cycle(max_steps=max_steps)
+
+        final_entropies = self.compute_all_knot_entropies()
+        avg_h_after = (
+            sum(final_entropies.values()) / max(len(final_entropies), 1)
+        )
+        entropy_reduction = max(0.0, avg_h_before - avg_h_after)
+
+        persisted_claims: list[dict[str, str]] = []
+        rejection_reasons: list[str] = []
+        pages_synced = 0
+
+        for s in steps:
+            if s.status == "PERSISTED":
+                persisted_claims.append(s.hypothesis)
+                if self.wiki is not None:
+                    pages_synced += 1
+            elif s.status == "REJECTED":
+                rejection_reasons.append(s.reason)
+
+        elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+
+        return DreamReport(
+            steps_attempted=len(steps),
+            steps_persisted=len(persisted_claims),
+            steps_rejected=len(rejection_reasons),
+            entropy_reduction=round(entropy_reduction, 4),
+            rejection_reasons=rejection_reasons,
+            persisted_claims=persisted_claims,
+            wiki_pages_synced=pages_synced,
+            duration_ms=elapsed_ms,
+            details=steps,
+        )

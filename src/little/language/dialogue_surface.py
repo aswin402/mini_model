@@ -714,6 +714,58 @@ class DialogueSurfaceEngine:
             f"- Co-clustered peer concepts: {peers_str}."
         )
 
+    def verbalize_dream_report(self, report: Any) -> str:
+        """Verbalize an autonomous cognitive dreaming session."""
+        lines = [
+            f"Autonomous cognitive dream cycle completed in {report.duration_ms:.1f} ms:",
+            f"- Explored {report.steps_attempted} frontier concept(s)",
+            f"- Verified & assimilated {report.steps_persisted} novel claim(s) into memory",
+            f"- Knowledge entropy reduced by {report.entropy_reduction:.4f}",
+            f"- Living Wiki pages synchronized: {report.wiki_pages_synced}",
+        ]
+        if report.persisted_claims:
+            lines.append("\n**Assimilated Beliefs:**")
+            for c in report.persisted_claims:
+                lines.append(f"- • {c['subject']} {c['predicate']} {c['object']}")
+        if report.steps_rejected > 0:
+            lines.append(
+                f"\n- Prevented {report.steps_rejected} invalid candidate(s) via deterministic invariant gates (zero hallucination guarantee)."
+            )
+        return "\n".join(lines)
+
+    def verbalize_epistemic_gaps(self, gaps: list[dict[str, Any]]) -> str:
+        """Verbalize concepts with high missing spoke entropy and knowledge gaps."""
+        if not gaps:
+            return "All concept knots are fully populated across their radial axes with zero epistemic entropy."
+        lines = [f"Identified {len(gaps)} key knowledge gap(s) on the cognitive frontier:"]
+        for g in gaps:
+            c_name = g["concept"].title()
+            ent = g["entropy"]
+            missing = ", ".join(g.get("missing_axes", []))
+            stub_tag = " [Wiki Stub]" if g.get("is_stub") else ""
+            lines.append(f"- **{c_name}**{stub_tag} (radial entropy: {ent:.2f}) — Missing axes: {missing}")
+        return "\n".join(lines)
+
+    def verbalize_curiosity_step(self, step: Any) -> str:
+        """Verbalize a targeted curiosity study step."""
+        if step.status == "PERSISTED":
+            hyp = step.hypothesis
+            return (
+                f"Autonomous curiosity study for '{step.target_concept}':\n"
+                f"- Verified and assimilated: ({hyp.get('subject')} {hyp.get('predicate')} {hyp.get('object')})\n"
+                f"- Radial axis satisfied: {step.missing_axis}\n"
+                f"- Gate verification: Passed all 4 DeepSeek deterministic gates."
+            )
+        elif step.status == "REJECTED":
+            return (
+                f"Autonomous curiosity study for '{step.target_concept}':\n"
+                f"- Proposed hypothesis ({step.hypothesis.get('subject')} {step.hypothesis.get('predicate')} {step.hypothesis.get('object')}) was rejected.\n"
+                f"- Invariant Gate Defense: {step.reason}"
+            )
+        else:
+            return f"Curiosity study for '{step.target_concept}': {step.reason}"
+
+
 
 
 

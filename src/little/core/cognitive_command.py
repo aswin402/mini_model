@@ -123,6 +123,39 @@ class CognitiveCommandRegistry:
                 ),
                 handler=cls._handle_explain_concept_cluster,
             ),
+            CognitiveCommand(
+                command_id="dream_cycle",
+                description="Autonomous cognitive dream cycle and curiosity-driven self-study",
+                patterns=(
+                    re.compile(
+                        r"^(?:dream|run\s+(?:a\s+)?dream\s+cycle|run\s+(?:autonomous\s+)?self\s+study|curiosity\s+cycle|autonomous\s+study)\b",
+                        re.IGNORECASE,
+                    ),
+                ),
+                handler=cls._handle_dream_cycle,
+            ),
+            CognitiveCommand(
+                command_id="knowledge_gaps",
+                description="Identify concepts with highest missing radial spoke entropy and wiki stubs",
+                patterns=(
+                    re.compile(
+                        r"^(?:what\s+are\s+your\s+knowledge\s+gaps|show\s+knowledge\s+gaps|explore\s+knowledge\s+gaps|what\s+are\s+your\s+epistemic\s+gaps)\b",
+                        re.IGNORECASE,
+                    ),
+                ),
+                handler=cls._handle_knowledge_gaps,
+            ),
+            CognitiveCommand(
+                command_id="study_concept",
+                description="Targeted autonomous curiosity inquiry on a specific concept",
+                patterns=(
+                    re.compile(
+                        r"^(?:study|explore)\s+concept\s+(?P<target>[a-zA-Z0-9_\-]+)(?:\s+(?:on|for|axis)\s+(?P<axis>[a-zA-Z0-9_\-]+))?\??$",
+                        re.IGNORECASE,
+                    ),
+                ),
+                handler=cls._handle_study_concept,
+            ),
         ]
 
     @staticmethod
@@ -187,3 +220,29 @@ class CognitiveCommandRegistry:
         return kernel.dialogue_surface.verbalize_cluster_explanation(
             info, concept_name=target
         )
+
+    @staticmethod
+    def _handle_dream_cycle(
+        kernel: CognitiveKernel, text: str, match: re.Match[str]
+    ) -> str:
+        report = kernel.self_study.dream(max_steps=3)
+        return kernel.dialogue_surface.verbalize_dream_report(report)
+
+    @staticmethod
+    def _handle_knowledge_gaps(
+        kernel: CognitiveKernel, text: str, match: re.Match[str]
+    ) -> str:
+        gaps = kernel.self_study.get_epistemic_gaps(top_n=5)
+        return kernel.dialogue_surface.verbalize_epistemic_gaps(gaps)
+
+    @staticmethod
+    def _handle_study_concept(
+        kernel: CognitiveKernel, text: str, match: re.Match[str]
+    ) -> str:
+        target = match.group("target").strip().lower()
+        axis_match = match.groupdict().get("axis")
+        preferred_axis = axis_match.strip().lower() if axis_match else None
+        res = kernel.self_study.study_step(target_concept=target, preferred_axis=preferred_axis)
+        if res is not None:
+            return kernel.dialogue_surface.verbalize_curiosity_step(res)
+        return f"No active knowledge gaps found for concept '{target}'."

@@ -202,6 +202,20 @@ class LivingWiki:
 
         return file_path
 
+    def sync_concept(self, concept_name: str) -> Path | None:
+        """Export concept from memory into the vault as OKF document and refresh wiki node and index."""
+        clean_name = concept_name.strip().lower()
+        concept = self.memory.get_concept(clean_name)
+        if not concept:
+            return None
+        try:
+            path = self.okf_engine.export_concept(clean_name, output_dir=self.vault_dir)
+            doc = self.okf_engine.parse_file(path)
+            self.save_or_update_page(doc)
+            return path
+        except Exception:
+            return None
+
     def stats(self) -> WikiGraphStats:
         """Compute graph centrality, orphans, hubs, and index metrics."""
         total_pages = sum(1 for n in self.nodes.values() if not n.is_stub)
