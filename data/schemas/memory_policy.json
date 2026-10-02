@@ -3,6 +3,13 @@
     "version": "1",
     "concept_confidence": 1.0,
     "experience_query_limit": 50,
-    "bulk_import_batch_size": 5000
+    "bulk_import_batch_size": 5000,
+    "paged_memory": {
+      "lru_cache_capacity": 512,
+      "resident_capacity": 32,
+      "activation_decay": 0.85,
+      "activation_threshold": 0.1,
+      "spreading_factor": 0.5
+    }
   }
 }

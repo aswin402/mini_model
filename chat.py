@@ -35,6 +35,7 @@ def main() -> None:
     print(f"  • Teach new facts: {GRAY}\"An ocelot is a feline.\"{RESET}")
     print(f"  • Inquire:         {GRAY}\"Describe an ocelot.\" / \"Is an ocelot an animal?\"{RESET}")
     print(f"  • Solve math:      {GRAY}\"What is 15% of 800?\" / \"What is 7 factorial?\"{RESET}")
+    print(f"  • Memory & Stats:  Type {BOLD}'memory'{RESET} to view 3-tier memory telemetry.")
     print(f"  • Commands:        Type {BOLD}'exit'{RESET} to quit, {BOLD}'clear'{RESET} to clear screen.\n")
 
     while True:
@@ -53,6 +54,25 @@ def main() -> None:
 
         if user_input.lower() == "clear":
             os.system("clear" if os.name != "nt" else "cls")
+            continue
+
+        if user_input.lower() in ("memory", "stats", "telemetry"):
+            telemetry = kernel.paged_store.get_telemetry()
+            res_list = ", ".join(telemetry.resident_concepts[:10]) or "None yet"
+            print(f"\n{BOLD}{CYAN}LITTLE > [3-Tier Memory & Working Set Hierarchy]{RESET}")
+            print(f"  • {BOLD}Tier 3 (Resident Window){RESET}: {telemetry.resident_count}/{telemetry.resident_capacity} concepts")
+            print(f"    Active concepts: {GRAY}{res_list}{RESET}")
+            print(f"  • {BOLD}Tier 2 (RAM LRU Cache){RESET}:   {telemetry.lru_count}/{telemetry.lru_capacity} concepts")
+            print(f"  • {BOLD}Tier 1 (Disk Vault){RESET}:      SQLite + OKF Markdown Knowledge Base")
+            print(f"  • {BOLD}Telemetry{RESET}:               Hit Rate: {telemetry.hit_rate*100:.1f}% | Resident Hits: {telemetry.resident_hits} | LRU Hits: {telemetry.lru_hits} | Disk Fetches: {telemetry.disk_fetches}\n")
+            continue
+
+        if user_input.lower().startswith("teach "):
+            fact_text = user_input[6:].strip()
+            t0 = time.perf_counter()
+            res = kernel.teach(fact_text)
+            dt_ms = (time.perf_counter() - t0) * 1000.0
+            print(f"\n{BOLD}{CYAN}LITTLE >{RESET} {res.message}  {GRAY}({dt_ms:.1f}ms){RESET}\n")
             continue
 
         t0 = time.perf_counter()

@@ -17,6 +17,11 @@ from little.actions import (
 from little.active.crawler import KnowledgeCrawler
 from little.active.latent_knot_inducer import LatentKnotInducer
 from little.active.self_study import AutonomousSelfStudyEngine, DreamReport
+from little.active.stream_learner import (
+    ChunkIngestResult,
+    ContinuousStreamLearner,
+    StreamLearningSummary,
+)
 from little.core.cognitive_command import CognitiveCommandRegistry
 from little.core.contracts import CandidateFrame, SourceType
 from little.core.models import BeliefStatus, InferenceResult, LearningResult, generate_id
@@ -29,6 +34,7 @@ from little.language.dialogue_surface import DialogueSurfaceEngine
 from little.language.parser import LearningEngine, configured_parser
 from little.language.perception import DeterministicPerceptionAdapter, PerceptionAdapter
 from little.memory.headroom import HeadroomContextManager
+from little.memory.paged_store import PagedConceptStore
 from little.memory.store import MemoryStore
 from little.neural import NeuralRouter, RoutingDecision
 from little.procedural.code_synthesizer import ASTCodeSynthesizer, SynthesizedProgram
@@ -99,6 +105,14 @@ class CognitiveKernel:
         self.wiki = LivingWiki(memory=self.memory)
         self.crawler = KnowledgeCrawler(memory=self.memory, wiki=self.wiki)
         self.latent_inducer = LatentKnotInducer(memory=self.memory, wiki=self.wiki)
+        self.paged_store = PagedConceptStore(
+            memory=self.memory,
+            policy=getattr(self.runtime_policy, "memory", None),
+        )
+        self.stream_learner = ContinuousStreamLearner(
+            kernel=self,
+            paged_store=self.paged_store,
+        )
         self.agentic_planner = AgenticPlanner(
             action_router=self.action_router,
             tool_executor=self.tool_executor,
@@ -275,9 +289,17 @@ class CognitiveKernel:
 
         return None
 
+    def teach(self, text: str) -> ChunkIngestResult:
+        """Continuously ingest and verify new knowledge from natural language text."""
+        return self.stream_learner.ingest_chunk(text)
+
     def chat(self, text: str) -> str:
         """Conversational chat interface with warm, articulate English dialogue and living wiki integration."""
         self.headroom.record_turn(role="user", text=text)
+
+        # Context activation voting over concept graph ("The text chooses")
+        tokens = [w for w in re.findall(r"[a-zA-Z0-9_]+", text)]
+        self.paged_store.vote_from_tokens(tokens)
 
         # 1. Normalize user utterance (discourse markers, colloquialisms, contractions)
         normalized = self.parser.normalize_text(text)
@@ -477,6 +499,9 @@ class CognitiveKernel:
             )
         if frame.intent in {"statement", "action"} and allow_learning:
             learning = self.learner.commit_frame(frame, source_type=SourceType.USER)
+            if learning and learning.concepts_created and hasattr(self, "paged_store"):
+                for cid in learning.concepts_created:
+                    self.paged_store.invalidate(cid)
             return KernelOutcome(
                 frame=frame,
                 mode=CognitiveMode.STUDY,

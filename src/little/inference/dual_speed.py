@@ -1,7 +1,13 @@
-"""GLM-5.3-Flash Inspired Dual-Speed Bidirectional Infilling Engine.
+"""GLM-5.3-Flash Inspired Dual-Speed Bidirectional Infilling Engine with Adaptive Depth Pondering.
 
 Provides Fast Mode (<0.2ms direct reflex lookup) and Thinking Mode (<2.0ms
 Bidirectional Frontier Collision Search cutting complexity from O(b^d) to O(2 * b^(d/2))).
+
+Enhanced with Adaptive Depth Pondering (inspired by mini-AGI / PonderNet):
+- Evaluates step-by-step halting condition H(d) at each recurrent depth.
+- Halts early with calibrated confidence upon proof closure or invariant refutation.
+- Halts early upon frontier exhaustion rather than looping wastefully.
+- Emits fully inspectable pondering traces.
 """
 
 from __future__ import annotations
@@ -23,10 +29,12 @@ class InfillingResult:
     latency_ms: float
     infilled_value: Optional[str] = None
     query_type: str = "PATH"
+    ponder_depth: int = 1
+    halt_reason: str = "direct_reflex"
 
 
 class DualSpeedInfillingEngine:
-    """Dual-speed cognitive reasoning engine with bidirectional frontier collision search."""
+    """Dual-speed cognitive reasoning engine with adaptive depth pondering and bidirectional frontier collision search."""
 
     def __init__(
         self,
@@ -98,10 +106,11 @@ class DualSpeedInfillingEngine:
                 confidence=self.policy.fast_confidence,
                 inspectable_trace=f"Direct reflex hit: ({subj_clean}, {pred_clean}, {target_clean})",
                 latency_ms=lat,
+                ponder_depth=1,
+                halt_reason="direct_reflex_hit",
             )
 
-        # 2. THINKING MODE: Bidirectional Frontier Collision Search (Meeting-in-the-Middle)
-        # All discovered paths from subject and target
+        # 2. THINKING MODE: Adaptive Depth Pondering with Bidirectional Collision Search
         fwd_paths: Dict[str, List[str]] = {subj_clean: [subj_clean]}
         bwd_paths: Dict[str, List[str]] = {target_clean: [target_clean]}
 
@@ -111,6 +120,7 @@ class DualSpeedInfillingEngine:
         collision_node: Optional[str] = None
         max_depth = self.policy.max_depth
         depth = 0
+        halt_reason = "unresolved"
 
         trace_log = [
             "<think>",
@@ -120,6 +130,8 @@ class DualSpeedInfillingEngine:
 
         while depth < max_depth and not collision_node:
             depth += 1
+            fwd_count_before = len(fwd_frontier)
+            bwd_count_before = len(bwd_frontier)
 
             # Expand Forward Frontier
             next_fwd: Set[str] = set()
@@ -131,32 +143,50 @@ class DualSpeedInfillingEngine:
                         next_fwd.add(obj_c)
                         if obj_c in bwd_paths:
                             collision_node = obj_c
+                            halt_reason = "collision_verified"
                             break
                 if collision_node:
                     break
-            if collision_node:
-                break
-            fwd_frontier = next_fwd
 
-            # Expand Backward Frontier
-            next_bwd: Set[str] = set()
-            for node in bwd_frontier:
-                curr_path = bwd_paths[node]
-                for sub_c in self._get_incoming(node, pred_clean):
-                    if sub_c not in bwd_paths:
-                        bwd_paths[sub_c] = [sub_c] + curr_path
-                        next_bwd.add(sub_c)
-                        if sub_c in fwd_paths:
-                            collision_node = sub_c
-                            break
-                if collision_node:
-                    break
+            if not collision_node:
+                fwd_frontier = next_fwd
+
+                # Expand Backward Frontier
+                next_bwd: Set[str] = set()
+                for node in bwd_frontier:
+                    curr_path = bwd_paths[node]
+                    for sub_c in self._get_incoming(node, pred_clean):
+                        if sub_c not in bwd_paths:
+                            bwd_paths[sub_c] = [sub_c] + curr_path
+                            next_bwd.add(sub_c)
+                            if sub_c in fwd_paths:
+                                collision_node = sub_c
+                                halt_reason = "collision_verified"
+                                break
+                    if collision_node:
+                        break
+                bwd_frontier = next_bwd
+
+            # Adaptive Halting Check
             if collision_node:
+                trace_log.append(
+                    f"<ponder depth=\"{depth}\" fwd_nodes=\"{fwd_count_before}\" bwd_nodes=\"{bwd_count_before}\" collision=\"{collision_node}\" halt=\"true\" reason=\"collision_detected\" />"
+                )
                 break
-            bwd_frontier = next_bwd
 
             if not fwd_frontier and not bwd_frontier:
+                halt_reason = "frontier_exhausted"
+                trace_log.append(
+                    f"<ponder depth=\"{depth}\" fwd_nodes=\"0\" bwd_nodes=\"0\" halt=\"true\" reason=\"frontier_exhausted\" />"
+                )
                 break
+
+            trace_log.append(
+                f"<ponder depth=\"{depth}\" fwd_nodes=\"{len(fwd_frontier)}\" bwd_nodes=\"{len(bwd_frontier)}\" halt=\"false\" status=\"expanding\" />"
+            )
+
+        if not collision_node and depth >= max_depth and halt_reason == "unresolved":
+            halt_reason = "max_depth_exceeded"
 
         lat = (time.perf_counter() - t0) * 1000.0
 
@@ -172,27 +202,42 @@ class DualSpeedInfillingEngine:
             ]
             gate_res = self.verifier.verify_proof_chain(proof_steps)
 
-            trace_log.append(
-                f"Frontier collision verified at junction node: {collision_node}"
-            )
-            trace_log.append(f"Full proof path discovered: {' -> '.join(full_path)}")
-            trace_log.extend([f"Gate check: {step}" for step in gate_res.proof_trace])
-            trace_log.append("</think>")
+            if gate_res.passed:
+                trace_log.append(
+                    f"Frontier collision verified at junction node: {collision_node}"
+                )
+                trace_log.append(f"Full proof path discovered: {' -> '.join(full_path)}")
+                trace_log.extend([f"Gate check: {step}" for step in gate_res.proof_trace])
+                trace_log.append("</think>")
 
-            return InfillingResult(
-                mode="THINKING",
-                path=full_path,
-                confidence=(
-                    self.policy.verified_confidence
-                    if gate_res.passed
-                    else self.policy.unknown_confidence
-                ),
-                inspectable_trace="\n".join(trace_log),
-                latency_ms=lat,
-            )
+                return InfillingResult(
+                    mode="THINKING",
+                    path=full_path,
+                    confidence=self.policy.verified_confidence,
+                    inspectable_trace="\n".join(trace_log),
+                    latency_ms=lat,
+                    ponder_depth=depth,
+                    halt_reason="proof_closed_verified",
+                )
+            else:
+                trace_log.append(
+                    f"Frontier collision refuted by invariant gates at junction: {collision_node}"
+                )
+                trace_log.extend([f"Gate violation: {step}" for step in gate_res.proof_trace])
+                trace_log.append("</think>")
+                return InfillingResult(
+                    mode="THINKING",
+                    path=[],
+                    confidence=self.policy.unknown_confidence,
+                    inspectable_trace="\n".join(trace_log),
+                    latency_ms=lat,
+                    query_type="PATH",
+                    ponder_depth=depth,
+                    halt_reason="invariant_violation_refuted",
+                )
 
         trace_log.append(
-            f"No collision detected within depth {max_depth}. Status: UNKNOWN."
+            f"No collision detected within depth {max_depth}. Status: UNKNOWN. Reason: {halt_reason}."
         )
         trace_log.append("</think>")
         return InfillingResult(
@@ -202,12 +247,14 @@ class DualSpeedInfillingEngine:
             inspectable_trace="\n".join(trace_log),
             latency_ms=lat,
             query_type="PATH",
+            ponder_depth=depth,
+            halt_reason=halt_reason,
         )
 
     def infill_object(
         self, subject: str, predicate: str, max_results: int = 10
     ) -> List[InfillingResult]:
-        """Bidirectional infilling of missing object: (S, P, [?])."""
+        """Bidirectional infilling of missing object: (S, P, [?]) with adaptive depth expansion."""
         t0 = time.perf_counter()
         subj_clean = subject.strip().upper().replace(" ", "_")
         pred_clean = predicate.strip().lower()
@@ -227,6 +274,8 @@ class DualSpeedInfillingEngine:
                     latency_ms=lat,
                     infilled_value=obj,
                     query_type="OBJECT",
+                    ponder_depth=1,
+                    halt_reason="direct_reflex_hit",
                 )
             )
 
@@ -257,6 +306,8 @@ class DualSpeedInfillingEngine:
                                         latency_ms=lat,
                                         infilled_value=nxt,
                                         query_type="OBJECT",
+                                        ponder_depth=depth,
+                                        halt_reason="transitive_expansion",
                                     )
                                 )
                 frontier = next_frontier
@@ -266,7 +317,7 @@ class DualSpeedInfillingEngine:
     def infill_subject(
         self, target: str, predicate: str, max_results: int = 10
     ) -> List[InfillingResult]:
-        """Bidirectional infilling of missing subject: ([?], P, O)."""
+        """Bidirectional infilling of missing subject: ([?], P, O) with adaptive depth expansion."""
         t0 = time.perf_counter()
         target_clean = target.strip().upper().replace(" ", "_")
         pred_clean = predicate.strip().lower()
@@ -286,6 +337,8 @@ class DualSpeedInfillingEngine:
                     latency_ms=lat,
                     infilled_value=subj,
                     query_type="SUBJECT",
+                    ponder_depth=1,
+                    halt_reason="direct_reflex_hit",
                 )
             )
 
@@ -316,6 +369,8 @@ class DualSpeedInfillingEngine:
                                         latency_ms=lat,
                                         infilled_value=prev,
                                         query_type="SUBJECT",
+                                        ponder_depth=depth,
+                                        halt_reason="transitive_expansion",
                                     )
                                 )
                 frontier = next_frontier
@@ -365,6 +420,8 @@ class DualSpeedInfillingEngine:
                                         latency_ms=lat,
                                         infilled_value=obj,
                                         query_type="PATH",
+                                        ponder_depth=depth,
+                                        halt_reason="collision_verified",
                                     )
                                 )
             fwd_frontier = next_fwd
@@ -392,6 +449,8 @@ class DualSpeedInfillingEngine:
                                         latency_ms=lat,
                                         infilled_value=sub,
                                         query_type="PATH",
+                                        ponder_depth=depth,
+                                        halt_reason="collision_verified",
                                     )
                                 )
             bwd_frontier = next_bwd
