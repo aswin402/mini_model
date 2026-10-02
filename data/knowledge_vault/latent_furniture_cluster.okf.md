@@ -1,5 +1,5 @@
 ---
-id: concept_1c1d311b8b22
+id: concept_48981171a3dc
 name: latent_furniture_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.2585034013605442
   constituent_count: 7
-  induced_at: "2026-10-02T10:02:42Z"
+  induced_at: "2026-10-02T10:27:31Z"
 confidence: 1.0
 status: ACTIVE
 ---

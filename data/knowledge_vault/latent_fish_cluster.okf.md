@@ -1,5 +1,5 @@
 ---
-id: concept_7c84dad96f16
+id: concept_12d74ca39356
 name: latent_fish_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.06584362139917692
   constituent_count: 9
-  induced_at: "2026-10-02T10:02:42Z"
+  induced_at: "2026-10-02T10:27:31Z"
 confidence: 1.0
 status: ACTIVE
 ---

@@ -1,5 +1,5 @@
 ---
-id: concept_aa0b341f800d
+id: concept_4d46abe8c761
 name: latent_animal_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.35937500000000006
   constituent_count: 9
-  induced_at: "2026-10-02T10:02:42Z"
+  induced_at: "2026-10-02T10:27:31Z"
 confidence: 1.0
 status: ACTIVE
 ---

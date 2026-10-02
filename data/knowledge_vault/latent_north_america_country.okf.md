@@ -1,5 +1,5 @@
 ---
-id: concept_e031e7c398b8
+id: concept_c9e6f74a8f0b
 name: latent_north_america_country
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 5
-  induced_at: "2026-10-02T10:02:42Z"
+  induced_at: "2026-10-02T10:27:31Z"
 confidence: 1.0
 status: ACTIVE
 ---

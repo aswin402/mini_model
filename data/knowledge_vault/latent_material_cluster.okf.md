@@ -1,5 +1,5 @@
 ---
-id: concept_e0420c1bbc88
+id: concept_7a4fca7d2636
 name: latent_material_cluster
 aliases: []
 taxonomy:
@@ -14,7 +14,7 @@ attributes:
   is_latent: true
   category_utility: 0.28148955055273145
   constituent_count: 30
-  induced_at: "2026-10-02T10:02:41Z"
+  induced_at: "2026-10-02T10:27:31Z"
 confidence: 1.0
 status: ACTIVE
 ---

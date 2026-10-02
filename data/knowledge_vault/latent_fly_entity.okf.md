@@ -1,5 +1,5 @@
 ---
-id: concept_1da33ad6e17e
+id: concept_95d5bef97c98
 name: latent_fly_entity
 aliases: []
 taxonomy:
@@ -12,7 +12,7 @@ attributes:
   is_latent: true
   category_utility: 0.6666666666666665
   constituent_count: 3
-  induced_at: "2026-10-02T10:02:42Z"
+  induced_at: "2026-10-02T10:27:31Z"
 confidence: 1.0
 status: ACTIVE
 ---

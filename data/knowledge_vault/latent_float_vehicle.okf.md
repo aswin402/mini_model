@@ -1,5 +1,5 @@
 ---
-id: concept_2990cae5d807
+id: concept_b82def8f1282
 name: latent_float_vehicle
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.4444444444444444
   constituent_count: 3
-  induced_at: "2026-10-02T10:02:42Z"
+  induced_at: "2026-10-02T10:27:31Z"
 confidence: 1.0
 status: ACTIVE
 ---

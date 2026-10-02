@@ -1,5 +1,5 @@
 ---
-id: concept_2a47c19c49e5
+id: concept_67a96de89af6
 name: latent_city_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.023795359904818618
   constituent_count: 41
-  induced_at: "2026-10-02T10:02:41Z"
+  induced_at: "2026-10-02T10:27:31Z"
 confidence: 1.0
 status: ACTIVE
 ---
