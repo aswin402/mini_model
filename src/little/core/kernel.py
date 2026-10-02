@@ -16,7 +16,7 @@ from little.actions import (
 )
 from little.active.crawler import KnowledgeCrawler
 from little.active.latent_knot_inducer import LatentKnotInducer
-from little.active.self_study import AutonomousSelfStudyEngine, DreamReport
+from little.active.self_study import AutonomousSelfStudyEngine, DreamReport, SleepConsolidationReport
 from little.active.stream_learner import (
     ChunkIngestResult,
     ContinuousStreamLearner,
@@ -292,6 +292,23 @@ class CognitiveKernel:
     def teach(self, text: str) -> ChunkIngestResult:
         """Continuously ingest and verify new knowledge from natural language text."""
         return self.stream_learner.ingest_chunk(text)
+
+    def sleep(self, max_dream_steps: int = 3) -> SleepConsolidationReport:
+        """Run an offline sleep consolidation cycle (dreaming, invariant mining, cluster induction, and episodic compaction)."""
+        return self.self_study.consolidate_sleep_cycle(
+            headroom=self.headroom,
+            paged_store=self.paged_store,
+            latent_inducer=self.latent_inducer,
+            max_dream_steps=max_dream_steps,
+        )
+
+    def learn_world_corpus(self) -> StreamLearningSummary:
+        """Ingest the foundational encyclopedic world corpus into long-term memory."""
+        return self.stream_learner.ingest_world_corpus()
+
+    def plan(self, goal: str) -> AgenticPlanExecutionResult:
+        """Decompose a compound goal into a verified plan DAG and execute with invariant gates."""
+        return self.agentic_planner.plan_and_execute(goal)
 
     def chat(self, text: str) -> str:
         """Conversational chat interface with warm, articulate English dialogue and living wiki integration."""

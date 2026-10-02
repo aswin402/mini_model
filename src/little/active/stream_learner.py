@@ -205,3 +205,41 @@ class ContinuousStreamLearner:
 
         paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
         return self.ingest_stream(paragraphs, source_id=doc_id)
+
+    def ingest_corpus_directory(
+        self, dir_path: Path | str, pattern: str = "*.md"
+    ) -> StreamLearningSummary:
+        """Ingest all knowledge files in a corpus directory."""
+        directory = Path(dir_path)
+        if not directory.exists() or not directory.is_dir():
+            return StreamLearningSummary(source_id=str(dir_path))
+
+        files = sorted(directory.glob(pattern))
+        summary = StreamLearningSummary(source_id=directory.name)
+        t0 = time.perf_counter()
+
+        for f in files:
+            doc_sum = self.ingest_document(f)
+            summary.total_chunks += doc_sum.total_chunks
+            summary.total_sentences += doc_sum.total_sentences
+            summary.total_concepts_created.extend(doc_sum.total_concepts_created)
+            summary.total_relations_created.extend(doc_sum.total_relations_created)
+            summary.total_contradictions_blocked += doc_sum.total_contradictions_blocked
+
+        summary.total_latency_ms = (time.perf_counter() - t0) * 1000.0
+        return summary
+
+    def ingest_world_corpus(self) -> StreamLearningSummary:
+        """Ingest the standard encyclopedic world corpus (astronomy, biology, CS, chemistry, etc.)."""
+        from little.core.runtime_paths import RuntimePaths
+
+        candidate_dirs = [
+            RuntimePaths.default().database.parent / "knowledge" / "world_corpus",
+            Path("data/knowledge/world_corpus"),
+        ]
+        target_dir = next((d for d in candidate_dirs if d.exists()), None)
+        if not target_dir:
+            return StreamLearningSummary(source_id="world_corpus_not_found")
+
+        return self.ingest_corpus_directory(target_dir, pattern="*.md")
+
