@@ -1,5 +1,5 @@
 ---
-id: concept_7f7dae19d6db
+id: concept_21cd7f0b3270
 name: latent_insect_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 9
-  induced_at: "2026-10-01T18:18:47Z"
+  induced_at: "2026-10-02T10:02:42Z"
 confidence: 1.0
 status: ACTIVE
 ---

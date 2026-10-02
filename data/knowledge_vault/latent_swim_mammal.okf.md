@@ -1,5 +1,5 @@
 ---
-id: concept_afbf8ffb05d3
+id: concept_3f049529d529
 name: latent_swim_mammal
 aliases: []
 taxonomy:
@@ -14,7 +14,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 2
-  induced_at: "2026-10-01T18:18:47Z"
+  induced_at: "2026-10-02T09:24:42Z"
 confidence: 1.0
 status: ACTIVE
 ---

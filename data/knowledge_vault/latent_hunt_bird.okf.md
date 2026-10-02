@@ -1,5 +1,5 @@
 ---
-id: concept_c63f8b848c8a
+id: concept_dd5dc003beac
 name: latent_hunt_bird
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 3
-  induced_at: "2026-10-01T18:18:47Z"
+  induced_at: "2026-10-02T10:02:42Z"
 confidence: 1.0
 status: ACTIVE
 ---

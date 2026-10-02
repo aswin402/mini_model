@@ -1,5 +1,5 @@
 ---
-id: concept_ce56866d40d7
+id: concept_60d4d1ed7498
 name: latent_tool_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.07638888888888892
   constituent_count: 12
-  induced_at: "2026-10-01T18:18:47Z"
+  induced_at: "2026-10-02T10:02:42Z"
 confidence: 1.0
 status: ACTIVE
 ---

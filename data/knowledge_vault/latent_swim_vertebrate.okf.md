@@ -1,5 +1,5 @@
 ---
-id: concept_bbc25048dbb9
+id: concept_c0ad63519110
 name: latent_swim_vertebrate
 aliases: []
 taxonomy:
@@ -14,7 +14,7 @@ attributes:
   is_latent: true
   category_utility: 0.5
   constituent_count: 2
-  induced_at: "2026-10-01T08:12:31Z"
+  induced_at: "2026-10-02T10:02:42Z"
 confidence: 1.0
 status: ACTIVE
 ---

@@ -1,5 +1,5 @@
 ---
-id: concept_0dd5a51a4fa2
+id: concept_e044fa923bee
 name: latent_primate_cluster
 aliases: []
 taxonomy:
@@ -14,7 +14,7 @@ attributes:
   is_latent: true
   category_utility: 0.125
   constituent_count: 3
-  induced_at: "2026-10-01T18:18:47Z"
+  induced_at: "2026-10-02T10:02:42Z"
 confidence: 1.0
 status: ACTIVE
 ---

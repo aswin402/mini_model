@@ -1,5 +1,5 @@
 ---
-id: concept_e25a23657fef
+id: concept_8fd23f9ad407
 name: latent_utensil_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.08999999999999998
   constituent_count: 10
-  induced_at: "2026-10-01T18:18:47Z"
+  induced_at: "2026-10-02T10:02:42Z"
 confidence: 1.0
 status: ACTIVE
 ---

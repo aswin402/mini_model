@@ -5,8 +5,10 @@ aliases: []
 taxonomy:
   is_a:
     - aircraft
+    - latent_artifact_cluster
     - vehicle
-  disjoint_with: []
+  disjoint_with:
+    - software
 mereology:
   parts:
     - cockpit
@@ -32,7 +34,7 @@ relations:
 # Airplane
 
 **Airplane** is a concept registered in the LITTLE living knowledge vault.
-- **Taxonomic Hierarchy**: Belongs to [[vehicle]], [[aircraft]].
+- **Taxonomic Hierarchy**: Belongs to [[vehicle]], [[aircraft]], [[latent_artifact_cluster]].
 - **Mereological Structure**: Composed of [[wing]], [[jet engine]], [[cockpit]].
 - **Procedural Capabilities**: Exhibits skills [[fly]].
 

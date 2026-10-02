@@ -1,5 +1,5 @@
 ---
-id: concept_0fdb8fd13dff
+id: concept_8caf51935274
 name: latent_fly_bird
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 3
-  induced_at: "2026-09-30T15:01:30Z"
+  induced_at: "2026-10-01T20:45:10Z"
 confidence: 1.0
 status: ACTIVE
 ---

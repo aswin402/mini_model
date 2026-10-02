@@ -1,5 +1,5 @@
 ---
-id: concept_36c7a6e7e5c3
+id: concept_e2db23a48033
 name: latent_river_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 0.2734375
   constituent_count: 7
-  induced_at: "2026-10-01T18:18:47Z"
+  induced_at: "2026-10-02T10:02:42Z"
 confidence: 1.0
 status: ACTIVE
 ---

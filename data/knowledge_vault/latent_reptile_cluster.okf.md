@@ -1,5 +1,5 @@
 ---
-id: concept_9a6791c8ee4f
+id: concept_68da73881a62
 name: latent_reptile_cluster
 aliases: []
 taxonomy:
@@ -13,7 +13,7 @@ attributes:
   is_latent: true
   category_utility: 1.0
   constituent_count: 8
-  induced_at: "2026-10-01T18:18:47Z"
+  induced_at: "2026-10-02T10:02:42Z"
 confidence: 1.0
 status: ACTIVE
 ---
