@@ -23,19 +23,23 @@ uv run little --db /tmp/little_demo.db learn "A robin is a bird."
 
 # Query the cognitive engine with reasoning trace
 uv run little --db /tmp/little_demo.db ask "Is a robin an animal?"
+
+# Inspect live cognitive telemetry (paging, plasticity, 5-brake growth gate, canary)
+uv run little --db /tmp/little_demo.db status
 ```
 
 ## Architecture Overview
 
-- **`little.core`** — [`CognitiveKernel`](src/little/core/kernel.py) orchestrator, [`ConceptKnot`](src/little/core/concept_knot.py) 6-spoke concept representation, [`RuntimePaths`](src/little/core/runtime_paths.py), and [`RuntimePolicy`](src/little/core/runtime_policy.py).
-- **`little.memory`** — [`MemoryStore`](src/little/memory/store.py) SQLite persistence (`concepts`, `relations`, `episodes`, `procedures`, `evidence_ledger`, `working_turns`), [`EvidenceLedger`](src/little/memory/ledger.py), [`PagedConceptStore`](src/little/memory/paged_store.py), and [`HeadroomContextManager`](src/little/memory/headroom.py).
+- **`little.core`** — [`CognitiveKernel`](src/little/core/kernel.py) orchestrator (including `get_telemetry_snapshot()`), [`ConceptKnot`](src/little/core/concept_knot.py) 6-spoke concept representation, [`CognitiveCommandRegistry`](src/little/core/cognitive_command.py), [`RuntimePaths`](src/little/core/runtime_paths.py), and [`RuntimePolicy`](src/little/core/runtime_policy.py).
+- **`little.memory`** — [`MemoryStore`](src/little/memory/store.py) SQLite persistence (`concepts`, `relations`, `experiences`, `procedures`, `evidence_records`, `commit_decisions`, `proof_traces`) with monotonic `concept_mutation_epoch` dirty-concept tracking, [`EvidenceLedger`](src/little/memory/ledger.py), [`PagedConceptStore`](src/little/memory/paged_store.py) (3-tier Disk $\to$ RAM LRU $\to$ Resident working window with dirty-only invalidation, Resident slot-pinning, and 1/2/3-gram phrase voting), and [`HeadroomContextManager`](src/little/memory/headroom.py).
 - **`little.language`** — [`LearningEngine`](src/little/language/parser.py) & [`HybridPerceptionEngine`](src/little/language/hybrid_perception.py) (rule-based parsing + lightweight hashed N-gram perception), [`ComparativeOrderReasoner`](src/little/language/comparative.py), and [`LayaGatekeeper`](src/little/language/laya_gatekeeper.py) epistemic calibration.
-- **`little.inference`** — [`InferenceEngine`](src/little/inference/engine.py), [`DualSpeedReasoner`](src/little/inference/dual_speed.py), [`DeepSeekInvariantVerifier`](src/little/inference/invariant_gates.py) (`I_DAG`, `I_MUTEX`, `I_SORT`), and [`AnalogicalEngine`](src/little/inference/analogy.py).
-- **`little.procedural`** — [`SymbolicCAS`](src/little/procedural/math_cas.py), [`MathStorySolver`](src/little/procedural/math_story.py), [`ProgramSynthesizer`](src/little/procedural/program_synthesizer.py), [`CodeSandbox`](src/little/procedural/code_sandbox.py), and [`restricted_execution`](src/little/procedural/restricted_execution.py).
-- **`little.dynamics`** — [`ContinuousDynamicsEngine`](src/little/dynamics/cfc.py), [`CfCContinuousODE`](src/little/dynamics/cfc_ode.py), and [`CounterfactualDynamicsEngine`](src/little/dynamics/counterfactual.py).
-- **`little.active`** — [`ActiveInquisitor`](src/little/active/inquisitor.py), [`AutonomousSelfStudyEngine`](src/little/active/self_study.py), [`IncrementalCobwebEngine`](src/little/active/cobweb_engine.py), and [`ContinuousStreamLearner`](src/little/active/stream_learner.py).
-- **`little.knowledge`** — [`ObsidianKnowledgeFormat`](src/little/knowledge/okf.py), [`LivingWiki`](src/little/knowledge/living_wiki.py), and [`SchemaRegistry`](src/little/knowledge/registry.py).
+- **`little.inference`** — [`InferenceEngine`](src/little/inference/engine.py), [`DualSpeedInfillingEngine`](src/little/inference/dual_speed.py) (Fast 1-hop vs. System 2 bidirectional BFS with PonderNet cumulative halting probability $P(\text{halt} \le d)$, `ponder_cost`, and `halt_freeze`), [`DeepSeekInvariantVerifier`](src/little/inference/invariant_gates.py) (`I_DAG`, `I_MUTEX`, `I_SORT`, `I_TEMP`), and [`AnalogicalReasoningEngine`](src/little/inference/analogy.py).
+- **`little.procedural`** — [`SymbolicCAS`](src/little/procedural/math_cas.py), [`MathStoryEngine`](src/little/procedural/math_story.py), [`ASTCodeSynthesizer`](src/little/procedural/program_synthesizer.py), [`VerifiedPythonSandbox`](src/little/procedural/code_sandbox.py), and [`restricted_execution`](src/little/procedural/restricted_execution.py).
+- **`little.dynamics`** — [`CfCCell`](src/little/dynamics/cfc.py), [`PhysicalSimulationEngine`](src/little/dynamics/cfc_ode.py), and [`CounterfactualEngine`](src/little/dynamics/counterfactual.py).
+- **`little.active`** — [`ActiveInquisitor`](src/little/active/inquisitor.py), [`PlasticityController`](src/little/active/plasticity.py) (dual EWLS $\lambda=0.97/\lambda_{\text{fast}}=0.85$ trend estimator, spike holdback filter, regime-shift reset, and Trunk `0.1x` vs. Leaf `1.0x` continual plasticity split), [`LatentKnotInducer`](src/little/active/latent_knot_inducer.py) (5-brake speculative growth gate `room & used & earning & fits & honest` and survival-window pruning), [`AutonomousSelfStudyEngine`](src/little/active/self_study.py) (load-balanced curiosity routing and held-out canary verification), [`CobwebClusterEngine`](src/little/active/cobweb_engine.py), and [`ContinuousStreamLearner`](src/little/active/stream_learner.py).
+- **`little.knowledge`** — [`OKFSerializer`](src/little/knowledge/okf.py), [`LivingWiki`](src/little/knowledge/living_wiki.py), and [`SchemaRegistry`](src/little/knowledge/registry.py).
 - **`little.actions`** — [`ActionRouter`](src/little/actions/action_router.py), [`PreDispatchVerifier`](src/little/actions/pre_dispatch_verifier.py), and [`ToolExecutor`](src/little/actions/tool_executor.py).
+- **`little.rust`** — [`RustCoreEngine`](src/little/rust/engine.py) (`ctypes` C-ABI bridge to `rust/little_core` for native graph traversal, invariant verification, and FWHT/TurboQuant operations, with automatic pure-Python fallback).
 
 ## Running Tests
 
@@ -45,6 +49,9 @@ Tests run against isolated temporary SQLite databases and temporary workspace di
 # Run targeted unit and repair verification suites
 uv run pytest tests/unit/ tests/evaluation/ -q
 
+# Run mini-AGI cognitive upgrade verification tests
+uv run pytest tests/unit/test_mini_agi_upgrades.py -q
+
 # Run end-to-end integration evaluation
 uv run pytest tests/integration/test_real_world_comprehensive_evaluation.py -q
 ```
@@ -52,4 +59,4 @@ uv run pytest tests/integration/test_real_world_comprehensive_evaluation.py -q
 ## Scope & Honest Capability Boundaries
 
 - **Perception & Neural Layers:** `little.neural` implements lightweight, CPU-native hashed character/word N-gram linear classifiers and quantized vector indexing (`TurboQuantIndex`), not pretrained billion-parameter Transformer weights.
-- **Procedural Synthesis:** `ProgramSynthesizer` and `CodeSandbox` synthesize and verify bounded algorithmic skills in an AST-checked, resource-limited subprocess worker (`restricted_execution.py`); they do not provide OS-container or VM-level sandboxing for untrusted adversarial host code.
+- **Procedural Synthesis:** `ASTCodeSynthesizer` and `VerifiedPythonSandbox` synthesize and verify bounded algorithmic skills in an AST-checked, resource-limited subprocess worker (`restricted_execution.py`); they do not provide OS-container or VM-level sandboxing for untrusted adversarial host code.

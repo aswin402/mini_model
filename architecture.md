@@ -1,7 +1,7 @@
 # LITTLE — Architecture
 
-**Version:** 0.1  
-**Status:** Proposed research architecture
+**Version:** 0.2  
+**Status:** Implemented Neuro-Symbolic & Continual Plasticity Architecture
 
 ---
 
@@ -599,85 +599,72 @@ Update:
 
 ## 15. Rust/Python boundary
 
-The project should be **Python-first with Rust acceleration**, not Rust-first.
+The project is **Python-first with optional native Rust acceleration**, not Rust-first.
 
 Python owns:
 
-- orchestration;
-- experiments;
-- model research;
-- training;
-- APIs;
-- configuration;
-- evaluation;
-- notebooks;
-- high-level reasoning.
+- cognitive orchestration (`CognitiveKernel`);
+- perception, frame extraction, and dialogue state;
+- continual plasticity (`PlasticityController`), Cobweb clustering, and self-study;
+- SQLite persistence and OKF Markdown vault synchronization;
+- CLI (`little`) and interactive REPL;
+- evaluation benchmarks and verification tests.
 
-Rust owns performance-sensitive components when profiling proves they matter:
+Rust (`rust/little_core`) owns CPU-intensive hot loops compiled as a zero-dependency C-ABI `cdylib` (`liblittle_core.so` / `.dylib` / `.dll`) via the custom PEP 517 build backend (`little_build_backend.py`) and loaded through `ctypes` in `src/little/rust/engine.py` (`RustCoreEngine`) with an automatic pure-Python fallback:
 
-- graph operations;
-- memory indexing;
-- serialization;
-- high-throughput retrieval;
-- CPU-heavy algorithms;
-- custom data structures.
-
-PyO3 provides Rust bindings for Python and supports native Python extension modules; Maturin provides a practical build/package workflow for Rust-based Python packages.
+- bidirectional BFS and shortest-path graph traversal;
+- DAG acyclicity (`I_DAG`) and mutex (`I_MUTEX`) invariant verification;
+- Fast Walsh-Hadamard Transform (FWHT) and 2-bit/1-bit TurboQuant cosine-similarity search.
 
 ---
 
-## 16. Proposed repository architecture
+## 16. Implemented repository architecture
 
 ```text
-little/
+mivi_model/
 ├── README.md
-├── LICENSE
+├── architecture.md
+├── spec.md
+├── prd.md
 ├── pyproject.toml
+├── little_build_backend.py
 ├── uv.lock
-├── Cargo.toml
-├── Cargo.lock
-│
-├── docs/
-│   ├── prd.md
-│   ├── architecture.md
-│   ├── spec.md
-│   ├── coreidea.md
-│   ├── implementationplan.md
-│   └── todo.md
 │
 ├── src/
 │   └── little/
 │       ├── __init__.py
-│       ├── api/
-│       ├── core/
-│       ├── concepts/
-│       ├── memory/
-│       ├── inference/
-│       ├── learning/
-│       ├── language/
-│       ├── evaluation/
-│       └── storage/
+│       ├── main.py
+│       ├── actions/        # ActionRouter, PreDispatchVerifier, ToolExecutor
+│       ├── active/         # PlasticityController, LatentKnotInducer, AutonomousSelfStudyEngine,
+│       │                   # CobwebClusterEngine, ActiveInquisitor, ContinuousStreamLearner
+│       ├── core/           # CognitiveKernel, ConceptKnot, CognitiveCommandRegistry, RuntimePolicy
+│       ├── dynamics/       # CfCCell, PhysicalSimulationEngine, CounterfactualEngine
+│       ├── evaluation/     # Comprehensive, hybrid, real-world chat, and System 2 matrices
+│       ├── inference/      # InferenceEngine, DualSpeedInfillingEngine, DeepSeekInvariantVerifier
+│       ├── knowledge/      # LivingWiki, OKFSerializer, KnowledgeImporter, SchemaRegistry
+│       ├── language/       # LearningEngine, HybridPerceptionEngine, LayaGatekeeper, ComparativeOrderReasoner
+│       ├── memory/         # MemoryStore, PagedConceptStore, HeadroomContextManager, EvidenceLedger
+│       ├── neural/         # NeuralRouter, TurboQuantIndex, HashedLinearClassifier
+│       ├── perception/     # SensoryGroundingEngine
+│       ├── procedural/     # SymbolicCAS, MathStoryEngine, ASTCodeSynthesizer, VerifiedPythonSandbox
+│       └── rust/           # RustCoreEngine ctypes bridge + liblittle_core cdylib
 │
 ├── rust/
 │   └── little_core/
 │       ├── Cargo.toml
-│       └── src/
+│       └── src/            # lib.rs, turbo.rs
 │
 ├── tests/
+│   ├── conftest.py
 │   ├── unit/
 │   ├── integration/
-│   └── experiments/
+│   └── evaluation/
 │
 ├── experiments/
-│   ├── 001_memory/
-│   ├── 002_concepts/
-│   ├── 003_unknown/
-│   └── 004_continual_learning/
+│   ├── 001_basic_learning/ .. 010_real_world_sota_benchmark/
 │
 ├── data/
-│   ├── raw/
-│   ├── processed/
-│   └── little.db
+│   └── schemas/            # Externalized JSON policy schemas
 │
 └── scripts/
 ```
@@ -690,4 +677,33 @@ Do not add a subsystem because it is fashionable.
 
 Add it only when an experiment shows that the current architecture cannot solve a defined problem.
 
-That rule should protect LITTLE from becoming an unnecessarily complicated collection of AI libraries.
+That rule protects LITTLE from becoming an unnecessarily complicated collection of AI libraries.
+
+---
+
+## 18. Continual Plasticity, 3-Tier Paged Memory & Adaptive Halting
+
+Inspired by continual adaptive systems (`volotat/mini-AGI`), LITTLE incorporates six tightly integrated homeostatic mechanisms across memory, active learning, and dual-speed inference:
+
+1. **Dirty-Only Concept Invalidation, Resident Slot Pinning & Multi-Gram Phrase Voting (`MemoryStore` + `PagedConceptStore`)**:
+   - `MemoryStore` tracks a monotonic `concept_mutation_epoch` and per-epoch dirty sets (`dirty_concepts_since`) that advance **only** when `concepts` or `relations` mutate—ignoring episodic experience logs, proof traces, or ledger metadata writes.
+   - `PagedConceptStore` evicts only dirtied concepts on refresh, pins active Resident concepts (`slot_reuses`), and casts weighted activation votes for 1-grams (`1.0x`), 2-grams (`1.5x`), and 3-grams (`2.0x`) (`"The text chooses"`).
+2. **Evidence-Governed Continual Plasticity & Trunk/Leaf Split (`PlasticityController`)**:
+   - Maintains dual Exponentially Weighted Least-Squares (EWLS) fits ($\lambda = 0.97$ slow, $\lambda_{\text{fast}} = 0.85$ fast) to compute scale-free effect size $e = -\text{slope} / \sigma$.
+   - Filters single-step loss spikes (`loss - mean > 2 * sigma`) unless corroborated on the following step, and resets running statistics upon regime shifts (`|e_fast| > 0.3` and `|e_fast| > 2 * |e_slow|`).
+   - Applies a `0.1x` trunk damping multiplier to upper-ontology/high-degree concepts (`is_trunk_concept`) to prevent catastrophic forgetting while allowing newborn leaf concepts full plasticity (`1.0x`) that decays smoothly with experience (`rate_half = 50.0`).
+3. **5-Brake Speculative Growth Gate (`LatentKnotInducer.evaluate_growth_brakes`)**:
+   - Autonomous Cobweb latent concept induction is gated by five boolean brakes (`room & used & earning & fits & honest`):
+     - `room`: total concept count is below `max_total_concepts` (`10,000`) and latent ratio is below `max_latent_ratio` (`0.25`).
+     - `used`: existing latent concepts are actively addressed in queries or non-taxonomic edges.
+     - `earning`: mean confidence across induced latent concepts meets `min_earning_confidence` (`0.55`).
+     - `fits`: candidate cluster meets minimum constituent count and Category Utility threshold.
+     - `honest`: no unresolved `I_DAG` or `I_MUTEX` invariant violations exist in memory.
+4. **Survival-Window Pruning — "Dead Means Unaddressed" (`LatentKnotInducer.prune_unaddressed_latent_knots`)**:
+   - Tracks induction cycle and address hits for every `LATENT_*` concept (`touch_latent_concept`). Latent concepts that survive `survival_window_cycles` with zero address hits and zero non-taxonomic outgoing relations are pruned automatically.
+5. **Load-Balanced Curiosity Routing & Held-Out Canary Verification (`AutonomousSelfStudyEngine`)**:
+   - Balances radial spoke entropy $H(c)$ with an exponential moving average of recent study share (`effective_study_priority`) so stub concepts cannot starve the rest of the graph during dreaming.
+   - Runs `evaluate_heldout_canary()` at the end of `consolidate_sleep_cycle()` to verify that autonomous dreaming and invariant mining introduced zero `I_DAG` or `I_MUTEX` regressions.
+6. **PonderNet Cumulative Halting & `halt_freeze` (`DualSpeedInfillingEngine`)**:
+   - Computes per-depth conditional halting hazard $\lambda_d$, cumulative halting probability $P(\text{halt} \le d) = 1 - \prod_{k=1}^{d} (1 - \lambda_k)$, and regularization cost `ponder_cost = ponder_beta * depth`. When `halt_freeze=True` and $P(\text{halt} \le d) \ge \text{halt\_threshold}$, deep symbolic search freezes early.
+
