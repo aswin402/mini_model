@@ -56,6 +56,19 @@ uv run pytest tests/unit/test_mini_agi_upgrades.py -q
 uv run pytest tests/integration/test_real_world_comprehensive_evaluation.py -q
 ```
 
+## Documentation
+
+All project documentation is organized under [`onpkg_docs/`](onpkg_docs/INDEX.md) and root [`CHANGELOG.md`](CHANGELOG.md):
+
+- **[Documentation Index (`onpkg_docs/INDEX.md`)](onpkg_docs/INDEX.md)** — Central entry point for project docs
+- **[Product Requirements & Core Philosophy (`onpkg_docs/prd.md`)](onpkg_docs/prd.md)** — Vision, Open-World Assumption (`UNKNOWN`), and design principles
+- **[Cognitive Architecture & System Design (`onpkg_docs/design.md`)](onpkg_docs/design.md)** — 6-spoke `ConceptKnot`, 3-tier paged memory, 4 invariant gates, continual plasticity, and Python/Rust boundary
+- **[Technical Specification & Implementation (`onpkg_docs/implementation.md`)](onpkg_docs/implementation.md)** — Runtime stack, directory layout, and data/telemetry contracts
+- **[CLI Surface, Directives & Policy Schemas (`onpkg_docs/content.md`)](onpkg_docs/content.md)** — Complete `little` CLI subcommands, interactive directives, and `data/schemas/*.json` inventory
+- **[Engineering Task Tracker (`onpkg_docs/todo.md`)](onpkg_docs/todo.md)** — Completed milestones and active engineering backlog
+- **[Changelog (`CHANGELOG.md`)](CHANGELOG.md)** — Chronological release history (v0.1.0 through v0.3.0)
+- **[Research Compendium (`research/README.md`)](research/README.md)** — Deep-dive architectural studies
+
 ## Scope & Honest Capability Boundaries
 
 - **Perception & Neural Layers:** `little.neural` implements lightweight, CPU-native hashed character/word N-gram linear classifiers and quantized vector indexing (`TurboQuantIndex`), not pretrained billion-parameter Transformer weights.

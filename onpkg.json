@@ -21,24 +21,30 @@
   },
   "sources": {
     "directories": [
+      "onpkg_docs",
       "research"
     ],
     "file_patterns": [
       "*.md"
     ],
     "files": [
-      "README(1).md",
-      "architecture.md",
-      "coreidea.md",
-      "implementationplan.md",
-      "prd.md",
+      "README.md",
+      "CHANGELOG.md",
+      "AGENTS.md",
+      "onpkg_docs/INDEX.md",
+      "onpkg_docs/prd.md",
+      "onpkg_docs/design.md",
+      "onpkg_docs/implementation.md",
+      "onpkg_docs/content.md",
+      "onpkg_docs/todo.md",
       "research/01_non_autoregressive_and_edge_engines.md",
       "research/02_ternary_quantization_and_hardware_efficiency.md",
       "research/03_liquid_foundation_models_and_dynamical_systems.md",
       "research/04_deepseek_architectures_and_memory_sparsity.md",
-      "research/README.md",
-      "spec.md",
-      "todo.md"
+      "research/05_neuro_symbolic_semantic_parsing_and_world_models.md",
+      "research/06_deep_dive_sota_models_glm_deepseek_needle_lfm_laya_jev.md",
+      "research/07_mivi_spiderweb_thinking_architecture.md",
+      "research/README.md"
     ]
   }
 }
