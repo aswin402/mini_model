@@ -78,6 +78,8 @@ class MemoryStore:
         self._conn.execute("PRAGMA foreign_keys = ON;")
         if self.db_path != ":memory:":
             self._conn.execute("PRAGMA journal_mode = WAL;")
+        self._concept_mutation_epoch: int = 0
+        self._dirty_concepts_by_epoch: dict[int, set[str]] = {}
         self._init_db(
             seed_ontology=seed_ontology, construction_pack=construction_pack
         )
@@ -120,6 +122,56 @@ class MemoryStore:
     def semantic_revision(self) -> int:
         """Mutation token excluding conversational working_turns bookkeeping."""
         return self._conn.total_changes - getattr(self, "_working_turn_changes", 0)
+
+    @property
+    def concept_mutation_epoch(self) -> int:
+        """Monotonic counter incremented whenever concepts or relations are modified."""
+        return self._concept_mutation_epoch
+
+    def _record_dirty_concepts(self, *names_or_ids: str) -> None:
+        """Record canonical concept keys modified in the latest semantic mutation."""
+        keys: set[str] = set()
+        ids_to_lookup: list[str] = []
+        for item in names_or_ids:
+            if not item:
+                continue
+            if item == "*":
+                keys.add("*")
+                continue
+            canonical = item.strip().upper().replace(" ", "_")
+            keys.add(canonical)
+            if item.startswith("concept_"):
+                ids_to_lookup.append(item)
+        if ids_to_lookup:
+            placeholders = ",".join("?" for _ in ids_to_lookup)
+            rows = self._conn.execute(
+                f"SELECT name FROM concepts WHERE id IN ({placeholders});",
+                ids_to_lookup,
+            ).fetchall()
+            for row in rows:
+                keys.add(row["name"].strip().upper().replace(" ", "_"))
+        if not keys:
+            return
+        self._concept_mutation_epoch += 1
+        self._dirty_concepts_by_epoch[self._concept_mutation_epoch] = keys
+        # Bound history to most recent 512 epochs
+        if len(self._dirty_concepts_by_epoch) > 512:
+            oldest = min(self._dirty_concepts_by_epoch)
+            del self._dirty_concepts_by_epoch[oldest]
+
+    def dirty_concepts_since(self, since_epoch: int) -> set[str] | None:
+        """Return canonical concept keys dirtied since `since_epoch`, or None if full clear is required."""
+        if since_epoch == self._concept_mutation_epoch:
+            return set()
+        if since_epoch < 0 or since_epoch > self._concept_mutation_epoch:
+            return None
+        dirty: set[str] = set()
+        for ep in range(since_epoch + 1, self._concept_mutation_epoch + 1):
+            ep_keys = self._dirty_concepts_by_epoch.get(ep)
+            if ep_keys is None or "*" in ep_keys:
+                return None
+            dirty.update(ep_keys)
+        return dirty
 
     def __enter__(self) -> Self:
         return self
@@ -212,18 +264,20 @@ class MemoryStore:
                     concept.created_at,
                 ),
             )
+        self._record_dirty_concepts(concept.id, concept.name)
         return concept
 
     def get_concept(self, id_or_name: str) -> Concept | None:
         """Retrieve concept by unique ID or canonical lowercase name."""
         target = id_or_name.strip().lower()
+        target_space = target.replace("_", " ")
         cursor = self._conn.execute(
             """
             SELECT id, name, aliases_json, category, attributes_json, confidence, status, created_at
             FROM concepts
-            WHERE id = ? OR name = ?;
+            WHERE id = ? OR name = ? OR name = ?;
             """,
-            (id_or_name, target),
+            (id_or_name, target, target_space),
         )
         row = cursor.fetchone()
         if not row:
@@ -308,6 +362,7 @@ class MemoryStore:
                     polluted_ids,
                 )
             self._cached_concepts = None
+            self._record_dirty_concepts("*")
         return sorted(polluted_names)
 
     def update_concept_attributes(
@@ -324,6 +379,7 @@ class MemoryStore:
                 (json.dumps(updated_attrs), concept_id),
             )
         concept.attributes = updated_attrs
+        self._record_dirty_concepts(concept.id, concept.name)
         return concept
 
     # -------------------------------------------------------------------------
@@ -418,6 +474,7 @@ class MemoryStore:
                     """,
                     (w_pos, w_neg, conf, row["id"]),
                 )
+            self._record_dirty_concepts(subject_id, object_id)
             return Relation(
                 id=row["id"],
                 subject_id=subject_id,
@@ -456,6 +513,7 @@ class MemoryStore:
                     rel.created_at,
                 ),
             )
+        self._record_dirty_concepts(subject_id, object_id)
         return rel
 
     def import_relation_record(
@@ -504,6 +562,7 @@ class MemoryStore:
                 (relation.id, subject_id, relation.predicate, object_id, weight_positive,
                  weight_negative, relation.confidence, source_experience_id, relation.created_at),
             )
+        self._record_dirty_concepts(subject_id, object_id)
         return relation
 
     def bulk_import_triples(
@@ -614,6 +673,14 @@ class MemoryStore:
                     )
                 relations_processed += len(rel_rows)
 
+        if len(unique_concept_names) > 64:
+            self._record_dirty_concepts("*")
+        else:
+            dirty_items = [*unique_concept_names]
+            for name in unique_concept_names:
+                if name in concept_map:
+                    dirty_items.append(concept_map[name])
+            self._record_dirty_concepts(*dirty_items)
         return len(new_concepts), relations_processed
 
     def get_relations(

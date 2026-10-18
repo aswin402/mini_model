@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from itertools import pairwise
 
 from little.inference.invariant_gates import DeepSeekInvariantVerifier
 from little.inference.reasoning_policy import ReasoningPolicy
@@ -31,6 +32,8 @@ class InfillingResult:
     query_type: str = "PATH"
     ponder_depth: int = 1
     halt_reason: str = "direct_reflex"
+    halt_probability: float = 1.0
+    ponder_cost: float = 0.0
 
 
 class DualSpeedInfillingEngine:
@@ -41,10 +44,31 @@ class DualSpeedInfillingEngine:
         memory: MemoryStore,
         verifier: DeepSeekInvariantVerifier,
         policy: ReasoningPolicy | None = None,
+        halt_threshold: float = 0.9,
+        ponder_beta: float = 0.01,
+        halt_freeze: bool = True,
     ) -> None:
         self.memory = memory
         self.verifier = verifier
         self.policy = policy or ReasoningPolicy.default()
+        self.halt_threshold = float(halt_threshold)
+        self.ponder_beta = float(ponder_beta)
+        self.halt_freeze = bool(halt_freeze)
+
+    def _compute_ponder_metrics(
+        self, depth: int, solved: bool, frontier_size: int
+    ) -> tuple[float, float]:
+        """Compute PonderNet cumulative halting probability P(halt <= d) and KL-style ponder cost."""
+        if solved or frontier_size == 0:
+            halt_prob = 1.0
+        else:
+            # Geometric hazard increases as frontier thins or depth approaches max_depth
+            max_d = max(1, self.policy.max_depth)
+            step_hazard = min(0.95, (depth / max_d) * 0.45 + (1.0 / (1.0 + frontier_size)) * 0.35)
+            survival = (1.0 - step_hazard) ** depth
+            halt_prob = round(1.0 - survival, 4)
+        ponder_cost = round(self.ponder_beta * depth, 4)
+        return halt_prob, ponder_cost
 
     def _resolve_variants(self, node: str) -> set[str]:
         variants = {
@@ -87,7 +111,7 @@ class DualSpeedInfillingEngine:
 
     def _path_confidence(self, path: list[str], predicate: str | None) -> float:
         confidence = 1.0
-        for subject, target in zip(path, path[1:]):
+        for subject, target in pairwise(path):
             premises = [
                 r
                 for sid in self._resolve_variants(subject)
@@ -112,7 +136,7 @@ class DualSpeedInfillingEngine:
         if self._opposed(path[0], predicate, path[-1]):
             return False
         return self.verifier.verify_proof_chain(
-            [(a, predicate, b) for a, b in zip(path, path[1:])]
+            [(a, predicate, b) for a, b in pairwise(path)]
         ).passed
 
     def query(
@@ -229,27 +253,43 @@ class DualSpeedInfillingEngine:
                         break
                 bwd_frontier = next_bwd
 
-            # Adaptive Halting Check
+            # Adaptive Halting Check (PonderNet cumulative halting probability & ponder cost)
+            frontier_sz = len(fwd_frontier) + len(bwd_frontier)
+            halt_prob, ponder_cost = self._compute_ponder_metrics(
+                depth=depth, solved=collision_node is not None, frontier_size=frontier_sz
+            )
             if collision_node:
                 trace_log.append(
-                    f'<ponder depth="{depth}" fwd_nodes="{fwd_count_before}" bwd_nodes="{bwd_count_before}" collision="{collision_node}" halt="true" reason="collision_detected" />'
+                    f'<ponder depth="{depth}" fwd_nodes="{fwd_count_before}" bwd_nodes="{bwd_count_before}" collision="{collision_node}" halt="true" halt_prob="{halt_prob}" ponder_cost="{ponder_cost}" reason="collision_detected" />'
                 )
                 break
 
             if not fwd_frontier and not bwd_frontier:
                 halt_reason = "frontier_exhausted"
                 trace_log.append(
-                    f'<ponder depth="{depth}" fwd_nodes="0" bwd_nodes="0" halt="true" reason="frontier_exhausted" />'
+                    f'<ponder depth="{depth}" fwd_nodes="0" bwd_nodes="0" halt="true" halt_prob="{halt_prob}" ponder_cost="{ponder_cost}" reason="frontier_exhausted" />'
+                )
+                break
+
+            if self.halt_freeze and halt_prob >= self.halt_threshold:
+                halt_reason = "ponder_threshold_reached"
+                trace_log.append(
+                    f'<ponder depth="{depth}" fwd_nodes="{len(fwd_frontier)}" bwd_nodes="{len(bwd_frontier)}" halt="true" halt_prob="{halt_prob}" ponder_cost="{ponder_cost}" reason="ponder_threshold_reached" />'
                 )
                 break
 
             trace_log.append(
-                f'<ponder depth="{depth}" fwd_nodes="{len(fwd_frontier)}" bwd_nodes="{len(bwd_frontier)}" halt="false" status="expanding" />'
+                f'<ponder depth="{depth}" fwd_nodes="{len(fwd_frontier)}" bwd_nodes="{len(bwd_frontier)}" halt="false" halt_prob="{halt_prob}" ponder_cost="{ponder_cost}" status="expanding" />'
             )
 
         if not collision_node and depth >= max_depth and halt_reason == "unresolved":
             halt_reason = "max_depth_exceeded"
 
+        final_halt_prob, final_ponder_cost = self._compute_ponder_metrics(
+            depth=max(1, depth),
+            solved=collision_node is not None,
+            frontier_size=len(fwd_frontier) + len(bwd_frontier),
+        )
         lat = (time.perf_counter() - t0) * 1000.0
 
         if collision_node:
@@ -286,6 +326,8 @@ class DualSpeedInfillingEngine:
                     latency_ms=lat,
                     ponder_depth=depth,
                     halt_reason="proof_closed_verified",
+                    halt_probability=final_halt_prob,
+                    ponder_cost=final_ponder_cost,
                 )
             else:
                 if self._opposed(subj_clean, pred_clean, target_clean):
@@ -308,6 +350,8 @@ class DualSpeedInfillingEngine:
                     query_type="PATH",
                     ponder_depth=depth,
                     halt_reason="invariant_violation_refuted",
+                    halt_probability=final_halt_prob,
+                    ponder_cost=final_ponder_cost,
                 )
 
         trace_log.append(
@@ -323,6 +367,8 @@ class DualSpeedInfillingEngine:
             query_type="PATH",
             ponder_depth=depth,
             halt_reason=halt_reason,
+            halt_probability=final_halt_prob,
+            ponder_cost=final_ponder_cost,
         )
 
     def infill_object(
@@ -559,15 +605,15 @@ class DualSpeedInfillingEngine:
         verified = []
         for result in collision_results:
             chain = []
-            for subject, target in zip(result.path, result.path[1:]):
+            for step_subj, step_obj in pairwise(result.path):
                 candidates = [
                     r
-                    for sid in self._resolve_variants(subject)
+                    for sid in self._resolve_variants(step_subj)
                     for r in self.memory.get_relations(subject_id=sid)
-                    if self._to_name(r.object_id) == target
+                    if self._to_name(r.object_id) == step_obj
                     and r.weight_positive > r.weight_negative
                     and self.verifier.verify_proof_chain(
-                        [(subject, r.predicate, target)]
+                        [(step_subj, r.predicate, step_obj)]
                     ).passed
                 ]
                 if not candidates:

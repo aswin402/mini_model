@@ -793,6 +793,48 @@ def cmd_tool(args: argparse.Namespace) -> None:
             print(f"   ↳ Error:   {result.error}\n")
 
 
+def cmd_status(args: argparse.Namespace) -> None:
+    store, kernel = get_kernel(Path(args.db), seed_ontology=False)
+    try:
+        snap = kernel.get_telemetry_snapshot()
+        if getattr(args, "json", False):
+            print(json.dumps(snap, indent=2))
+            return
+        mem = snap["memory"]
+        paged = snap["paged_store"]
+        plast = snap["plasticity"]
+        brakes = snap["growth_brakes"]
+        canary = snap["canary"]
+        print(f"\n📊 [LITTLE Cognitive Telemetry Dashboard: {Path(args.db)}]")
+        print("-" * 68)
+        print(
+            f"Memory Store:      {mem['total_concepts']} concepts | "
+            f"{mem['total_relations']} relations | epoch={mem['concept_mutation_epoch']}"
+        )
+        print(
+            f"Paged Store:       {paged['active_count']} resident | {paged['lru_count']} LRU | "
+            f"reuses={paged['slot_reuses']} | dirty_inv={paged['dirty_invalidations']} | "
+            f"hit_rate={paged['hit_rate'] * 100:.1f}%"
+        )
+        print(
+            f"Plasticity:        lr={plast['effective_lr']:.4f} (base={plast['base_lr']:.4f}) | "
+            f"e_slow={plast['slow_effect_size']:+.3f} | e_fast={plast['fast_effect_size']:+.3f} | "
+            f"trunk={plast['trunk_damping']}x"
+        )
+        print(
+            f"Growth Brakes:     {'OPEN (Allowed)' if brakes['allowed'] else 'ENGAGED (Blocked)'} "
+            f"[room={brakes['room']}, used={brakes['used']}, earning={brakes['earning']}, "
+            f"fits={brakes['fits']}, honest={brakes['honest']}]"
+        )
+        print(
+            f"Held-Out Canary:   {'PASS' if canary['passed'] else 'FAIL'} "
+            f"({canary['checks_run']} checks, {canary['violations']} violations)\n"
+        )
+    finally:
+        kernel.close()
+        store.close()
+
+
 def build_parser() -> argparse.ArgumentParser:
     db_parent = argparse.ArgumentParser(add_help=False)
     db_parent.add_argument(
@@ -1009,6 +1051,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_tool_exec.add_argument("name", help="Name of the tool to execute")
     p_tool_exec.add_argument("--args", default="{}", help="JSON dictionary of tool arguments")
     p_tool_exec.set_defaults(func=cmd_tool)
+
+    # status
+    p_status = subparsers.add_parser(
+        "status",
+        parents=[db_parent],
+        help="Display cognitive telemetry dashboard (paging, plasticity, growth brakes, canary)",
+    )
+    p_status.add_argument(
+        "--json",
+        action="store_true",
+        help="Output telemetry snapshot as JSON",
+    )
+    p_status.set_defaults(func=cmd_status)
 
     return parser
 

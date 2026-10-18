@@ -13,6 +13,7 @@ Features:
 
 from __future__ import annotations
 
+import contextlib
 import re
 import time
 from collections.abc import Iterable
@@ -20,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from little.active.plasticity import PlasticityController, PlasticityTelemetry
 from little.core.contracts import SourceType
 
 if TYPE_CHECKING:
@@ -39,6 +41,7 @@ class ChunkIngestResult:
     is_learned: bool
     latency_ms: float
     message: str
+    plasticity_telemetry: PlasticityTelemetry | None = None
 
 
 @dataclass
@@ -52,6 +55,7 @@ class StreamLearningSummary:
     total_relations_created: list[str] = field(default_factory=list)
     total_contradictions_blocked: int = 0
     total_latency_ms: float = 0.0
+    plasticity_telemetry: PlasticityTelemetry | None = None
 
     @property
     def concepts_count(self) -> int:
@@ -69,9 +73,15 @@ class ContinuousStreamLearner:
         self,
         kernel: CognitiveKernel,
         paged_store: PagedConceptStore | None = None,
+        plasticity: PlasticityController | None = None,
     ) -> None:
         self.kernel = kernel
         self.paged_store = paged_store or getattr(kernel, "paged_store", None)
+        self.plasticity = (
+            plasticity
+            or getattr(kernel, "plasticity", None)
+            or PlasticityController()
+        )
 
     @staticmethod
     def _split_into_sentences(text: str) -> list[str]:
@@ -98,6 +108,7 @@ class ContinuousStreamLearner:
                 is_learned=False,
                 latency_ms=0.0,
                 message="Empty text chunk provided.",
+                plasticity_telemetry=self.plasticity.get_telemetry(),
             )
 
         sentences = self._split_into_sentences(clean)
@@ -128,28 +139,31 @@ class ContinuousStreamLearner:
                     learned_any = True
                     all_concepts_created.extend(learn_res.concepts_created)
                     all_relations_created.extend(learn_res.relations_created)
+                    # Epistemic prediction error drops as claims are cleanly integrated
+                    avg_prob = sum(c.probability for c in frame.claims) / max(
+                        1, len(frame.claims)
+                    )
+                    self.plasticity.observe_error(max(0.05, 1.0 - avg_prob))
 
-                    # Update Paged Store: Invalidate updated concepts and cast activation votes
+                    # Update Paged Store: dirty-only invalidation is handled automatically; cast activation votes
                     if self.paged_store:
-                        for cid in learn_res.concepts_created:
-                            self.paged_store.invalidate(cid)
-                        # Extract tokens to vote
                         tokens = [w for w in re.findall(r"[a-zA-Z0-9_]+", sentence)]
                         self.paged_store.vote_from_tokens(tokens)
 
                     # Synchronize Living Wiki
                     if hasattr(self.kernel, "wiki") and self.kernel.wiki:
                         for cid in learn_res.concepts_created:
-                            try:
+                            with contextlib.suppress(OSError, RuntimeError, ValueError, TypeError):
                                 if hasattr(self.kernel.wiki, "sync_concept"):
                                     self.kernel.wiki.sync_concept(cid)
                                 elif hasattr(self.kernel.wiki, "generate_article_for_concept"):
                                     self.kernel.wiki.generate_article_for_concept(cid)
-                            except Exception:
-                                pass
                 else:
                     if "contradiction" in learn_res.message.lower() or "violation" in learn_res.message.lower():
                         contradictions_blocked += 1
+                        self.plasticity.observe_error(1.0)
+                    else:
+                        self.plasticity.observe_error(0.1)
 
         lat = (time.perf_counter() - t0) * 1000.0
         msg = (
@@ -165,6 +179,7 @@ class ContinuousStreamLearner:
             is_learned=learned_any,
             latency_ms=lat,
             message=msg,
+            plasticity_telemetry=self.plasticity.get_telemetry(),
         )
 
     def ingest_stream(
@@ -187,13 +202,11 @@ class ContinuousStreamLearner:
 
         # Trigger latent induction if new concepts were created
         if summary.concepts_count > 0 and hasattr(self.kernel, "latent_inducer"):
-            try:
+            with contextlib.suppress(OSError, RuntimeError, ValueError, TypeError):
                 if hasattr(self.kernel.latent_inducer, "induce_latent_knots"):
                     self.kernel.latent_inducer.induce_latent_knots()
                 elif hasattr(self.kernel.latent_inducer, "induce_from_memory"):
                     self.kernel.latent_inducer.induce_from_memory()
-            except Exception:
-                pass
 
         summary.total_latency_ms = (time.perf_counter() - t0) * 1000.0
         return summary

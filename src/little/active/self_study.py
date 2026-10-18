@@ -7,9 +7,11 @@ Graph invariants check structural consistency, not external factual truth.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import re
+import sqlite3
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,6 +48,15 @@ class DreamReport:
     sync_errors: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class HeldOutCanaryResult:
+    """Online held-out canary verification result inspired by mini-AGI (heldout.py)."""
+
+    passed: bool
+    checked_count: int
+    regressions: list[str] = field(default_factory=list)
+
+
 @dataclass
 class SleepConsolidationReport:
     """Summary of comprehensive offline sleep and memory consolidation cycle."""
@@ -58,6 +69,8 @@ class SleepConsolidationReport:
     duration_ms: float = 0.0
     summary_message: str = ""
     errors: list[str] = field(default_factory=list)
+    canary_passed: bool = True
+    canary_regressions: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -85,6 +98,8 @@ class AutonomousSelfStudyEngine:
         wiki: Any | None = None,
         crawler: Any | None = None,
         corpus_paths: tuple[Path, ...] | None = None,
+        balance_weight: float = 0.5,
+        share_decay: float = 0.85,
     ) -> None:
         self.memory = memory
         self.registry = registry or SchemaRegistry.default()
@@ -94,6 +109,9 @@ class AutonomousSelfStudyEngine:
         self.crawler = crawler
         self.corpus_paths = corpus_paths
         self.last_gate_verdicts: dict[str, bool] = {}
+        self.balance_weight = float(balance_weight)
+        self.share_decay = float(share_decay)
+        self._recent_study_share: dict[str, float] = {}
 
     def _axis_predicates(self, axis: str) -> set[str]:
         """Resolve radial-axis membership from the versioned relation registry."""
@@ -198,7 +216,7 @@ class AutonomousSelfStudyEngine:
                 )
                 for sid, pred in cur.fetchall():
                     active_preds_by_subj.setdefault(sid, set()).add(pred.lower())
-        except Exception:
+        except (sqlite3.Error, RuntimeError, AttributeError):
             active_preds_by_subj = {}
 
         axis_pred_sets = {
@@ -587,7 +605,7 @@ class AutonomousSelfStudyEngine:
             for name in (subj_c.name, obj_c.name):
                 try:
                     self.wiki.sync_concept(name)
-                except Exception as exc:
+                except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
                     sync_errors.append(f"Wiki sync failed for {name}: {type(exc).__name__}: {exc}")
 
         return CuriosityStepResult(
@@ -601,6 +619,80 @@ class AutonomousSelfStudyEngine:
             sync_errors=sync_errors,
         )
 
+    def _record_study_visit(self, concept_name: str) -> None:
+        """Update exponentially decayed running study share so a single hub cannot monopolize curiosity."""
+        clean = concept_name.strip().lower()
+        decay = self.share_decay
+        for k in list(self._recent_study_share.keys()):
+            self._recent_study_share[k] *= decay
+            if self._recent_study_share[k] < 1e-4:
+                del self._recent_study_share[k]
+        self._recent_study_share[clean] = (
+            self._recent_study_share.get(clean, 0.0) + (1.0 - decay)
+        )
+
+    def effective_study_priority(
+        self, concept_name: str, base_entropy: float | None = None
+    ) -> float:
+        """Compute load-balanced curiosity priority: H_eff(C_i) = H(C_i) - balance_weight * p_bar_i."""
+        clean = concept_name.strip().lower()
+        h = (
+            self.compute_knot_entropy(clean)
+            if base_entropy is None
+            else float(base_entropy)
+        )
+        share = self._recent_study_share.get(clean, 0.0)
+        return round(h - (self.balance_weight * share), 6)
+
+    def evaluate_heldout_canary(
+        self,
+        canary_claims: list[tuple[str, str, str, bool]] | None = None,
+    ) -> HeldOutCanaryResult:
+        """Verify core ontological invariants and optional held-out canary claims."""
+        regressions: list[str] = []
+        checked = 0
+
+        # 1. Check all positive taxonomic edges for cycle-freedom and disjointness consistency
+        concepts_by_id = {c.id: c.name for c in self.memory.list_concepts()}
+        for pred in self._hierarchy_predicates():
+            for rel in self.memory.get_relations(predicate=pred):
+                if rel.weight_positive <= rel.weight_negative:
+                    continue
+                checked += 1
+                s_name = concepts_by_id.get(rel.subject_id, rel.subject_id)
+                o_name = concepts_by_id.get(rel.object_id, rel.object_id)
+                # Cycle check: object should not have subject as an ancestor
+                if rel.subject_id in self._ancestor_ids(rel.object_id):
+                    regressions.append(
+                        f"Cycle detected on {pred}: {s_name} <-> {o_name}"
+                    )
+                # Disjointness check: subject and object must not be mutually exclusive
+                if self._are_concepts_disjoint(rel.subject_id, rel.object_id):
+                    regressions.append(
+                        f"Disjointness conflict on {pred}: {s_name} vs {o_name}"
+                    )
+
+        # 2. Check explicit held-out canary probes if supplied
+        for subj, pred, obj, expected_pos in canary_claims or ():
+            checked += 1
+            rel = self.memory.find_relation_by_names(subj, pred, obj)
+            if expected_pos:
+                if rel is None or rel.weight_positive <= rel.weight_negative:
+                    regressions.append(
+                        f"Missing expected positive canary claim: ({subj}, {pred}, {obj})"
+                    )
+            else:
+                if rel is not None and rel.weight_positive > rel.weight_negative:
+                    regressions.append(
+                        f"Unexpected positive canary claim: ({subj}, {pred}, {obj})"
+                    )
+
+        return HeldOutCanaryResult(
+            passed=len(regressions) == 0,
+            checked_count=checked,
+            regressions=regressions,
+        )
+
     def study_cycle(self, max_steps: int | None = None) -> list[CuriosityStepResult]:
         """Execute autonomous self-study loop across multiple concept knots."""
         results: list[CuriosityStepResult] = []
@@ -609,9 +701,21 @@ class AutonomousSelfStudyEngine:
 
         entropies = self.compute_all_knot_entropies()
         exp_names = self._get_experienced_concept_names()
-        exp_anchored = [c for c, h in entropies.items() if 0.0 < h < 1.0 and c.strip().lower() in exp_names]
-        other_anchored = [c for c, h in entropies.items() if 0.0 < h < 1.0 and c.strip().lower() not in exp_names]
-        unanchored = [c for c, h in entropies.items() if h >= 1.0]
+        exp_anchored = sorted(
+            [c for c, h in entropies.items() if 0.0 < h < 1.0 and c.strip().lower() in exp_names],
+            key=lambda c: self.effective_study_priority(c, entropies[c]),
+            reverse=True,
+        )
+        other_anchored = sorted(
+            [c for c, h in entropies.items() if 0.0 < h < 1.0 and c.strip().lower() not in exp_names],
+            key=lambda c: self.effective_study_priority(c, entropies[c]),
+            reverse=True,
+        )
+        unanchored = sorted(
+            [c for c, h in entropies.items() if h >= 1.0],
+            key=lambda c: self.effective_study_priority(c, entropies[c]),
+            reverse=True,
+        )
         candidate_queue = exp_anchored + other_anchored + unanchored
 
         cand_idx = 0
@@ -621,6 +725,7 @@ class AutonomousSelfStudyEngine:
             if target in attempted_concepts:
                 continue
             attempted_concepts.add(target)
+            self._record_study_visit(target)
             step_res = self.study_step(target_concept=target)
             if step_res and step_res.status != "NO_ANALOGY":
                 results.append(step_res)
@@ -633,10 +738,11 @@ class AutonomousSelfStudyEngine:
                         break
                     if s not in attempted_concepts:
                         attempted_concepts.add(s)
+                        self._record_study_visit(s)
                         step_res = self.study_step(target_concept=s)
                         if step_res:
                             results.append(step_res)
-            except Exception:
+            except (OSError, RuntimeError, ValueError, sqlite3.Error):
                 pass
 
         return results
@@ -644,28 +750,32 @@ class AutonomousSelfStudyEngine:
     def get_epistemic_gaps(self, top_n: int = 5) -> list[dict[str, Any]]:
         """Identify concepts with highest missing radial spoke entropy and wiki stubs."""
         entropies = self.compute_all_knot_entropies()
-        candidate_items = [(c, h) for c, h in entropies.items() if h > 0.0][: top_n * 2]
+        candidate_items = sorted(
+            [(c, h) for c, h in entropies.items() if h > 0.0],
+            key=lambda kv: self.effective_study_priority(kv[0], kv[1]),
+            reverse=True,
+        )[: top_n * 2]
         sorted_gaps = [
             {
                 "concept": c,
                 "entropy": round(h, 3),
+                "effective_priority": round(self.effective_study_priority(c, h), 3),
                 "missing_axes": self.identify_missing_axes(c),
             }
             for c, h in candidate_items
         ]
         if self.wiki is not None:
-            try:
+            with contextlib.suppress(OSError, RuntimeError, ValueError, sqlite3.Error):
                 stubs = self.wiki.get_unexplored_frontier()
                 for s in stubs:
                     if not any(g["concept"] == s for g in sorted_gaps):
                         sorted_gaps.append({
                             "concept": s,
                             "entropy": 1.0,
+                            "effective_priority": round(self.effective_study_priority(s, 1.0), 3),
                             "missing_axes": list(self.policy.axis_names),
                             "is_stub": True,
                         })
-            except Exception:
-                pass
 
         return sorted_gaps[:top_n]
 
@@ -723,6 +833,7 @@ class AutonomousSelfStudyEngine:
         3. Cobweb category cluster consolidation.
         4. Episodic working memory compaction in Headroom.
         5. Paged Concept Memory cache tier refresh.
+        6. Held-out canary invariant verification.
         """
         t0 = time.perf_counter()
 
@@ -731,29 +842,31 @@ class AutonomousSelfStudyEngine:
 
         # Phase 2: Latent Invariant Mining (I_mutex)
         mined_invariants: list[dict[str, str]] = []
-        try:
+        with contextlib.suppress(sqlite3.Error, RuntimeError, ValueError, TypeError):
             mined_invariants = self._mine_latent_invariants()
-        except Exception:
-            pass
 
         # Phase 3: Cobweb Cluster Induction
         clusters_count = 0
         inducer = latent_inducer or getattr(self, "latent_inducer", None)
         if inducer is not None:
-            try:
+            with contextlib.suppress(sqlite3.Error, RuntimeError, ValueError, TypeError):
                 if hasattr(inducer, "induce_latent_knots"):
                     rep = inducer.induce_latent_knots()
-                    clusters_count = getattr(rep, "clusters_created", 0)
+                    clusters_count = int(
+                        getattr(
+                            rep,
+                            "latent_knots_induced",
+                            getattr(rep, "clusters_created", 0),
+                        )
+                    )
                 elif hasattr(inducer, "induce_from_memory"):
                     res = inducer.induce_from_memory()
                     clusters_count = len(res) if isinstance(res, list) else 1
-            except Exception:
-                pass
 
         # Phase 4: Episodic Compaction in Headroom
         compressed_count = 0
         if headroom is not None and hasattr(headroom, "_turns"):
-            try:
+            with contextlib.suppress(RuntimeError, ValueError, TypeError, AttributeError):
                 for turn in headroom._turns[:-1]:
                     if not turn.is_compressed:
                         if hasattr(headroom, "_compress_turn"):
@@ -766,17 +879,16 @@ class AutonomousSelfStudyEngine:
                                 else turn.raw_text
                             )
                         compressed_count += 1
-            except Exception:
-                pass
 
         # Phase 5: Paged Store Refresh
         cache_refreshed = False
         if paged_store is not None:
-            try:
+            with contextlib.suppress(RuntimeError, ValueError, TypeError, AttributeError):
                 paged_store.clear()
                 cache_refreshed = True
-            except Exception:
-                pass
+
+        # Phase 6: Held-out Canary Verification
+        canary = self.evaluate_heldout_canary()
 
         lat_ms = (time.perf_counter() - t0) * 1000.0
         msg = (
@@ -793,6 +905,8 @@ class AutonomousSelfStudyEngine:
             cache_refreshed=cache_refreshed,
             duration_ms=lat_ms,
             summary_message=msg,
+            canary_passed=canary.passed,
+            canary_regressions=canary.regressions,
         )
 
     def _mine_latent_invariants(self) -> list[dict[str, str]]:

@@ -28,6 +28,22 @@ from little.knowledge.living_wiki import LivingWiki
 from little.memory.store import MemoryStore
 
 
+@dataclass(frozen=True)
+class GrowthBrakeReport:
+    """5-Brake speculative growth gate inspired by mini-AGI (room & used & earning & fits & honest)."""
+
+    room: bool
+    used: bool
+    earning: bool
+    fits: bool
+    honest: bool
+    blocked_reasons: list[str] = field(default_factory=list)
+
+    @property
+    def allowed(self) -> bool:
+        return self.room and self.used and self.earning and self.fits and self.honest
+
+
 @dataclass
 class LatentInductionResult:
     """Provenance record of an autonomously induced latent concept knot."""
@@ -54,6 +70,7 @@ class LatentClusteringReport:
     duration_ms: float
     inductions: list[LatentInductionResult] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    pruned_latent_knots: list[str] = field(default_factory=list)
 
 
 class LatentKnotInducer:
@@ -64,11 +81,181 @@ class LatentKnotInducer:
         memory: MemoryStore,
         wiki: LivingWiki | None = None,
         policy: SpiderWebGrowthPolicy | None = None,
+        max_latent_knots: int = 64,
+        survival_window: int = 50,
     ) -> None:
         self.memory = memory
         self.wiki = wiki or LivingWiki(memory=memory)
         self.policy = policy or SpiderWebGrowthPolicy.default()
         self.verifier = DeepSeekInvariantVerifier(memory=memory)
+        self.max_latent_knots = max_latent_knots
+        self.survival_window = survival_window
+
+    def _list_latent_concepts(self) -> list[Any]:
+        return [
+            c
+            for c in self.memory.list_concepts()
+            if c.name.startswith("latent_") or c.attributes.get("is_latent")
+        ]
+
+    def evaluate_growth_brakes(
+        self,
+        constituent_concepts: list[str] | None = None,
+        shared_features: dict[str, list[str]] | None = None,
+        category_utility: float | None = None,
+        latent_name: str | None = None,
+    ) -> GrowthBrakeReport:
+        """Evaluate the 5 simultaneous growth brakes: room, used, earning, fits, honest."""
+        reasons: list[str] = []
+        latent_concepts = self._list_latent_concepts()
+        current_rev = getattr(self.memory, "semantic_revision", self.memory.revision)
+
+        # Brake 1: ROOM (latent pool capacity not exceeded)
+        room = len(latent_concepts) < self.max_latent_knots
+        if not room:
+            reasons.append(
+                f"room brake: latent knot count ({len(latent_concepts)}) >= max_latent_knots ({self.max_latent_knots})"
+            )
+
+        # Brake 2: USED (existing latent knots must not all be stale/unaddressed)
+        used = True
+        if len(latent_concepts) >= 4:
+            active_latents = 0
+            for lc in latent_concepts:
+                last_rev = int(lc.attributes.get("last_admitted_revision", current_rev))
+                if (current_rev - last_rev) <= self.survival_window:
+                    active_latents += 1
+            if active_latents / len(latent_concepts) < 0.25:
+                used = False
+                reasons.append(
+                    f"used brake: only {active_latents}/{len(latent_concepts)} latent knots addressed within survival window"
+                )
+
+        # Brake 3: EARNING (cluster category utility meets minimum positive gain)
+        earning = True
+        if category_utility is not None:
+            min_cu = 0.01
+            if category_utility < min_cu:
+                earning = False
+                reasons.append(
+                    f"earning brake: category_utility ({category_utility:.4f}) < threshold ({min_cu:.4f})"
+                )
+
+        # Brake 4: FITS (DAG acyclicity and disjointness invariant gates pass)
+        fits = True
+        if constituent_concepts and latent_name:
+            for c_name in constituent_concepts:
+                gate_res = self.verifier.verify_relation(
+                    subject=c_name,
+                    predicate="is_a",
+                    obj=latent_name,
+                )
+                if not gate_res.passed:
+                    fits = False
+                    reasons.append(
+                        f"fits brake: Gate violation for ({c_name}, is_a, {latent_name}): {gate_res.error_message}"
+                    )
+                    break
+
+        # Brake 5: HONEST (persisted observations genuinely support shared features)
+        honest = True
+        if constituent_concepts and shared_features:
+            observed = {
+                instance.concept_id: instance.features
+                for instance in self.extract_cobweb_instances(constituent_concepts)
+            }
+            if any(
+                name not in observed
+                or any(
+                    not set(values).issubset(observed[name].get(feature, set()))
+                    for feature, values in shared_features.items()
+                )
+                for name in constituent_concepts
+            ):
+                honest = False
+                reasons.append(
+                    "honest brake: Supplied cluster features lack supported persisted observations"
+                )
+
+        return GrowthBrakeReport(
+            room=room,
+            used=used,
+            earning=earning,
+            fits=fits,
+            honest=honest,
+            blocked_reasons=reasons,
+        )
+
+    def touch_latent_concept(
+        self, concept_name: str, revision: int | None = None
+    ) -> bool:
+        """Record that a latent concept was addressed in active working memory or inference."""
+        c = self.memory.get_concept(concept_name.lower().strip())
+        if not c or not (c.name.startswith("latent_") or c.attributes.get("is_latent")):
+            return False
+        rev = (
+            revision
+            if revision is not None
+            else getattr(self.memory, "semantic_revision", self.memory.revision)
+        )
+        attrs = dict(c.attributes)
+        attrs["last_admitted_revision"] = int(rev)
+        attrs["addressed_count"] = int(attrs.get("addressed_count", 0)) + 1
+        self.memory.update_concept_attributes(c.id, attrs)
+        return True
+
+    def prune_unaddressed_latent_knots(
+        self,
+        current_revision: int | None = None,
+        survival_window: int | None = None,
+        active_concepts: set[str] | list[str] | None = None,
+    ) -> list[str]:
+        """Prune speculative latent knots that remain unaddressed past their survival window."""
+        rev = (
+            current_revision
+            if current_revision is not None
+            else getattr(self.memory, "semantic_revision", self.memory.revision)
+        )
+        window = survival_window if survival_window is not None else self.survival_window
+        active_norm = {
+            name.strip().lower().replace(" ", "_") for name in (active_concepts or ())
+        }
+
+        pruned_names: list[str] = []
+        pruned_ids: list[str] = []
+
+        for lc in self._list_latent_concepts():
+            lc_norm = lc.name.strip().lower().replace(" ", "_")
+            if lc_norm in active_norm or lc.name.upper() in active_norm:
+                self.touch_latent_concept(lc.name, revision=rev)
+                continue
+
+            last_rev = int(
+                lc.attributes.get(
+                    "last_admitted_revision",
+                    lc.attributes.get("born_revision", rev),
+                )
+            )
+            if (rev - last_rev) > window:
+                pruned_names.append(lc.name)
+                pruned_ids.append(lc.id)
+
+        if pruned_ids:
+            placeholders = ",".join("?" for _ in pruned_ids)
+            with self.memory.transaction() as conn:
+                conn.execute(
+                    f"DELETE FROM relations WHERE subject_id IN ({placeholders}) OR object_id IN ({placeholders});",
+                    [*pruned_ids, *pruned_ids],
+                )
+                conn.execute(
+                    f"DELETE FROM concepts WHERE id IN ({placeholders});",
+                    pruned_ids,
+                )
+            self.memory._cached_concepts = None
+            if hasattr(self.memory, "_record_dirty_concepts"):
+                self.memory._record_dirty_concepts(*pruned_names, *pruned_ids)
+
+        return sorted(pruned_names)
 
     def extract_cobweb_instances(self, concept_names: list[str] | None = None) -> list[CobwebInstance]:
         """Hydrate concepts from SQLite MemoryStore into structured CobwebInstances."""
@@ -77,7 +264,11 @@ class LatentKnotInducer:
             target_set = {n.lower().strip() for n in concept_names}
             selected = [c for c in all_concepts if c.name.lower() in target_set]
         else:
-            selected = all_concepts
+            selected = [
+                c
+                for c in all_concepts
+                if not (c.name.startswith("latent_") or c.attributes.get("is_latent"))
+            ]
 
         instances: list[CobwebInstance] = []
 
@@ -157,8 +348,10 @@ class LatentKnotInducer:
         instances: list[CobwebInstance] | None = None,
         min_cluster_size: int = 2,
     ) -> LatentClusteringReport:
-        """Run Cobweb clustering and induce latent concept knots with DeepSeek verification."""
+        """Run Cobweb clustering and induce latent concept knots with 5-Brake and DeepSeek verification."""
         t0 = time.perf_counter()
+
+        pruned = self.prune_unaddressed_latent_knots()
 
         if instances is None:
             instances = self.extract_cobweb_instances()
@@ -178,7 +371,7 @@ class LatentKnotInducer:
             ),
             reverse=True,
         )
-        filtered_clusters: list[Tuple[CobwebNode, str, dict[str, list[str]]]] = []
+        filtered_clusters: list[tuple[CobwebNode, str, dict[str, list[str]]]] = []
         seen_cluster_coverages: dict[str, list[set[str]]] = {}
 
         for c in sorted_clusters:
@@ -207,6 +400,7 @@ class LatentKnotInducer:
             latent_knots_induced=0,
             latent_knots_rejected=0,
             duration_ms=0.0,
+            pruned_latent_knots=pruned,
         )
 
         seen_constituent_signatures: set[str] = set()
@@ -220,24 +414,14 @@ class LatentKnotInducer:
 
             cu = cluster.parent.category_utility if cluster.parent is not None else cluster.category_utility
 
-            # Invariant Verification Gate:
-            # 1. Check if latent concept creates DAG cycles or mutex contradictions
-            # Proposed relation: constituent is_a latent_name
-            all_valid = True
-            rejection_reason = None
-
-            for c_name in constituents:
-                gate_res = self.verifier.verify_relation(
-                    subject=c_name,
-                    predicate="is_a",
-                    obj=latent_name,
-                )
-                if not gate_res.passed:
-                    all_valid = False
-                    rejection_reason = f"Gate violation for ({c_name}, is_a, {latent_name}): {gate_res.error_message}"
-                    break
-
-            if not all_valid:
+            # Evaluate 5-Brake Speculative Growth Gate (room & used & earning & fits & honest)
+            brake_report = self.evaluate_growth_brakes(
+                constituent_concepts=constituents,
+                shared_features=shared,
+                category_utility=cu if cu > 0.0 else None,
+                latent_name=latent_name,
+            )
+            if not brake_report.allowed:
                 report.latent_knots_rejected += 1
                 report.inductions.append(
                     LatentInductionResult(
@@ -246,20 +430,11 @@ class LatentKnotInducer:
                         shared_features=shared,
                         category_utility=cu,
                         verification_passed=False,
-                        rejection_reason=rejection_reason,
+                        rejection_reason="; ".join(brake_report.blocked_reasons),
                     )
                 )
                 continue
 
-            # This is a defined grouping over observed graph features, not discovery
-            # of a new externally true biological superclass.
-            observed = {instance.concept_id: instance.features for instance in self.extract_cobweb_instances(constituents)}
-            if any(name not in observed or any(not set(values).issubset(observed[name].get(feature, set()))
-                                              for feature, values in shared.items()) for name in constituents):
-                report.latent_knots_rejected += 1
-                report.inductions.append(LatentInductionResult(latent_name, constituents, shared, cu, False,
-                    rejection_reason="Supplied cluster features lack supported persisted observations"))
-                continue
             signature = json.dumps([constituents, shared], sort_keys=True)
             digest = hashlib.sha256(signature.encode()).hexdigest()[:24]
             existing = self.memory.get_concept(latent_name)
@@ -270,6 +445,7 @@ class LatentKnotInducer:
                                   for relation in self.memory.get_relations(subject_id=self.memory.get_concept(name).id)
                                   if relation.weight_positive > relation.weight_negative})
             definition = {"category": latent_name, "members": constituents, "shared_features": shared}
+            current_rev = getattr(self.memory, "semantic_revision", self.memory.revision)
             try:
                 with self.memory.transaction():
                     if not self.memory._conn.execute("SELECT 1 FROM proof_traces WHERE proof_id=?", (proof_id,)).fetchone():
@@ -278,9 +454,18 @@ class LatentKnotInducer:
                                          "external_truth_established": False}], status=VerificationStatus.PASSED))
                     latent = self.memory.get_or_create_concept(latent_name)
                     attributes = dict(latent.attributes)
-                    attributes.update({"is_latent": True, "category_utility": cu,
-                        "constituent_count": len(constituents), "definition_signature": digest,
-                        "definition": definition, "definition_proof_id": proof_id})
+                    born_rev = int(attributes.get("born_revision", current_rev))
+                    attributes.update({
+                        "is_latent": True,
+                        "category_utility": cu,
+                        "constituent_count": len(constituents),
+                        "definition_signature": digest,
+                        "definition": definition,
+                        "definition_proof_id": proof_id,
+                        "born_revision": born_rev,
+                        "last_admitted_revision": int(current_rev),
+                        "survival_window": int(self.survival_window),
+                    })
                     self.memory.update_concept_attributes(latent.id, attributes)
                     claims = [CandidateClaim(name, "is_a", latent_name) for name in constituents]
                     claims.extend(CandidateClaim(latent_name, "is_a", parent)
@@ -298,7 +483,7 @@ class LatentKnotInducer:
                         self.memory.ledger.commit_relation(evidence, VerificationResult(VerificationStatus.PASSED,
                             checks={"defined_cluster_membership": True},
                             reasons=["Membership follows the recorded feature grouping definition; external truth not established"]))
-            except Exception as exc:
+            except (OSError, RuntimeError, ValueError, TypeError) as exc:
                 report.latent_knots_rejected += 1
                 report.errors.append(f"Cluster persistence failed: {type(exc).__name__}: {exc}")
                 report.inductions.append(LatentInductionResult(latent_name, constituents, shared, cu, False,
@@ -309,7 +494,7 @@ class LatentKnotInducer:
             try:
                 exported_path = self.wiki.okf_engine.export_concept(latent_name, output_dir=self.wiki.vault_dir)
                 okf_path = str(exported_path)
-            except Exception as exc:
+            except (OSError, RuntimeError, ValueError, TypeError) as exc:
                 sync_errors.append(f"Wiki export failed for {latent_name}: {type(exc).__name__}: {exc}")
                 report.errors.extend(sync_errors)
 
@@ -331,7 +516,7 @@ class LatentKnotInducer:
         if report.latent_knots_induced > 0:
             try:
                 self.wiki.build_graph()
-            except Exception as exc:
+            except (OSError, RuntimeError, ValueError, TypeError) as exc:
                 report.errors.append(f"Wiki graph refresh failed: {type(exc).__name__}: {exc}")
 
         report.duration_ms = round((time.perf_counter() - t0) * 1000.0, 2)
@@ -355,6 +540,7 @@ class LatentKnotInducer:
             return None
 
         parent = latent_parents[0]
+        self.touch_latent_concept(parent.name)
 
         # Find peer concepts in this latent cluster
         peers = []

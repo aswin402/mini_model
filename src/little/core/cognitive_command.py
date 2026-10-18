@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from little.core.kernel import CognitiveKernel
@@ -188,6 +189,17 @@ class CognitiveCommandRegistry:
                     ),
                 ),
                 handler=cls._handle_sensory_observation,
+            ),
+            CognitiveCommand(
+                command_id="cognitive_status",
+                description="Inspect live cognitive telemetry (paging, plasticity, growth brakes, canary)",
+                patterns=(
+                    re.compile(
+                        r"^(?:show\s+)?(?:cognitive\s+status|telemetry\s+status|plasticity\s+status|growth\s+brakes)\??$",
+                        re.IGNORECASE,
+                    ),
+                ),
+                handler=cls._handle_cognitive_status,
             ),
         ]
 
@@ -385,4 +397,26 @@ class CognitiveCommandRegistry:
             return "Could not parse structured sensory directive format."
         res = kernel.sensory_engine.ground_observation(obs)
         return kernel.dialogue_surface.verbalize_sensory_grounding(res)
+
+    @staticmethod
+    def _handle_cognitive_status(
+        kernel: CognitiveKernel, text: str, match: re.Match[str]
+    ) -> str:
+        snap = kernel.get_telemetry_snapshot()
+        mem = snap["memory"]
+        paged = snap["paged_store"]
+        plast = snap["plasticity"]
+        brakes = snap["growth_brakes"]
+        canary = snap["canary"]
+        return (
+            f"Cognitive Telemetry: {mem['total_concepts']} concepts, {mem['total_relations']} relations "
+            f"(epoch {mem['concept_mutation_epoch']}) | "
+            f"Paged Store: {paged['active_count']} resident, {paged['slot_reuses']} slot reuses, "
+            f"{paged['dirty_invalidations']} dirty invalidations | "
+            f"Plasticity: lr={plast['effective_lr']:.4f} (e_slow={plast['slow_effect_size']:+.2f}, "
+            f"shifts={plast['regime_shifts']}, spikes_held={plast['spikes_held_back']}) | "
+            f"Growth Brakes: {'OPEN' if brakes['allowed'] else 'ENGAGED'} | "
+            f"Canary: {'PASS' if canary['passed'] else 'FAIL'} ({canary['checks_run']} checks)."
+        )
+
 

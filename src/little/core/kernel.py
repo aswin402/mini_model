@@ -19,6 +19,7 @@ from little.actions import (
 )
 from little.active.crawler import KnowledgeCrawler
 from little.active.latent_knot_inducer import LatentKnotInducer
+from little.active.plasticity import PlasticityController
 from little.active.self_study import (
     AutonomousSelfStudyEngine,
     SleepConsolidationReport,
@@ -138,9 +139,11 @@ class CognitiveKernel:
             memory=self.memory,
             policy=(self.runtime_policy.memory if explicit_runtime_policy and self.runtime_policy.memory else self.memory.memory_policy),
         )
+        self.plasticity = PlasticityController()
         self.stream_learner = ContinuousStreamLearner(
             kernel=self,
             paged_store=self.paged_store,
+            plasticity=self.plasticity,
         )
         self.agentic_planner = AgenticPlanner(
             action_router=self.action_router,
@@ -596,3 +599,54 @@ class CognitiveKernel:
             ),
             routing_decision=routing,
         )
+
+    def get_telemetry_snapshot(self) -> dict[str, Any]:
+        """Return a structured telemetry snapshot across memory, paging, plasticity, growth brakes, and canary checks."""
+        paged = self.paged_store.get_telemetry()
+        plast = self.plasticity.get_telemetry()
+        brakes = self.latent_inducer.evaluate_growth_brakes()
+        canary = self.self_study.evaluate_heldout_canary()
+        return {
+            "memory": {
+                "total_concepts": len(self.memory.list_concepts()),
+                "total_relations": len(self.memory.get_relations()),
+                "concept_mutation_epoch": self.memory.concept_mutation_epoch,
+            },
+            "paged_store": {
+                "active_count": paged.resident_count,
+                "lru_count": paged.lru_count,
+                "disk_fetches": paged.disk_fetches,
+                "cache_hits": paged.resident_hits + paged.lru_hits,
+                "evictions": paged.evictions,
+                "slot_reuses": paged.slot_reuses,
+                "dirty_invalidations": paged.dirty_invalidations,
+                "hit_rate": round(paged.hit_rate, 4),
+            },
+            "plasticity": {
+                "step": plast.step,
+                "base_lr": self.plasticity.base_lr,
+                "effective_lr": round(self.plasticity.base_lr * plast.scale, 6),
+                "scale": plast.scale,
+                "slow_effect_size": round(plast.slow_effect_size, 4),
+                "fast_effect_size": round(plast.fast_effect_size, 4),
+                "regime_shifts": plast.regime_shifts,
+                "spikes_held_back": plast.spikes_filtered,
+                "trunk_damping": plast.trunk_lr_mult,
+            },
+            "growth_brakes": {
+                "allowed": brakes.allowed,
+                "room": brakes.room,
+                "used": brakes.used,
+                "earning": brakes.earning,
+                "fits": brakes.fits,
+                "honest": brakes.honest,
+                "reasons": list(brakes.blocked_reasons),
+            },
+            "canary": {
+                "passed": canary.passed,
+                "checks_run": canary.checked_count,
+                "violations": len(canary.regressions),
+                "details": list(canary.regressions),
+            },
+        }
+
