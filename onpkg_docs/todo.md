@@ -20,9 +20,10 @@
 
 ## Active & Upcoming Engineering Backlog
 
-- [ ] **Rust Core FFI Zero-Copy Graph Handle (`rust/little_core`):**
-  - Maintain a persistent incremental graph index in Rust across turns to eliminate per-query JSON edge-list serialization in `src/little/rust/engine.py`.
+- [x] **Rust Core FFI Zero-Copy Graph Handle (`rust/little_core`, `src/little/rust/engine.py`, `src/little/inference/invariant_gates.py`):**
+  - Maintain a persistent incremental graph index (`GraphIndexRust` / `RustGraphIndex`) in Rust across turns keyed by `concept_mutation_epoch` and wired into `DeepSeekInvariantVerifier` to eliminate per-query JSON edge-list serialization and N+1 SQLite traversals.
+- [x] **Continual Plasticity & Paging Curriculum Verification (`tests/unit/test_mini_agi_upgrades.py`):**
+  - Multi-phase streaming curriculum test verifying `PlasticityController` regime shifts, `PagedConceptStore` slot reuse counts, and `RustGraphIndex` invariant enforcement.
 - [ ] **Modularization of `LearningEngine` (`src/little/language/parser.py`) & `MemoryStore` (`src/little/memory/store.py`):**
   - Incrementally extract specialized domain collaborators (query planner, ontology seeder, relation repository) while preserving backward-compatible facades.
-- [ ] **Extended Long-Horizon Continual Plasticity Benchmark:**
-  - Add a 1,000-turn streaming curriculum benchmark measuring `PlasticityController` regime shifts, `PagedConceptStore` slot reuse ratios, and 5-brake latent knot survival rates.
+

@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from little.core.contracts import VerificationResult, VerificationStatus
 from little.knowledge.registry import SchemaRegistry
 from little.memory.store import MemoryStore
+from little.rust.engine import RustGraphIndex
 
 
 @dataclass
@@ -53,6 +54,7 @@ class DeepSeekInvariantVerifier:
         self.acyclic_predicates = self.registry.predicates(acyclic=True)
         self.disjoint_predicates = self.registry.predicates(disjoint=True)
         self.taxonomy_predicate = self.registry.primary_predicate("taxonomy")
+        self._rust_graph = RustGraphIndex()
 
     def _clean_id(self, name: str) -> str:
         return name.strip().upper().replace(" ", "_")
@@ -82,37 +84,30 @@ class DeepSeekInvariantVerifier:
         return outgoing
 
     def _check_cycle(self, start_node: str, target_node: str, predicate: str) -> bool:
-        """DFS check if start_node can reach target_node via hierarchical predicates."""
-        target_ids = self._resolve_target_ids(target_node)
+        """Check if start_node can reach target_node via hierarchical predicates using RustGraphIndex."""
         start_clean = self._clean_id(start_node)
-        visited: set[str] = set()
-        stack = [start_clean]
-        while stack:
-            curr = stack.pop()
-            if curr in target_ids:
+        target_clean = self._clean_id(target_node)
+        self._rust_graph.sync_from_memory(self.memory)
+        if self._rust_graph.check_cycle(predicate, start_clean, target_clean):
+            return True
+        target_ids = self._resolve_target_ids(target_node)
+        for tid in target_ids:
+            t_clean = self._clean_id(tid)
+            if t_clean != target_clean and self._rust_graph.check_cycle(
+                predicate, start_clean, t_clean
+            ):
                 return True
-            if curr in visited:
-                continue
-            visited.add(curr)
-            for obj_clean in self._get_outgoing_objects(curr, predicate):
-                if obj_clean in target_ids:
-                    return True
-                if obj_clean not in visited:
-                    stack.append(obj_clean)
         return False
 
     def _get_ancestors(self, node: str) -> set[str]:
-        """Collects all taxonomic ancestors of a node."""
+        """Collects all taxonomic ancestors of a node using RustGraphIndex."""
         clean = self._clean_id(node)
         ancestors: set[str] = {clean}
-        stack = [clean]
-        while stack:
-            curr = stack.pop()
-            for pred in [self.taxonomy_predicate] if self.taxonomy_predicate else []:
-                for obj_clean in self._get_outgoing_objects(curr, pred):
-                    if obj_clean not in ancestors:
-                        ancestors.add(obj_clean)
-                        stack.append(obj_clean)
+        if self.taxonomy_predicate:
+            self._rust_graph.sync_from_memory(self.memory)
+            ancestors.update(
+                self._rust_graph.find_ancestors(self.taxonomy_predicate, clean)
+            )
         return ancestors
 
     def _get_disjoints(self, node: str) -> set[str]:

@@ -528,6 +528,242 @@ pub extern "C" fn little_core_turbo_rotate(
     1
 }
 
+// ---------------------------------------------------------------------------
+// Persistent Zero-Copy Graph Index Handle (Eliminates Per-Query JSON Dumps)
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+pub struct GraphIndexRust {
+    forward_by_pred: HashMap<String, HashMap<String, Vec<String>>>,
+    backward_by_pred: HashMap<String, HashMap<String, Vec<String>>>,
+    edge_count: usize,
+}
+
+impl GraphIndexRust {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn clear(&mut self) {
+        self.forward_by_pred.clear();
+        self.backward_by_pred.clear();
+        self.edge_count = 0;
+    }
+
+    pub fn add_edge(&mut self, predicate: &str, subject: &str, object: &str) {
+        let fwd = self
+            .forward_by_pred
+            .entry(predicate.to_string())
+            .or_default()
+            .entry(subject.to_string())
+            .or_default();
+        if !fwd.iter().any(|x| x == object) {
+            fwd.push(object.to_string());
+            self.edge_count += 1;
+        }
+
+        let bwd = self
+            .backward_by_pred
+            .entry(predicate.to_string())
+            .or_default()
+            .entry(object.to_string())
+            .or_default();
+        if !bwd.iter().any(|x| x == subject) {
+            bwd.push(subject.to_string());
+        }
+    }
+
+    pub fn find_ancestors_for(&self, predicate: &str, start_node: &str) -> Vec<String> {
+        match self.forward_by_pred.get(predicate) {
+            Some(adj) => find_ancestors(adj, start_node),
+            None => Vec::new(),
+        }
+    }
+
+    pub fn check_cycle_for(&self, predicate: &str, start_node: &str, target_node: &str) -> bool {
+        match self.forward_by_pred.get(predicate) {
+            Some(adj) => check_cycle(adj, start_node, target_node),
+            None => false,
+        }
+    }
+
+    pub fn bidirectional_search_for(
+        &self,
+        predicate: &str,
+        start: &str,
+        target: &str,
+        max_depth: usize,
+    ) -> Option<Vec<String>> {
+        let fwd = self.forward_by_pred.get(predicate)?;
+        let bwd = self.backward_by_pred.get(predicate)?;
+        bidirectional_search(fwd, bwd, start, target, max_depth)
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_graph_create() -> *mut GraphIndexRust {
+    Box::into_raw(Box::new(GraphIndexRust::new()))
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_graph_destroy(graph_ptr: *mut GraphIndexRust) {
+    if !graph_ptr.is_null() {
+        unsafe {
+            let _ = Box::from_raw(graph_ptr);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_graph_clear(graph_ptr: *mut GraphIndexRust) {
+    if !graph_ptr.is_null() {
+        let graph = unsafe { &mut *graph_ptr };
+        graph.clear();
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_graph_edge_count(graph_ptr: *mut GraphIndexRust) -> usize {
+    if graph_ptr.is_null() {
+        return 0;
+    }
+    let graph = unsafe { &*graph_ptr };
+    graph.edge_count
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_graph_add_edge(
+    graph_ptr: *mut GraphIndexRust,
+    predicate_cstr: *const c_char,
+    subject_cstr: *const c_char,
+    object_cstr: *const c_char,
+) -> i32 {
+    if graph_ptr.is_null() {
+        return 0;
+    }
+    let pred = match from_c_str(predicate_cstr) {
+        Some(s) if !s.is_empty() => s,
+        _ => return 0,
+    };
+    let subj = match from_c_str(subject_cstr) {
+        Some(s) if !s.is_empty() => s,
+        _ => return 0,
+    };
+    let obj = match from_c_str(object_cstr) {
+        Some(s) if !s.is_empty() => s,
+        _ => return 0,
+    };
+    let graph = unsafe { &mut *graph_ptr };
+    graph.add_edge(pred, subj, obj);
+    1
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_graph_check_cycle(
+    graph_ptr: *mut GraphIndexRust,
+    predicate_cstr: *const c_char,
+    start_cstr: *const c_char,
+    target_cstr: *const c_char,
+) -> i32 {
+    if graph_ptr.is_null() {
+        return 0;
+    }
+    let pred = match from_c_str(predicate_cstr) {
+        Some(s) => s,
+        None => return 0,
+    };
+    let start = match from_c_str(start_cstr) {
+        Some(s) => s,
+        None => return 0,
+    };
+    let target = match from_c_str(target_cstr) {
+        Some(s) => s,
+        None => return 0,
+    };
+    let graph = unsafe { &*graph_ptr };
+    if graph.check_cycle_for(pred, start, target) {
+        1
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_graph_find_ancestors(
+    graph_ptr: *mut GraphIndexRust,
+    predicate_cstr: *const c_char,
+    start_cstr: *const c_char,
+) -> *mut c_char {
+    if graph_ptr.is_null() {
+        return to_c_string(&AncestorResponse { ancestors: vec![] });
+    }
+    let pred = match from_c_str(predicate_cstr) {
+        Some(s) => s,
+        None => return to_c_string(&AncestorResponse { ancestors: vec![] }),
+    };
+    let start = match from_c_str(start_cstr) {
+        Some(s) => s,
+        None => return to_c_string(&AncestorResponse { ancestors: vec![] }),
+    };
+    let graph = unsafe { &*graph_ptr };
+    let ancestors = graph.find_ancestors_for(pred, start);
+    to_c_string(&AncestorResponse { ancestors })
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_graph_bidirectional_search(
+    graph_ptr: *mut GraphIndexRust,
+    predicate_cstr: *const c_char,
+    start_cstr: *const c_char,
+    target_cstr: *const c_char,
+    max_depth: usize,
+) -> *mut c_char {
+    if graph_ptr.is_null() || max_depth == 0 {
+        return to_c_string(&BiSearchResponse {
+            found: false,
+            path: None,
+        });
+    }
+    let pred = match from_c_str(predicate_cstr) {
+        Some(s) => s,
+        None => {
+            return to_c_string(&BiSearchResponse {
+                found: false,
+                path: None,
+            })
+        }
+    };
+    let start = match from_c_str(start_cstr) {
+        Some(s) => s,
+        None => {
+            return to_c_string(&BiSearchResponse {
+                found: false,
+                path: None,
+            })
+        }
+    };
+    let target = match from_c_str(target_cstr) {
+        Some(s) => s,
+        None => {
+            return to_c_string(&BiSearchResponse {
+                found: false,
+                path: None,
+            })
+        }
+    };
+    let graph = unsafe { &*graph_ptr };
+    match graph.bidirectional_search_for(pred, start, target, max_depth) {
+        Some(p) => to_c_string(&BiSearchResponse {
+            found: true,
+            path: Some(p),
+        }),
+        None => to_c_string(&BiSearchResponse {
+            found: false,
+            path: None,
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -586,6 +822,7 @@ mod tests {
         assert_eq!(results[0].id, "v1");
         assert!(results[0].score > 0.9);
     }
+
     #[test]
     fn turbo_rejects_invalid_dimension_without_panicking() {
         let signs = [1.0f32; 512];
@@ -596,4 +833,22 @@ mod tests {
         assert!(little_core_turbo_index_create(512, bad_signs.as_ptr(), 512).is_null());
         assert!(TurboIndexRust::new(32, &[1.0; 32]).is_err());
     }
+
+    #[test]
+    fn test_persistent_graph_index_rust() {
+        let mut g = GraphIndexRust::new();
+        g.add_edge("is_a", "WHALE", "MAMMAL");
+        g.add_edge("is_a", "MAMMAL", "ANIMAL");
+        g.add_edge("is_a", "ANIMAL", "LIVING_THING");
+        assert_eq!(g.edge_count, 3);
+        let anc = g.find_ancestors_for("is_a", "WHALE");
+        assert_eq!(anc.len(), 3);
+        assert!(g.check_cycle_for("is_a", "WHALE", "LIVING_THING"));
+        assert!(!g.check_cycle_for("is_a", "LIVING_THING", "WHALE"));
+        let path = g
+            .bidirectional_search_for("is_a", "WHALE", "LIVING_THING", 6)
+            .expect("path");
+        assert_eq!(path, vec!["WHALE", "MAMMAL", "ANIMAL", "LIVING_THING"]);
+    }
 }
+

@@ -8,7 +8,7 @@ import math
 from collections import deque
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 
 class RustAccelerationCore:
@@ -35,6 +35,11 @@ class RustAccelerationCore:
         """Return True if native Rust TurboQuant vector acceleration is available."""
         return self._lib is not None and hasattr(self._lib, "little_core_turbo_index_create")
 
+    @property
+    def has_graph_index_acceleration(self) -> bool:
+        """Return True if persistent zero-copy Rust GraphIndex acceleration is available."""
+        return self._lib is not None and hasattr(self._lib, "little_core_graph_create")
+
     def _load_library(self) -> ctypes.CDLL | None:
         """Search workspace and system paths for liblittle_core shared library."""
         repository = Path(__file__).resolve().parents[3]
@@ -44,9 +49,11 @@ class RustAccelerationCore:
             repository / "target" / "release",
         ]
         # A surrounding Cargo workspace may own the target directory.
-        search_dirs.extend(parent / "target" / "release" for parent in repository.parents
-                           if (parent / "Cargo.toml").is_file())
-
+        search_dirs.extend(
+            parent / "target" / "release"
+            for parent in repository.parents
+            if (parent / "Cargo.toml").is_file()
+        )
 
         lib_names = ["liblittle_core.so", "liblittle_core.dylib", "little_core.dll"]
         for d in search_dirs:
@@ -57,7 +64,7 @@ class RustAccelerationCore:
                         lib = ctypes.CDLL(str(cand))
                         self._bind_signatures(lib)
                         return lib
-                    except Exception:
+                    except (OSError, AttributeError):
                         continue
         return None
 
@@ -121,6 +128,52 @@ class RustAccelerationCore:
                 ctypes.POINTER(ctypes.c_float),
             ]
             lib.little_core_turbo_rotate.restype = ctypes.c_int32
+
+        # Persistent zero-copy GraphIndex bindings
+        if hasattr(lib, "little_core_graph_create"):
+            lib.little_core_graph_create.argtypes = []
+            lib.little_core_graph_create.restype = ctypes.c_void_p
+
+            lib.little_core_graph_destroy.argtypes = [ctypes.c_void_p]
+            lib.little_core_graph_destroy.restype = None
+
+            lib.little_core_graph_clear.argtypes = [ctypes.c_void_p]
+            lib.little_core_graph_clear.restype = None
+
+            lib.little_core_graph_edge_count.argtypes = [ctypes.c_void_p]
+            lib.little_core_graph_edge_count.restype = ctypes.c_size_t
+
+            lib.little_core_graph_add_edge.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+            ]
+            lib.little_core_graph_add_edge.restype = ctypes.c_int32
+
+            lib.little_core_graph_check_cycle.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+            ]
+            lib.little_core_graph_check_cycle.restype = ctypes.c_int32
+
+            lib.little_core_graph_find_ancestors.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+            ]
+            lib.little_core_graph_find_ancestors.restype = ctypes.c_void_p
+
+            lib.little_core_graph_bidirectional_search.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                ctypes.c_size_t,
+            ]
+            lib.little_core_graph_bidirectional_search.restype = ctypes.c_void_p
 
     # -------------------------------------------------------------------------
     # Public Accelerated Graph API
@@ -365,3 +418,208 @@ class RustAccelerationCore:
         if res == 1:
             return list(c_out)
         return []
+
+    # -------------------------------------------------------------------------
+    # Persistent Zero-Copy Graph Index Handle API
+    # -------------------------------------------------------------------------
+
+    def graph_create(self) -> Any:
+        """Create a persistent Rust GraphIndex handle."""
+        if self._lib is None or not hasattr(self._lib, "little_core_graph_create"):
+            return None
+        return self._lib.little_core_graph_create()
+
+    def graph_destroy(self, handle: Any) -> None:
+        """Destroy a persistent Rust GraphIndex handle."""
+        if self._lib is not None and handle and hasattr(self._lib, "little_core_graph_destroy"):
+            self._lib.little_core_graph_destroy(handle)
+
+    def graph_clear(self, handle: Any) -> None:
+        """Clear all edges in a persistent Rust GraphIndex handle."""
+        if self._lib is not None and handle and hasattr(self._lib, "little_core_graph_clear"):
+            self._lib.little_core_graph_clear(handle)
+
+    def graph_edge_count(self, handle: Any) -> int:
+        """Return total unique edges stored in the Rust GraphIndex handle."""
+        if self._lib is None or not handle or not hasattr(self._lib, "little_core_graph_edge_count"):
+            return 0
+        return int(self._lib.little_core_graph_edge_count(handle))
+
+    def graph_add_edge(self, handle: Any, predicate: str, subject: str, object_node: str) -> bool:
+        """Add a directed edge (subject --[predicate]--> object_node) to the Rust GraphIndex."""
+        if self._lib is None or not handle or not hasattr(self._lib, "little_core_graph_add_edge"):
+            return False
+        res = self._lib.little_core_graph_add_edge(
+            handle,
+            predicate.encode("utf-8"),
+            subject.encode("utf-8"),
+            object_node.encode("utf-8"),
+        )
+        return bool(res == 1)
+
+    def graph_check_cycle(
+        self, handle: Any, predicate: str, start_node: str, target_node: str
+    ) -> bool:
+        """Check reachability from start_node to target_node on a persistent Rust GraphIndex."""
+        if self._lib is None or not handle or not hasattr(self._lib, "little_core_graph_check_cycle"):
+            return False
+        res = self._lib.little_core_graph_check_cycle(
+            handle,
+            predicate.encode("utf-8"),
+            start_node.encode("utf-8"),
+            target_node.encode("utf-8"),
+        )
+        return bool(res == 1)
+
+    def graph_find_ancestors(self, handle: Any, predicate: str, start_node: str) -> list[str]:
+        """Compute transitive ancestors on a persistent Rust GraphIndex without re-serializing edges."""
+        if self._lib is None or not handle or not hasattr(self._lib, "little_core_graph_find_ancestors"):
+            return []
+        ptr = self._lib.little_core_graph_find_ancestors(
+            handle,
+            predicate.encode("utf-8"),
+            start_node.encode("utf-8"),
+        )
+        if not ptr:
+            return []
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return json.loads(res_str).get("ancestors", [])
+
+    def graph_bidirectional_search(
+        self,
+        handle: Any,
+        predicate: str,
+        start_node: str,
+        target_node: str,
+        max_depth: int = 10,
+    ) -> list[str] | None:
+        """Run bidirectional BFS on a persistent Rust GraphIndex without per-query JSON serialization."""
+        if (
+            self._lib is None
+            or not handle
+            or not hasattr(self._lib, "little_core_graph_bidirectional_search")
+        ):
+            return None
+        ptr = self._lib.little_core_graph_bidirectional_search(
+            handle,
+            predicate.encode("utf-8"),
+            start_node.encode("utf-8"),
+            target_node.encode("utf-8"),
+            max(1, int(max_depth)),
+        )
+        if not ptr:
+            return None
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        data = json.loads(res_str)
+        return data.get("path") if data.get("found") else None
+
+
+class RustGraphIndex:
+    """Epoch-synchronized persistent graph index backed by Rust FFI (with Python fallback)."""
+
+    def __init__(self, core: RustAccelerationCore | None = None) -> None:
+        self.core = core or RustAccelerationCore.get()
+        self._handle = self.core.graph_create()
+        self._fwd: dict[str, dict[str, list[str]]] = {}
+        self._bwd: dict[str, dict[str, list[str]]] = {}
+        self._edge_count = 0
+        self._synced_epoch: int = -1
+
+    def close(self) -> None:
+        if self._handle is not None:
+            self.core.graph_destroy(self._handle)
+            self._handle = None
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        self.close()
+
+    @property
+    def is_native(self) -> bool:
+        return self._handle is not None
+
+    @property
+    def synced_epoch(self) -> int:
+        return self._synced_epoch
+
+    @property
+    def edge_count(self) -> int:
+        if self._handle is not None:
+            return self.core.graph_edge_count(self._handle)
+        return self._edge_count
+
+    def clear(self) -> None:
+        if self._handle is not None:
+            self.core.graph_clear(self._handle)
+        self._fwd.clear()
+        self._bwd.clear()
+        self._edge_count = 0
+
+    def add_edge(self, predicate: str, subject: str, object_node: str) -> None:
+        if self._handle is not None:
+            self.core.graph_add_edge(self._handle, predicate, subject, object_node)
+        fwd_list = self._fwd.setdefault(predicate, {}).setdefault(subject, [])
+        if object_node not in fwd_list:
+            fwd_list.append(object_node)
+            self._edge_count += 1
+        bwd_list = self._bwd.setdefault(predicate, {}).setdefault(object_node, [])
+        if subject not in bwd_list:
+            bwd_list.append(subject)
+
+    def sync_from_memory(self, memory: Any) -> bool:
+        """Synchronize active relations from MemoryStore only when concept_mutation_epoch advances."""
+        epoch = getattr(memory, "concept_mutation_epoch", -1)
+        if epoch >= 0 and epoch == self._synced_epoch:
+            return False
+        self.clear()
+        id_to_name = {
+            c.id: c.name.strip().upper().replace(" ", "_")
+            for c in memory.list_concepts()
+        }
+        for rel in memory.get_relations():
+            if rel.weight_positive > rel.weight_negative:
+                s_name = id_to_name.get(
+                    rel.subject_id, rel.subject_id.strip().upper().replace(" ", "_")
+                )
+                o_name = id_to_name.get(
+                    rel.object_id, rel.object_id.strip().upper().replace(" ", "_")
+                )
+                self.add_edge(rel.predicate, s_name, o_name)
+        self._synced_epoch = epoch
+        return True
+
+    def find_ancestors(self, predicate: str, start_node: str) -> list[str]:
+        if self._handle is not None:
+            return self.core.graph_find_ancestors(self._handle, predicate, start_node)
+        return self.core.find_ancestors(self._fwd.get(predicate, {}), start_node)
+
+    def check_cycle(self, predicate: str, start_node: str, target_node: str) -> bool:
+        if self._handle is not None:
+            return self.core.graph_check_cycle(self._handle, predicate, start_node, target_node)
+        return self.core.check_cycle(self._fwd.get(predicate, {}), start_node, target_node)
+
+    def bidirectional_search(
+        self, predicate: str, start_node: str, target_node: str, max_depth: int = 10
+    ) -> list[str] | None:
+        if self._handle is not None:
+            return self.core.graph_bidirectional_search(
+                self._handle, predicate, start_node, target_node, max_depth
+            )
+        return self.core.bidirectional_search(
+            self._fwd.get(predicate, {}),
+            self._bwd.get(predicate, {}),
+            start_node,
+            target_node,
+            max_depth=max_depth,
+        )
+
+
+RustCoreEngine = RustAccelerationCore
+

@@ -24,6 +24,8 @@ All notable architectural milestones, system repairs, and cognitive upgrades for
   - Extended `DualSpeedInfillingEngine` and `DualSpeedResult` with cumulative halting probability $P(\text{halt} \le d) = 1 - \prod_{k=1}^{d} (1 - \lambda_k)$, `ponder_cost = ponder_beta * depth`, and `halt_freeze`.
 - **Live Cognitive Telemetry Dashboard (`src/little/core/kernel.py`, `src/little/main.py`, `src/little/core/cognitive_command.py`):**
   - Added `CognitiveKernel.get_telemetry_snapshot()`, CLI `little status [--json]`, and interactive REPL command `"show cognitive status"`.
+- **Persistent Zero-Copy Rust Graph Handle (`rust/little_core/src/lib.rs`, `src/little/rust/engine.py`, `src/little/inference/invariant_gates.py`):**
+  - Implemented `GraphIndexRust` (`little_core_graph_*` C-ABI) and `RustGraphIndex` keyed by `MemoryStore.concept_mutation_epoch`, wired into `DeepSeekInvariantVerifier` to eliminate per-query N+1 SQLite/JSON serialization overhead during $I_{\text{DAG}}$ and $I_{\text{MUTEX}}$ verification.
 - **Documentation Consolidation (`onpkg_docs/`, `README.md`, `CHANGELOG.md`):**
   - Consolidated root Markdown design/spec files into `onpkg_docs/` (`INDEX.md`, `prd.md`, `design.md`, `implementation.md`, `content.md`, `todo.md`) and removed duplicate root `.md` files.
 

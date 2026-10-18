@@ -209,3 +209,75 @@ def test_pondernet_adaptive_halting_and_stream_plasticity() -> None:
         assert "Growth Brakes:" in cmd_out
         assert "Canary: PASS" in cmd_out
 
+
+def test_rust_persistent_graph_index_epoch_sync() -> None:
+    """RustGraphIndex syncs only when concept_mutation_epoch advances and executes zero-copy FFI traversals."""
+    from little.rust import RustCoreEngine, RustGraphIndex
+
+    assert RustCoreEngine.get().has_graph_index_acceleration is True
+
+    with MemoryStore(seed_ontology=False) as memory, RustGraphIndex() as g_idx:
+        w = memory.create_concept("whale")
+        m = memory.create_concept("mammal")
+        a = memory.create_concept("animal")
+        lt = memory.create_concept("living_thing")
+        memory.add_relation(w.id, "is_a", m.id)
+        memory.add_relation(m.id, "is_a", a.id)
+        memory.add_relation(a.id, "is_a", lt.id)
+
+        assert g_idx.sync_from_memory(memory) is True
+        assert g_idx.edge_count == 3
+        # Subsequent sync on unchanged epoch is a no-op
+        assert g_idx.sync_from_memory(memory) is False
+
+        ancestors = set(g_idx.find_ancestors("is_a", "WHALE"))
+        assert ancestors == {"MAMMAL", "ANIMAL", "LIVING_THING"}
+        assert g_idx.check_cycle("is_a", "WHALE", "LIVING_THING") is True
+        assert g_idx.check_cycle("is_a", "LIVING_THING", "WHALE") is False
+        assert g_idx.bidirectional_search("is_a", "WHALE", "LIVING_THING", max_depth=6) == [
+            "WHALE",
+            "MAMMAL",
+            "ANIMAL",
+            "LIVING_THING",
+        ]
+
+
+def test_continual_plasticity_and_paging_curriculum_verification() -> None:
+    """Multi-phase streaming curriculum verifies PlasticityController regime shifts, PagedConceptStore slot reuse, and RustGraphIndex invariant checks."""
+    with MemoryStore(seed_ontology=False) as memory:
+        paged = PagedConceptStore(memory)
+        ctrl = PlasticityController(base_lr=1.0, spike_sigma=2.5, hold_steps=2)
+        verifier = DeepSeekInvariantVerifier(memory)
+
+        # Phase 1: Steady taxonomic acquisition (low loss -> positive effect size)
+        chain = ["entity", "organism", "vertebrate", "mammal", "cetacean", "orca"]
+        for i in range(len(chain) - 1):
+            c_sub = memory.create_concept(chain[i + 1])
+            c_obj = memory.create_concept(chain[i])
+            assert verifier.verify_relation(c_sub.name, "is_a", c_obj.name).passed is True
+            memory.add_relation(c_sub.id, "is_a", c_obj.id)
+            ctrl.observe_error(0.60 - 0.08 * i)
+            paged.vote_from_tokens([chain[i + 1], chain[i]])
+
+        # Verify I_DAG rejects cyclic edge via persistent RustGraphIndex
+        cycle_check = verifier.verify_relation("entity", "is_a", "orca")
+        assert cycle_check.passed is False
+        assert cycle_check.violated_gate == "I_DAG"
+        assert verifier._rust_graph.synced_epoch == memory.concept_mutation_epoch
+
+        # Phase 2: Repeated queries over resident concepts verify slot-pinning reuses
+        for _ in range(4):
+            paged.vote_from_tokens(["orca", "cetacean", "mammal"])
+            assert paged.get_knot("orca") is not None
+        telemetry = paged.get_telemetry()
+        assert telemetry.slot_reuses >= 4
+        assert telemetry.resident_hits >= 4
+
+        # Phase 3: Abrupt high-surprise regime shift triggers fast/slow divergence reset
+        for _ in range(10):
+            ctrl.observe_error(0.10)
+        for step_idx in range(6):
+            tel = ctrl.observe_error(0.30 + 0.25 * step_idx)
+        assert tel.plasticity_multiplier >= 0.05
+
+
