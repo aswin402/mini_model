@@ -201,6 +201,21 @@ def cmd_memory_list(args: argparse.Namespace) -> None:
         store.close()
 
 
+def cmd_memory_prune(args: argparse.Namespace) -> None:
+    store = MemoryStore(Path(args.db), seed_ontology=False)
+    try:
+        dry_run = bool(getattr(args, "dry_run", False))
+        matched = store.prune_polluted_concepts(dry_run=dry_run)
+        mode = "Dry-Run Preview" if dry_run else "Pruned"
+        print(f"\n[LITTLE Memory Hygiene — {mode}: {Path(args.db)}]")
+        print(f"Matched Polluted Concepts: {len(matched)}")
+        for name in matched:
+            print(f"  • {name}")
+        print()
+    finally:
+        store.close()
+
+
 def cmd_export(args: argparse.Namespace) -> None:
     store, _ = get_engine(Path(args.db))
     try:
@@ -833,7 +848,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_inspect.add_argument("target", help="Name or ID to inspect")
     p_inspect.set_defaults(func=cmd_inspect)
 
-    # memory list
+    # memory list / prune
     p_mem = subparsers.add_parser(
         "memory", parents=[db_parent], help="Memory management commands"
     )
@@ -842,6 +857,15 @@ def build_parser() -> argparse.ArgumentParser:
         "list", parents=[db_parent], help="List stored concepts and relations"
     )
     p_mem_list.set_defaults(func=cmd_memory_list)
+    p_mem_prune = p_mem_sub.add_parser(
+        "prune", parents=[db_parent], help="Prune polluted test/benchmark concepts"
+    )
+    p_mem_prune.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview polluted concepts without deleting them",
+    )
+    p_mem_prune.set_defaults(func=cmd_memory_prune)
 
     # skills list
     p_skills = subparsers.add_parser(

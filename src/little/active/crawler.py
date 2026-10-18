@@ -9,17 +9,23 @@ and indexes concepts into TurboQuant for microsecond retrieval.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from little.active.self_study import AutonomousSelfStudyEngine, CuriosityStepResult
-from little.core.contracts import CandidateClaim, EvidenceRecord, EvidenceStatus, SourceType
+from little.core.contracts import (
+    CandidateClaim,
+    CandidateFrame,
+    SourceType,
+    VerificationResult,
+    VerificationStatus,
+)
 from little.inference.invariant_gates import DeepSeekInvariantVerifier
 from little.knowledge.living_wiki import LivingWiki
-from little.knowledge.okf import OKFEngine
 from little.memory.store import MemoryStore
 from little.neural.frame_extractor import NeuralFrameExtractor
 
@@ -38,6 +44,8 @@ class CrawlReport:
     duration_ms: float = 0.0
     rejection_reasons: list[str] = field(default_factory=list)
     verified_triples: list[dict[str, str]] = field(default_factory=list)
+    sync_errors: list[str] = field(default_factory=list)
+    processing_errors: list[str] = field(default_factory=list)
 
 
 class KnowledgeCrawler:
@@ -81,95 +89,66 @@ class KnowledgeCrawler:
             text_length=len(text),
         )
 
-        all_candidate_claims: list[tuple[CandidateClaim, str]] = []
-
-        # 1. Extraction: FrameNet frames + wikilinks
-        for sent in sentences:
-            claims = self.frame_extractor.extract_candidate_claims(sent)
-            for claim in claims:
-                all_candidate_claims.append((claim, sent))
-
-            # Also check for explicit wikilinks in sentence: "An [[apple]] is a [[fruit]]"
-            matches = self.wikilink_re.findall(sent)
-            if len(matches) >= 2:
-                s_name = matches[0][0].strip().lower()
-                o_name = matches[1][0].strip().lower()
-                if "is a" in sent.lower() or "is an" in sent.lower():
-                    all_candidate_claims.append(
-                        (CandidateClaim(subject=s_name, predicate="is_a", object=o_name, probability=0.95), sent)
-                    )
-
-        report.extracted_claims = len(all_candidate_claims)
-
-        # 2. Verification Gate & Knowledge Persistence
-        touched_concepts: set[str] = set()
-
-        for claim, source_sentence in all_candidate_claims:
-            subj_name = claim.subject.strip().lower()
-            obj_name = claim.object.strip().lower()
-
-            # Ensure concepts exist in memory
-            subj_concept = self.memory.get_concept(subj_name)
-            if not subj_concept:
-                subj_concept = self.memory.create_concept(subj_name)
-                report.new_concepts_created += 1
-
-            obj_concept = self.memory.get_concept(obj_name)
-            if not obj_concept:
-                obj_concept = self.memory.create_concept(obj_name)
-                report.new_concepts_created += 1
-
-            # Verify through 4 DeepSeek-R1 Invariant Gates (I_DAG, I_MUTEX, I_SORT, I_GROUND)
-            gate_result = self.verifier.verify_relation(
-                subject=subj_name,
-                predicate=claim.predicate,
-                obj=obj_name,
-            )
-
-            if not gate_result.passed:
-                report.rejected_claims += 1
-                msg = f"Rejected ({subj_name}, {claim.predicate}, {obj_name}): {gate_result.error_message}"
-                report.rejection_reasons.append(msg)
-                continue
-
-            # Invariant passed: commit to SQLite MemoryStore
-            self.memory.add_relation(
-                subject_id=subj_concept.id,
-                predicate=claim.predicate,
-                object_id=obj_concept.id,
-                positive=claim.positive,
-            )
-
-            # Record provenance evidence
-            ev_rec = EvidenceRecord.from_claim(
-                claim=claim,
-                source_type=SourceType.DOCUMENT,
-                source_reference=source_reference,
-                source_text=source_sentence,
-            )
-            ev_rec.status = EvidenceStatus.ACCEPTED
-            self.memory.evidence.append(ev_rec)
-
-            report.verified_claims += 1
-            report.verified_triples.append({
-                "subject": subj_name,
-                "predicate": claim.predicate,
-                "object": obj_name,
-            })
-            touched_concepts.add(subj_name)
-            touched_concepts.add(obj_name)
-
-        # 3. Synchronize Living OKF Knowledge Vault
-        for c_name in touched_concepts:
+        candidates: dict[tuple[str, str, str, bool, str], CandidateClaim] = {}
+        for sentence in sentences:
+            # Parse wikilinks as text once rather than invent a second assertion.
+            normalized = self.wikilink_re.sub(lambda match: match.group(1), sentence)
             try:
-                self.wiki.okf_engine.export_concept(c_name, output_dir=self.wiki.vault_dir)
-                report.new_pages_written += 1
-            except Exception:
+                claims = self.frame_extractor.extract_candidate_claims(normalized)
+            except Exception as exc:
+                report.processing_errors.append(f"Extraction failed: {type(exc).__name__}: {exc}")
                 continue
-
-        # Refresh wiki graph topology and vector index
-        if touched_concepts:
-            self.wiki.build_graph()
+            for claim in claims:
+                key = (claim.subject.strip().lower(), claim.predicate.strip().lower(),
+                       claim.object.strip().lower(), claim.positive, sentence)
+                existing = candidates.get(key)
+                if existing is None or claim.probability > existing.probability:
+                    candidates[key] = claim
+        report.extracted_claims = len(candidates)
+        touched_concepts: set[str] = set()
+        initial_concepts = {c.id for c in self.memory.list_concepts()}
+        for key, claim in candidates.items():
+            subject, predicate, obj, positive, sentence = key
+            gate = self.verifier.verify_relation(subject, predicate, obj)
+            threshold_met = claim.probability >= self.wiki.policy.min_extraction_confidence
+            verification = gate.to_verification_result()
+            if not threshold_met:
+                verification = VerificationResult(VerificationStatus.FAILED,
+                    checks={"extraction_threshold": False},
+                    reasons=[f"Extraction confidence {claim.probability} below configured minimum"])
+            # Document extraction establishes what this source asserts, not external truth.
+            identity = json.dumps([source_reference, sentence, subject, predicate, obj, positive], ensure_ascii=False)
+            evidence_id = "evidence_crawl_" + hashlib.sha256(identity.encode()).hexdigest()[:24]
+            try:
+                with self.memory.transaction():
+                    frame = CandidateFrame.from_text(sentence, claims=[claim])
+                    evidence = self.memory.ledger.propose_relation(frame, claim,
+                        source_type=SourceType.DOCUMENT, source_reference=source_reference,
+                        evidence_id=evidence_id)
+                    decision = self.memory.ledger.commit_relation(evidence, verification)
+            except Exception as exc:
+                report.processing_errors.append(f"Persistence failed for {subject} {predicate} {obj}: {type(exc).__name__}: {exc}")
+                continue
+            if decision.status.value != "accepted":
+                report.rejected_claims += 1
+                report.rejection_reasons.append(f"Rejected ({subject}, {predicate}, {obj}): {'; '.join(verification.reasons)}")
+                continue
+            report.verified_claims += 1
+            report.verified_triples.append({"subject": subject, "predicate": predicate, "object": obj})
+            touched_concepts.update((subject, obj))
+        report.new_concepts_created = len({c.id for c in self.memory.list_concepts()} - initial_concepts)
+        if self.wiki.policy.auto_sync_on_mutation:
+            for name in sorted(touched_concepts):
+                try:
+                    self.wiki.okf_engine.export_concept(name, output_dir=self.wiki.vault_dir)
+                    report.new_pages_written += 1
+                except Exception as exc:
+                    report.sync_errors.append(f"Wiki export failed for {name}: {type(exc).__name__}: {exc}")
+            if touched_concepts:
+                try:
+                    self.wiki.build_graph()
+                except Exception as exc:
+                    report.sync_errors.append(f"Wiki graph refresh failed: {type(exc).__name__}: {exc}")
 
         report.duration_ms = round((time.perf_counter() - t0) * 1000.0, 2)
         return report
@@ -178,7 +157,7 @@ class KnowledgeCrawler:
         """Crawl a local markdown or text document."""
         path = Path(file_path)
         content = path.read_text(encoding="utf-8")
-        return self.crawl_text(content, source_reference=path.name)
+        return self.crawl_text(content, source_reference=str(path.resolve()))
 
     def crawl_directory(
         self,
@@ -188,17 +167,21 @@ class KnowledgeCrawler:
         """Batch crawl a directory of text/markdown documents."""
         folder = Path(dir_path)
         reports = []
-        if not folder.exists():
+        if not folder.exists() or self.wiki.policy.batch_crawl_limit == 0:
             return []
         for p in sorted(folder.glob(pattern)):
             if p.is_file():
                 rep = self.crawl_file(p)
                 reports.append(rep)
+                if len(reports) >= self.wiki.policy.batch_crawl_limit:
+                    break
         return reports
 
     def autonomous_self_study_step(self) -> CuriosityStepResult:
         """Execute one autonomous curiosity cycle, updating SQLite and the living wiki."""
-        step_result = self.self_study.step()
+        step_result = self.self_study.study_step()
+        if step_result is None:
+            return None
         if step_result.status == "PERSISTED":
             # Sync new knowledge to living wiki page
             try:
@@ -207,6 +190,6 @@ class KnowledgeCrawler:
                     output_dir=self.wiki.vault_dir,
                 )
                 self.wiki.build_graph()
-            except Exception:
-                pass
+            except Exception as exc:
+                step_result.sync_errors.append(f"Wiki sync failed: {type(exc).__name__}: {exc}")
         return step_result

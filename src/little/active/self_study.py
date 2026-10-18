@@ -1,22 +1,25 @@
 """Autonomous Closed-Loop Curiosity and Self-Study Engine.
 
-Zero-hallucination, pure neuro-symbolic active learning agent. Scans Concept Knots
-for maximal spoke entropy (max_j H(Axis_j)), formulates analogical hypotheses via
-taxonomic DAG ascent, verifies candidates against DeepSeek invariant gates (I_DAG,
-I_MUTEX, I_SORT, I_GROUND), and persists verified relations live to SQLite.
+Scans missing concept features and proposes analogical candidates. Sibling analogy
+is retained as a hypothesis; independent document statements can support promotion.
+Graph invariants check structural consistency, not external factual truth.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from pathlib import Path
+import hashlib
+import json
 import re
 import time
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
+from little.active.self_study_policy import SelfStudyPolicy
 from little.core.contracts import (
     CandidateClaim,
     CandidateFrame,
+    ProofTrace,
     SourceType,
     VerificationResult,
     VerificationStatus,
@@ -24,7 +27,6 @@ from little.core.contracts import (
 from little.inference.engine import InferenceEngine
 from little.knowledge.registry import SchemaRegistry
 from little.memory.store import MemoryStore
-from little.active.self_study_policy import SelfStudyPolicy
 
 
 @dataclass
@@ -40,6 +42,8 @@ class DreamReport:
     wiki_pages_synced: int = 0
     duration_ms: float = 0.0
     details: list[CuriosityStepResult] = field(default_factory=list)
+    steps_hypothesized: int = 0
+    sync_errors: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -53,6 +57,7 @@ class SleepConsolidationReport:
     cache_refreshed: bool = False
     duration_ms: float = 0.0
     summary_message: str = ""
+    errors: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -62,10 +67,11 @@ class CuriosityStepResult:
     target_concept: str
     missing_axis: str
     hypothesis: dict[str, str]  # {"subject": S, "predicate": P, "object": O}
-    status: str  # "PERSISTED", "REJECTED", "NO_ANALOGY"
+    status: str  # "PERSISTED", "HYPOTHESIS", "REJECTED", "NO_ANALOGY"
     gate_verdicts: dict[str, bool] = field(default_factory=dict)
     reason: str = ""
     trace: list[str] = field(default_factory=list)
+    sync_errors: list[str] = field(default_factory=list)
 
 
 class AutonomousSelfStudyEngine:
@@ -78,6 +84,7 @@ class AutonomousSelfStudyEngine:
         policy: SelfStudyPolicy | None = None,
         wiki: Any | None = None,
         crawler: Any | None = None,
+        corpus_paths: tuple[Path, ...] | None = None,
     ) -> None:
         self.memory = memory
         self.registry = registry or SchemaRegistry.default()
@@ -85,6 +92,7 @@ class AutonomousSelfStudyEngine:
         self.inference = InferenceEngine(memory, registry=self.registry)
         self.wiki = wiki
         self.crawler = crawler
+        self.corpus_paths = corpus_paths
         self.last_gate_verdicts: dict[str, bool] = {}
 
     def _axis_predicates(self, axis: str) -> set[str]:
@@ -183,7 +191,7 @@ class AutonomousSelfStudyEngine:
         # Batch load all active relations grouped by subject_id for sub-millisecond evaluation
         active_preds_by_subj: dict[str, set[str]] = {}
         try:
-            with self.memory.connection() as conn:
+            with self.memory.transaction() as conn:
                 cur = conn.cursor()
                 cur.execute(
                     "SELECT subject_id, predicate FROM relations WHERE weight_positive > weight_negative"
@@ -202,9 +210,11 @@ class AutonomousSelfStudyEngine:
         total_axes = float(max(1, len(self.policy.axes)))
 
         for c in concepts:
+            c_name_clean = c.name.strip().lower()
+            if c_name_clean.startswith("__") and c_name_clean.endswith("__"):
+                continue
             missing_count = 0
             subj_preds = active_preds_by_subj.get(c.id, set())
-            c_name_clean = c.name.strip().lower()
 
             for axis_name in self.policy.axis_names:
                 axis = self.policy.axis(axis_name)
@@ -260,8 +270,9 @@ class AutonomousSelfStudyEngine:
                     candidate_axes.append(ax)
 
         # Iterate through axes to find transferable candidate spokes
+        non_transferable = self.registry.predicates(disjoint=True) | set(self._hierarchy_predicates())
         for target_axis in candidate_axes:
-            allowed_preds = self._axis_predicates(target_axis)
+            allowed_preds = self._axis_predicates(target_axis) - non_transferable
             if not allowed_preds:
                 continue
 
@@ -285,6 +296,8 @@ class AutonomousSelfStudyEngine:
                         predicate=hierarchy_predicate, object_id=anc_id
                     )
                     for sr in sib_rels:
+                        if sr.weight_positive <= sr.weight_negative:
+                            continue
                         if sr.subject_id == concept.id:
                             continue  # Skip self
                         # Sibling must NOT be an ancestor of target concept
@@ -349,102 +362,81 @@ class AutonomousSelfStudyEngine:
         trace.append("No sibling candidates with transferable spokes found.")
         return None
 
-    def _get_corpus_files_content(self, search_dirs: list[Path], specific_files: list[Path] | None = None) -> list[str]:
-        if getattr(self, "_cached_corpus_texts", None) is None:
-            texts: list[str] = []
-            for s_dir in search_dirs:
-                if s_dir.exists():
-                    for f_path in s_dir.glob("*.md"):
-                        try:
-                            texts.append(f_path.read_text(encoding="utf-8"))
-                        except OSError:
-                            continue
-            self._cached_corpus_texts = texts
-        res = list(self._cached_corpus_texts)
-        if specific_files:
-            for sf in specific_files:
-                try:
-                    res.append(sf.read_text(encoding="utf-8"))
-                except OSError:
-                    pass
-        return res
-
-    def propose_corpus_spoke(
-        self, target_concept: str
-    ) -> tuple[str, dict[str, str], list[str]] | None:
-        """Scan world corpus and vault for verified relational statements mentioning target concept."""
-        clean_target = target_concept.strip().lower()
-        trace: list[str] = [f"Initiating corpus-grounded discovery for '{clean_target}'"]
-
+    def _corpus_documents(self) -> list[tuple[Path, str]]:
         from little.core.runtime_paths import RuntimePaths
+        roots = self.corpus_paths
+        if roots is None:
+            roots = (RuntimePaths.default().world_corpus_directory,)
+            if self.wiki is not None:
+                roots += (Path(self.wiki.vault_dir),)
+        documents = []
+        seen = set()
+        for root in roots:
+            root = Path(root)
+            paths = sorted(root.glob("*.md")) if root.is_dir() else [root]
+            for path in paths:
+                if path.name.endswith(".okf.md"):
+                    continue
+                if not path.is_file():
+                    continue
+                resolved = path.resolve()
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                documents.append((resolved, path.read_text(encoding="utf-8")))
+        return documents
 
-        data_roots = [Path("data")]
-        try:
-            data_roots.append(RuntimePaths.default().database.parent)
-        except Exception:
-            pass
+    def propose_corpus_spoke(self, target_concept: str) -> tuple[str, dict[str, str], list[str]] | None:
+        """Extract what an actual independent document asserts about the target."""
+        parser = getattr(self, "_cached_parser", None)
+        if parser is None:
+            from little.language.parser import configured_parser
+            parser = configured_parser()
+            self._cached_parser = parser
+        clean_target = target_concept.strip().lower()
+        cache: dict[tuple[Path, int], dict[str, list[tuple[str, CandidateClaim]]]] = getattr(
+            self, "_corpus_parse_cache", {}
+        )
+        self._corpus_parse_cache = cache
 
-        search_dirs: list[Path] = []
-        specific_files: list[Path] = []
-        for root in data_roots:
-            if root.exists():
-                c_dir = root / "knowledge" / "world_corpus"
-                if c_dir.exists() and c_dir not in search_dirs:
-                    search_dirs.append(c_dir)
-                v_dir = root / "knowledge_vault"
-                if v_dir.exists():
-                    sf = v_dir / f"{clean_target}.okf.md"
-                    if sf.exists():
-                        specific_files.append(sf)
-
-        patterns = [
-            ("is_a", re.compile(rf"\b{re.escape(clean_target)}\s+is\s+(?:a|an)\s+([a-zA-Z0-9_\-]+)", re.IGNORECASE)),
-            ("can", re.compile(rf"\b{re.escape(clean_target)}\s+(?:can|is\s+capable\s+of)\s+([a-zA-Z0-9_\-]+)", re.IGNORECASE)),
-            ("has_part", re.compile(rf"\b{re.escape(clean_target)}\s+has\s+(?:a|an|the)?\s*([a-zA-Z0-9_\-]+)", re.IGNORECASE)),
-            ("lives_in", re.compile(rf"\b{re.escape(clean_target)}\s+lives\s+in\s+([a-zA-Z0-9_\-]+)", re.IGNORECASE)),
-            ("eats", re.compile(rf"\b{re.escape(clean_target)}\s+eats\s+([a-zA-Z0-9_\-]+)", re.IGNORECASE)),
-            ("orbits", re.compile(rf"\b{re.escape(clean_target)}\s+orbits\s+([a-zA-Z0-9_\-]+)", re.IGNORECASE)),
-        ]
-
-        target_c = self.memory.get_concept(clean_target)
-
-        for text in self._get_corpus_files_content(search_dirs, specific_files):
-            if clean_target not in text.lower():
+        for path, text in self._corpus_documents():
+            if path.name.endswith(".okf.md"):
                 continue
-
-                for pred, pat in patterns:
-                    match = pat.search(text)
-                    if match:
-                        obj_word = match.group(1).strip().lower().rstrip(".,;!")
-                        if not obj_word or obj_word == clean_target:
+            try:
+                mtime_ns = path.stat().st_mtime_ns
+            except OSError:
+                mtime_ns = 0
+            cache_key = (path, mtime_ns)
+            subject_map = cache.get(cache_key)
+            if subject_map is None:
+                subject_map = {}
+                for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+                    sentence = sentence.strip()
+                    if not sentence:
+                        continue
+                    for triple in parser.parse_statement(sentence):
+                        if triple.is_negative:
                             continue
+                        claim = CandidateClaim(
+                            triple.subject,
+                            triple.predicate,
+                            triple.object_,
+                            self.policy.hypothesis_probability,
+                            positive=True,
+                        )
+                        subj_key = claim.subject.strip().lower()
+                        subject_map.setdefault(subj_key, []).append((sentence, claim))
+                cache[cache_key] = subject_map
 
-                        # Check if relation already exists
-                        if target_c:
-                            obj_c = self.memory.get_concept(obj_word)
-                            if obj_c:
-                                existing = self.memory.get_relations(
-                                    subject_id=target_c.id, predicate=pred, object_id=obj_c.id
-                                )
-                                if existing:
-                                    continue
-
-                        hyp = {
-                            "subject": clean_target,
-                            "predicate": pred,
-                            "object": obj_word,
-                            "source": f"corpus:{f_path.name}",
-                        }
-                        axis = self.policy.default_axis
-                        for ax in self.policy.axes:
-                            if pred in self._axis_predicates(ax.name):
-                                axis = ax.name
-                                break
-
-                        trace.append(f"Extracted candidate claim from {f_path.name}: ({clean_target} {pred} {obj_word})")
-                        return (axis, hyp, trace)
-
-        trace.append(f"No novel relational triples found in world corpus for '{clean_target}'")
+            for sentence, claim in subject_map.get(clean_target, ()):
+                if self.memory.find_relation_by_names(claim.subject, claim.predicate, claim.object):
+                    continue
+                hypothesis = {"subject": claim.subject, "predicate": claim.predicate,
+                              "object": claim.object, "source": str(path),
+                              "source_text": sentence, "probability": str(claim.probability)}
+                axis = next((axis.name for axis in self.policy.axes
+                             if claim.predicate in self._axis_predicates(axis.name)), self.policy.default_axis)
+                return axis, hypothesis, [f"Document assertion extracted from {path}: {sentence}"]
         return None
 
     def verify_invariant_gates(
@@ -458,113 +450,37 @@ class AutonomousSelfStudyEngine:
     def _verify_invariant_gates_detailed(
         self, hypothesis: dict[str, str]
     ) -> tuple[bool, str, dict[str, bool]]:
-        """Verify candidate spoke against DeepSeek 4 Deterministic Verification Gates.
-
-        Gate 1: I_DAG (Acyclicity in taxonomy)
-        Gate 2: I_MUTEX (Mutual exclusivity & disjoint constraints)
-        Gate 3: I_SORT (Type signature compatibility)
-        Gate 4: I_GROUND (Non-trivial evidence & non-empty terms)
-        """
-        subj_name = hypothesis.get("subject", "").strip().lower()
-        pred = hypothesis.get("predicate", "").strip().lower()
-        obj_name = hypothesis.get("object", "").strip().lower()
-
-        verdicts = {
-            "I_DAG": False,
-            "I_MUTEX": False,
-            "I_SORT": False,
-            "I_GROUND": False,
-        }
-
-        # Gate 3: I_SORT (Syntax and type signature)
-        if not subj_name or not obj_name or not pred:
-            return (False, "I_SORT failed: Empty term in hypothesis", verdicts)
-        if subj_name == obj_name:
-            return (False, f"I_SORT failed: Self-referential loop ({subj_name} {pred} {obj_name})", verdicts)
-        verdicts["I_SORT"] = True
-
-        # Gate 1: I_DAG (Acyclicity)
-        if pred in self.registry.predicates(acyclic=True):
-            subj_c = self.memory.get_concept(subj_name)
-            obj_c = self.memory.get_concept(obj_name)
-            if subj_c and obj_c:
-                # A new subject -> object edge is cyclic only if object already
-                # reaches subject through the same configured hierarchy.
-                ancestors = self.inference.get_ancestor_ids(obj_c.id, predicate=pred)
-                if subj_c.id in ancestors:
-                    return (False, f"I_DAG failed: Cycle detected ({subj_name} {pred} {obj_name})", verdicts)
-        verdicts["I_DAG"] = True
-
-        # Gate 2: I_mutex (Mutual Exclusivity and Negative Constraint Verification)
-        subj_c = self.memory.get_concept(subj_name)
-        obj_c = self.memory.get_concept(obj_name)
-        if subj_c and obj_c:
-            # Direct negative relation check
-            direct_rels = self.memory.get_relations(
-                subject_id=subj_c.id, predicate=pred, object_id=obj_c.id
-            )
-            for r in direct_rels:
-                if r.weight_negative > r.weight_positive:
-                    return (
-                        False,
-                        f"I_MUTEX failed: Explicit negative evidence ({subj_name} NOT {pred} {obj_name})",
-                        verdicts,
-                    )
-
-            # Disjoint constraints between subject and object or their ancestors
-            anc_ids = [subj_c.id] + self._ancestor_ids(subj_c.id)
-            for a_id in anc_ids:
-                for disjoint_predicate in sorted(
-                    self.registry.predicates(disjoint=True)
-                ):
-                    disj_rels = self.memory.get_relations(
-                        subject_id=a_id,
-                        predicate=disjoint_predicate,
-                        object_id=obj_c.id,
-                    )
-                    if any(
-                        relation.weight_positive > relation.weight_negative
-                        for relation in disj_rels
-                    ):
-                        return (
-                            False,
-                            f"I_MUTEX failed: Disjoint constraint triggered between {a_id} and {obj_name}",
-                            verdicts,
-                        )
-                    # Reverse disjoint
-                    disj_rev = self.memory.get_relations(
-                        subject_id=obj_c.id,
-                        predicate=disjoint_predicate,
-                        object_id=a_id,
-                    )
-                    if any(
-                        relation.weight_positive > relation.weight_negative
-                        for relation in disj_rev
-                    ):
-                        return (
-                            False,
-                            f"I_MUTEX failed: Reverse disjoint constraint triggered between {obj_name} and {a_id}",
-                            verdicts,
-                        )
-
-        # Disjoint constraint on donor concept if analogical transfer was used
-        donor_name = hypothesis.get("donor", "").strip().lower()
-        if donor_name and subj_c:
-            donor_c = self.memory.get_concept(donor_name)
-            if donor_c:
-                if self._are_concepts_disjoint(subj_c.id, donor_c.id):
-                    return (
-                        False,
-                        f"I_MUTEX failed: Analogical donor '{donor_name}' is disjoint with '{subj_name}'",
-                        verdicts,
-                    )
-
-        verdicts["I_MUTEX"] = True
-
-        # Gate 4: I_GROUND (Grounding and confidence check)
-        verdicts["I_GROUND"] = True
-
-        return (True, "Passed all 4 DeepSeek deterministic invariant gates.", verdicts)
+        """Check graph/schema consistency separately from evidence for the target."""
+        verifier = getattr(self, "_cached_verifier", None)
+        if verifier is None:
+            from little.inference.invariant_gates import DeepSeekInvariantVerifier
+            verifier = DeepSeekInvariantVerifier(self.memory, self.registry)
+            self._cached_verifier = verifier
+        subject = hypothesis.get("subject", "").strip().lower()
+        predicate = hypothesis.get("predicate", "").strip().lower()
+        obj = hypothesis.get("object", "").strip().lower()
+        verdicts = {gate: False for gate in ("I_DAG", "I_MUTEX", "I_SORT", "I_GROUND")}
+        gate = verifier.verify_relation(subject, predicate, obj)
+        if not gate.passed:
+            return False, f"{gate.violated_gate} failed: {gate.error_message}", verdicts
+        for name in ("I_DAG", "I_MUTEX", "I_SORT"):
+            verdicts[name] = True
+        existing = self.memory.find_relation_by_names(subject, predicate, obj)
+        if existing and existing.weight_negative > existing.weight_positive:
+            verdicts["I_MUTEX"] = False
+            return False, "I_MUTEX failed: explicit negative evidence", verdicts
+        donor = hypothesis.get("donor")
+        if donor and self._are_concepts_disjoint(subject, donor):
+            verdicts["I_MUTEX"] = False
+            return False, "I_MUTEX failed: analogical donor is disjoint", verdicts
+        source = hypothesis.get("source")
+        sentence = hypothesis.get("source_text", "")
+        if source and sentence:
+            path = Path(source)
+            if path.is_file() and sentence in path.read_text(encoding="utf-8"):
+                verdicts["I_GROUND"] = True
+        return True, ("Structural invariants passed; document assertion is sourced" if verdicts["I_GROUND"]
+                      else "Structural invariants passed; target factual evidence absent, analogy remains a hypothesis"), verdicts
 
     def study_step(
         self, target_concept: str | None = None, preferred_axis: str | None = None
@@ -579,9 +495,9 @@ class AutonomousSelfStudyEngine:
             target_concept = cand_concepts[0]
 
         # 2. Formulate analogical or corpus hypothesis
-        proposal = self.propose_analogical_spoke(target_concept, preferred_axis=preferred_axis)
+        proposal = self.propose_corpus_spoke(target_concept)
         if not proposal:
-            proposal = self.propose_corpus_spoke(target_concept)
+            proposal = self.propose_analogical_spoke(target_concept, preferred_axis=preferred_axis)
 
         if not proposal:
             return CuriosityStepResult(
@@ -614,13 +530,13 @@ class AutonomousSelfStudyEngine:
         # after the verified evidence is accepted, so rejected candidates leave
         # no semantic graph residue.
         frame = CandidateFrame.from_text(
-            f"Autonomous curiosity: {hyp['subject']} {hyp['predicate']} {hyp['object']}",
+            hyp.get("source_text") or f"Analogical hypothesis for {hyp['subject']} {hyp['predicate']} {hyp['object']}; donor={hyp.get('donor', 'unknown')}",
             claims=[
                 CandidateClaim(
                     hyp["subject"],
                     hyp["predicate"],
                     hyp["object"],
-                    probability=self.policy.hypothesis_probability,
+                    probability=float(hyp.get("probability", self.policy.hypothesis_probability)),
                 )
             ],
             intent="study",
@@ -628,28 +544,34 @@ class AutonomousSelfStudyEngine:
             model_id=self.policy.model_id,
             model_version=self.policy.model_version,
         )
-        evidence = self.memory.ledger.propose_relation(
-            frame,
-            frame.claims[0],
-            source_type=SourceType.HYPOTHESIS,
-            source_reference=f"study:{frame.frame_id}",
-        )
-        verification = VerificationResult(
-            status=VerificationStatus.PASSED,
-            checks=gate_verdicts,
-            reasons=[reason],
-        )
-        decision = self.memory.ledger.commit_relation(evidence, verification)
+        factual = gate_verdicts["I_GROUND"]
+        status = VerificationStatus.PASSED if factual else VerificationStatus.UNKNOWN
+        proof_id = None
+        identity = json.dumps(hyp, sort_keys=True)
+        evidence_id = "evidence_study_" + hashlib.sha256(identity.encode()).hexdigest()[:24]
+        with self.memory.transaction():
+            if not factual:
+                donor = self.memory.get_concept(hyp.get("donor", ""))
+                target = self.memory.get_concept(hyp["subject"])
+                premises = [r.id for c in (donor, target) if c
+                            for r in self.memory.get_relations(subject_id=c.id)
+                            if r.weight_positive > r.weight_negative]
+                proof_id = "proof_study_" + hashlib.sha256(identity.encode()).hexdigest()[:24]
+                if not self.memory._conn.execute("SELECT 1 FROM proof_traces WHERE proof_id=?", (proof_id,)).fetchone():
+                    self.memory.evidence.save_proof(ProofTrace(proof_id, dict(hyp), premises=premises,
+                        operations=[{"kind": "sibling_analogy", "donor": hyp.get("donor"),
+                                     "external_truth_established": False}], status=VerificationStatus.UNKNOWN))
+            evidence = self.memory.ledger.propose_relation(frame, frame.claims[0],
+                source_type=SourceType.DOCUMENT if factual else SourceType.HYPOTHESIS,
+                source_reference=hyp.get("source") or f"study:donor:{hyp.get('donor', 'unknown')}",
+                evidence_id=evidence_id, derivation_proof_id=proof_id)
+            decision = self.memory.ledger.commit_relation(evidence, VerificationResult(status, gate_verdicts, [reason]))
+        if not factual:
+            trace.append("Analogy retained as candidate evidence; no target relation promoted")
+            return CuriosityStepResult(target_concept, missing_axis, hyp, "HYPOTHESIS", gate_verdicts, reason, trace)
         if decision.status.value != "accepted":
-            return CuriosityStepResult(
-                target_concept=target_concept,
-                missing_axis=missing_axis,
-                hypothesis=hyp,
-                status="REJECTED",
-                gate_verdicts=gate_verdicts,
-                reason="Evidence ledger rejected the verified hypothesis",
-                trace=trace,
-            )
+            return CuriosityStepResult(target_concept, missing_axis, hyp, "REJECTED", gate_verdicts,
+                                       "Evidence ledger rejected document claim", trace)
 
         subj_c = self.memory.get_concept(hyp["subject"])
         obj_c = self.memory.get_concept(hyp["object"])
@@ -660,27 +582,13 @@ class AutonomousSelfStudyEngine:
             f"Autonomous study update: Persisted ({subj_c.name} {hyp['predicate']} {obj_c.name}) to SQLite store."
         )
 
-        # Log episodic experience
-        self.memory.add_experience(
-            input_text=f"Autonomous Curiosity Deduction: {subj_c.name} {hyp['predicate']} {obj_c.name} (analogous to {hyp.get('donor', 'hypernym')})",
-            extracted_triples=[
-                {
-                    "subject": subj_c.name,
-                    "predicate": hyp["predicate"],
-                    "object": obj_c.name,
-                    "source": "autonomous_curiosity",
-                }
-            ],
-        )
-
-        # Synchronize with Living Wiki vault if attached
+        sync_errors = []
         if self.wiki is not None:
-            try:
-                self.wiki.sync_concept(subj_c.name)
-                if obj_c:
-                    self.wiki.sync_concept(obj_c.name)
-            except Exception:
-                pass
+            for name in (subj_c.name, obj_c.name):
+                try:
+                    self.wiki.sync_concept(name)
+                except Exception as exc:
+                    sync_errors.append(f"Wiki sync failed for {name}: {type(exc).__name__}: {exc}")
 
         return CuriosityStepResult(
             target_concept=target_concept,
@@ -690,6 +598,7 @@ class AutonomousSelfStudyEngine:
             gate_verdicts=gate_verdicts,
             reason=reason,
             trace=trace,
+            sync_errors=sync_errors,
         )
 
     def study_cycle(self, max_steps: int | None = None) -> list[CuriosityStepResult]:
@@ -699,7 +608,11 @@ class AutonomousSelfStudyEngine:
         step_limit = self.policy.max_steps if max_steps is None else max_steps
 
         entropies = self.compute_all_knot_entropies()
-        candidate_queue = [c for c, h in entropies.items() if h > 0.0]
+        exp_names = self._get_experienced_concept_names()
+        exp_anchored = [c for c, h in entropies.items() if 0.0 < h < 1.0 and c.strip().lower() in exp_names]
+        other_anchored = [c for c, h in entropies.items() if 0.0 < h < 1.0 and c.strip().lower() not in exp_names]
+        unanchored = [c for c, h in entropies.items() if h >= 1.0]
+        candidate_queue = exp_anchored + other_anchored + unanchored
 
         cand_idx = 0
         while len(results) < step_limit and cand_idx < len(candidate_queue):
@@ -792,6 +705,8 @@ class AutonomousSelfStudyEngine:
             wiki_pages_synced=pages_synced,
             duration_ms=elapsed_ms,
             details=steps,
+            steps_hypothesized=sum(step.status == "HYPOTHESIS" for step in steps),
+            sync_errors=[error for step in steps for error in step.sync_errors],
         )
 
     def consolidate_sleep_cycle(
@@ -826,8 +741,12 @@ class AutonomousSelfStudyEngine:
         inducer = latent_inducer or getattr(self, "latent_inducer", None)
         if inducer is not None:
             try:
-                res = inducer.induce_from_memory()
-                clusters_count = len(res) if isinstance(res, list) else 1
+                if hasattr(inducer, "induce_latent_knots"):
+                    rep = inducer.induce_latent_knots()
+                    clusters_count = getattr(rep, "clusters_created", 0)
+                elif hasattr(inducer, "induce_from_memory"):
+                    res = inducer.induce_from_memory()
+                    clusters_count = len(res) if isinstance(res, list) else 1
             except Exception:
                 pass
 
@@ -837,12 +756,15 @@ class AutonomousSelfStudyEngine:
             try:
                 for turn in headroom._turns[:-1]:
                     if not turn.is_compressed:
-                        turn.is_compressed = True
-                        turn.compressed_summary = (
-                            turn.raw_text[:60] + "..."
-                            if len(turn.raw_text) > 60
-                            else turn.raw_text
-                        )
+                        if hasattr(headroom, "_compress_turn"):
+                            headroom._compress_turn(turn)
+                        else:
+                            turn.is_compressed = True
+                            turn.compressed_summary = (
+                                turn.raw_text[:60] + "..."
+                                if len(turn.raw_text) > 60
+                                else turn.raw_text
+                            )
                         compressed_count += 1
             except Exception:
                 pass
@@ -874,43 +796,5 @@ class AutonomousSelfStudyEngine:
         )
 
     def _mine_latent_invariants(self) -> list[dict[str, str]]:
-        """Identify candidate mutual exclusivity invariants across sibling concepts."""
-        mined = []
-        disjoint_preds = self.registry.predicates(disjoint=True)
-        primary_disjoint = next(iter(disjoint_preds), "disjoint_with")
-
-        candidate_sibling_pairs = [
-            ("planet", "star"),
-            ("mammal", "reptile"),
-            ("bird", "fish"),
-            ("solid", "liquid"),
-            ("plant", "animal"),
-            ("fruit", "animal"),
-            ("vehicle", "animal"),
-            ("software", "hardware"),
-        ]
-
-        for c1_name, c2_name in candidate_sibling_pairs:
-            c1 = self.memory.get_concept(c1_name)
-            c2 = self.memory.get_concept(c2_name)
-            if not c1 or not c2:
-                continue
-
-            existing = self.memory.find_relation_by_names(
-                c1.name, primary_disjoint, c2.name
-            )
-            if not existing:
-                self.memory.add_relation(
-                    subject_id=c1.id,
-                    predicate=primary_disjoint,
-                    object_id=c2.id,
-                    positive=True,
-                )
-                mined.append({
-                    "subject": c1.name,
-                    "predicate": primary_disjoint,
-                    "object": c2.name,
-                })
-
-        return mined
-
+        """No sound observation rule for new disjointness has been established."""
+        return []

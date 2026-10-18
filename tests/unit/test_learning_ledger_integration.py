@@ -310,7 +310,8 @@ def test_registered_action_preserves_transformation_result():
             subject, predicate, object_
         )
         assert len(evidence) == 1 and evidence[0].status.value == "accepted"
-        assert relation.source_experience_id == evidence[0].source_reference
+        assert relation.source_experience_id == evidence[0].source_experience_id
+        assert store.get_experience(relation.source_experience_id) is not None
         assert store._conn.execute(
             "SELECT status FROM commit_decisions WHERE evidence_id = ?",
             (evidence[0].evidence_id,),

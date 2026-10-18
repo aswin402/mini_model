@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from little.neural.decision_head import (
     ChoiceDecision,
     EpistemicBeliefState,
@@ -15,7 +13,6 @@ from little.neural.decision_head import (
     compute_ranked_probability_score,
     compute_shannon_entropy,
 )
-from little.neural.encoder import NeuralStateEncoder
 
 
 def test_brier_score_computation():
@@ -73,7 +70,9 @@ def test_laya_intent_classification():
     assert math_dec.confidence > 0.30
 
     # Code intent
-    code_dec = head.classify_intent("def fibonacci(n): return n if n <= 1 else fibonacci(n-1) + fibonacci(n-2)")
+    code_dec = head.classify_intent(
+        "def fibonacci(n): return n if n <= 1 else fibonacci(n-1) + fibonacci(n-2)"
+    )
     assert code_dec.choice == "code"
 
     # Social intent
@@ -81,16 +80,31 @@ def test_laya_intent_classification():
     assert social_dec.choice == "social"
 
     # Physics intent
-    physics_dec = head.classify_intent("simulate apple decay over 10 days at 22 Celsius")
+    physics_dec = head.classify_intent(
+        "simulate apple decay over 10 days at 22 Celsius"
+    )
     assert physics_dec.choice == "physics"
 
 
 def test_laya_evaluate_choice_arbitrary_options():
     """Verify evaluate_choice non-autoregressively evaluates candidate options."""
-    head = LayaDecisionHead()
+    from little.memory.store import MemoryStore
 
-    options = ["software engineer", "celestial star", "african mammal", "kitchen utensil"]
-    dec = head.evaluate_choice("Betelgeuse is a giant astronomical sun in Orion", options)
+    memory = MemoryStore(":memory:")
+    star = memory.create_concept("star")
+    sun = memory.create_concept("sun")
+    memory.add_relation(sun.id, "is_a", star.id)
+    head = LayaDecisionHead(memory=memory)
+
+    options = [
+        "software engineer",
+        "celestial star",
+        "african mammal",
+        "kitchen utensil",
+    ]
+    dec = head.evaluate_choice(
+        "Betelgeuse is a giant astronomical sun in Orion", options
+    )
 
     assert dec.choice == "celestial star"
     assert dec.confidence > 0.40
@@ -99,17 +113,28 @@ def test_laya_evaluate_choice_arbitrary_options():
 
 def test_laya_evaluate_noul_truth_unit():
     """Verify noul truth proposition evaluation and calibration under OWA."""
-    head = LayaDecisionHead()
+    from little.memory.store import MemoryStore
+
+    memory = MemoryStore(":memory:")
+    linux = memory.create_concept("linux")
+    system = memory.create_concept("free open-source computer operating system")
+    memory.add_relation(linux.id, "is_a", system.id)
+    head = LayaDecisionHead(memory=memory)
 
     # Truth statement
-    true_noul = head.evaluate_noul("Linux is a free open-source computer operating system")
+    true_noul = head.evaluate_noul(
+        "Linux is a free open-source computer operating system"
+    )
     assert isinstance(true_noul, NoulDecision)
     assert true_noul.truth_probability > 0.50
 
     # Random nonsense under Open-World Assumption
     nonsense_noul = head.evaluate_noul("A zanthocar flurblegorps on Quazilopia")
     # Low confidence or near 0.5
-    assert nonsense_noul.status in (EpistemicBeliefState.UNKNOWN, EpistemicBeliefState.UNCERTAIN)
+    assert nonsense_noul.status in (
+        EpistemicBeliefState.UNKNOWN,
+        EpistemicBeliefState.UNCERTAIN,
+    )
 
 
 def test_laya_evaluate_score():
@@ -118,7 +143,9 @@ def test_laya_evaluate_score():
 
     # Priority levels
     levels = ["low priority", "medium priority", "high priority", "critical priority"]
-    score_res = head.evaluate_score("URGENT: system security vulnerability found in authentication module", levels)
+    score_res = head.evaluate_score(
+        "URGENT: system security vulnerability found in authentication module", levels
+    )
 
     assert isinstance(score_res, ScoreDecision)
     assert score_res.discrete_choice in (2, 3)  # high or critical
@@ -127,7 +154,9 @@ def test_laya_evaluate_score():
 
 def test_laya_fast_path_and_system2_escalation():
     """Verify fast-path triggering and System 2 escalation thresholds."""
-    head = LayaDecisionHead(entropy_threshold=0.35, confidence_threshold=0.75, margin_threshold=0.20)
+    head = LayaDecisionHead(
+        entropy_threshold=0.35, confidence_threshold=0.75, margin_threshold=0.20
+    )
 
     # High certainty choice
     clear_dec = head.classify_intent("Hello!")

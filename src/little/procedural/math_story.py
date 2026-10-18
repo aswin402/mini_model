@@ -53,6 +53,27 @@ class MathStorySolver:
             if alg_sol:
                 return alg_sol
 
+        # 0b. Direct unit conversion question: e.g. "How many feet in 36 inches?"
+        m_unit = re.match(
+            r"^(?:how\s+many|how\s+much)\s+([a-zA-Z°]+)\s+(?:are\s+(?:there\s+)?|is\s+)?in\s+(-?\d+(?:\.\d+)?)\s+([a-zA-Z°]+)\??$",
+            clean,
+            re.IGNORECASE,
+        )
+        if m_unit:
+            to_unit = m_unit.group(1)
+            val = float(m_unit.group(2))
+            from_unit = m_unit.group(3)
+            conv = self.unit_graph.convert(val, from_unit, to_unit)
+            if conv.status == "SOLVED" and conv.result is not None:
+                res_num = float(conv.result)
+                final_res = int(res_num) if res_num.is_integer() else res_num
+                return MathSolution(
+                    status="SOLVED",
+                    result=final_res,
+                    latex_trace=conv.latex_trace,
+                    steps=conv.steps,
+                )
+
         # 1. Rate * Time problem: e.g. "travels at 60 km/h for 3 hours. How far does..."
         m_rate = re.search(
             r"(?:travels?|drives?|runs?|flies?|walks?)\s+at\s+(\d+(?:\.\d+)?)\s*(km/h|kph|mph|m/s)\s+for\s+(\d+(?:\.\d+)?)\s*(hours?|hrs?|minutes?|mins?|seconds?|s)\b",
@@ -134,6 +155,8 @@ class MathStorySolver:
         ]
 
         current_val: float | None = None
+        has_explicit_init = False
+        has_transition = False
         item_name = "items"
         steps: list[str] = ["Sequential State Tracking:"]
 
@@ -157,6 +180,7 @@ class MathStorySolver:
             if m_init:
                 current_val = float(m_init.group(1))
                 item_name = m_init.group(2)
+                has_explicit_init = True
                 c_disp = int(current_val) if current_val.is_integer() else current_val
                 steps.append(f"  Initial: {c_disp} {item_name}")
                 break
@@ -196,6 +220,7 @@ class MathStorySolver:
             if m_half:
                 part = current_val * 0.5
                 current_val -= part
+                has_transition = True
                 c_disp = int(current_val) if current_val.is_integer() else current_val
                 p_disp = int(part) if part.is_integer() else part
                 steps.append(f"  Partition (- half): subtracted {p_disp}, remaining = {c_disp} {item_name}")
@@ -213,6 +238,7 @@ class MathStorySolver:
                     sub_qty = float(m_sub.group(1))
                     old_val = current_val
                     current_val -= sub_qty
+                    has_transition = True
                     c_disp = int(current_val) if current_val.is_integer() else current_val
                     s_disp = int(sub_qty) if sub_qty.is_integer() else sub_qty
                     o_disp = int(old_val) if old_val.is_integer() else old_val
@@ -234,11 +260,15 @@ class MathStorySolver:
                     add_qty = float(m_add.group(1))
                     old_val = current_val
                     current_val += add_qty
+                    has_transition = True
                     c_disp = int(current_val) if current_val.is_integer() else current_val
                     a_disp = int(add_qty) if add_qty.is_integer() else add_qty
                     o_disp = int(old_val) if old_val.is_integer() else old_val
                     steps.append(f"  Add ({av} {a_disp}): {o_disp} + {a_disp} = {c_disp} {item_name}")
                     break
+
+        if not has_explicit_init and not has_transition:
+            return None
 
         final_res = int(current_val) if current_val.is_integer() else round(current_val, 2)
         steps.append(f"Final Quantity: {final_res} {item_name}")

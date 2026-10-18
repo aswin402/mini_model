@@ -50,7 +50,7 @@ class PreDispatchVerifier:
         checked.append("I_sort_type")
         for arg_name, arg_val in call.arguments.items():
             if arg_name not in definition.parameters:
-                continue
+                return VerificationResult(valid=False, error=f"Unknown parameter '{arg_name}'", checked_invariants=tuple(checked))
             param_spec = definition.parameters[arg_name]
             type_err = self._check_type(arg_name, arg_val, param_spec.param_type)
             if type_err:
@@ -60,6 +60,10 @@ class PreDispatchVerifier:
                     checked_invariants=tuple(checked),
                 )
 
+        if definition.requires_confirmation and call.confirmed is not True:
+            return VerificationResult(valid=False, error="Tool requires explicit confirmation", checked_invariants=tuple(checked))
+        if 'max_bytes' in call.arguments and not 0 <= call.arguments['max_bytes'] <= 1000000:
+            return VerificationResult(valid=False, error="max_bytes must be between 0 and 1000000")
         # Gate 4: Security and domain invariants
         checked.append("I_security_sandbox")
         sec_err = self._check_security_invariants(call)
@@ -84,21 +88,13 @@ class PreDispatchVerifier:
         elif expected_type in ("int", "integer"):
             if isinstance(val, int) and not isinstance(val, bool):
                 return None
-            if isinstance(val, str) and val.strip().isdigit():
-                return None
             return f"Expected integer, got {type(val).__name__}"
         elif expected_type in ("float", "number"):
             if isinstance(val, (int, float)) and not isinstance(val, bool):
                 return None
-            try:
-                float(val)
-                return None
-            except (ValueError, TypeError):
-                return f"Expected number, got {val!r}"
+            return f"Expected number, got {type(val).__name__}"
         elif expected_type in ("bool", "boolean"):
             if isinstance(val, bool):
-                return None
-            if isinstance(val, str) and val.lower() in ("true", "false"):
                 return None
             return f"Expected boolean, got {type(val).__name__}"
         elif expected_type in ("list", "array"):
@@ -129,7 +125,7 @@ class PreDispatchVerifier:
             if not raw_cmd:
                 return "Empty bash command"
             # Disallow dangerous shell chains unless validated
-            for char in (";", "&", "|", "`", "$"):
+            for char in (";", "&", "|", "`", "$", ">", "<", "\n", "\r"):
                 if char in raw_cmd:
                     return f"Dangerous shell operator '{char}' is restricted in bash_executor"
             try:
@@ -141,5 +137,11 @@ class PreDispatchVerifier:
             binary = tokens[0]
             if binary not in self.action_policy.allowed_bash_binaries:
                 return f"Binary '{binary}' is not in allowed whitelist: {list(self.action_policy.allowed_bash_binaries)}"
+            # Only capability-free output commands are accepted by default.
+            if binary not in ('echo', 'pwd'):
+                return "Command capability is not permitted; use file_reader for workspace reads"
+            if binary == 'pwd' and len(tokens) != 1:
+                return "pwd does not accept arguments"
+
 
         return None

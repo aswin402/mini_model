@@ -3,25 +3,8 @@
 from __future__ import annotations
 
 import ast
-import builtins as python_builtins
-import math
-import operator
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Any
-
-import sympy
-from sympy.parsing.sympy_parser import (
-    convert_xor,
-    implicit_multiplication_application,
-    parse_expr,
-    standard_transformations,
-)
-
-SYMPY_TRANSFORMATIONS = standard_transformations + (
-    implicit_multiplication_application,
-    convert_xor,
-)
 
 from little.core.models import Skill
 from little.procedural.skill_policy import ProceduralSkillPolicy
@@ -36,43 +19,6 @@ class ExecutionResult:
     result: Any = None
     error: str | None = None
     trace: list[str] | None = None
-
-
-_EXECUTION_MODULES = MappingProxyType(
-    {
-        "math": math,
-        "ast": ast,
-        "operator": operator,
-        "sympy": sympy,
-    }
-)
-_EXECUTION_HELPERS = MappingProxyType(
-    {
-        "parse_expr": parse_expr,
-        "sympy_transformations": SYMPY_TRANSFORMATIONS,
-    }
-)
-
-
-def _safe_builtins(policy: ProceduralSkillPolicy) -> dict[str, Any]:
-    """Return an isolated namespace from the configured execution policy."""
-    namespace: dict[str, Any] = {}
-    for name in policy.execution_builtins:
-        try:
-            namespace[name] = getattr(python_builtins, name)
-        except AttributeError as ex:
-            raise ValueError(f"Unsupported procedural builtin {name!r}") from ex
-    for name in policy.execution_modules:
-        try:
-            namespace[name] = _EXECUTION_MODULES[name]
-        except KeyError as ex:
-            raise ValueError(f"Unsupported procedural module {name!r}") from ex
-    for name in policy.execution_helpers:
-        try:
-            namespace[name] = _EXECUTION_HELPERS[name]
-        except KeyError as ex:
-            raise ValueError(f"Unsupported procedural helper {name!r}") from ex
-    return namespace
 
 
 class SkillRunner:
@@ -104,73 +50,40 @@ class SkillRunner:
                     trace=trace,
                 )
 
-        # 2. Execution environment
-        local_scope = dict(kwargs)
-        global_scope = {"__builtins__": _safe_builtins(active_policy)}
+        # Only JSON data crosses the process boundary. Rich objects can expose capabilities.
+        import json
+        import subprocess
 
-        # 3. Execution
+        from little.procedural.restricted_execution import run
         try:
-            # Check if code is a simple expression or block
-            code_str = skill.code_body.strip()
-            trace.append(f"Evaluating skill code: {code_str}")
-
-            # If it's a single expression (e.g. "a + b"), evaluate it directly
-            if (
-                "\n" not in code_str
-                and not code_str.startswith("def ")
-                and not code_str.startswith("return ")
-            ):
-                val = eval(code_str, global_scope, local_scope)
+            encoded = json.dumps(kwargs, allow_nan=False)
+            inputs = json.loads(encoded)
+            if any(not name.isidentifier() or name.startswith('_') for name in skill.parameters):
+                raise ValueError("Invalid skill parameter identifier")
+            code = skill.code_body.strip()
+            call_inputs = {k: inputs[k] for k in skill.parameters if k in inputs}
+            assignments = "\n".join(f"{key} = {value!r}" for key, value in call_inputs.items()
+                                      if key.isidentifier() and not key.startswith('_'))
+            if code.startswith('def '):
+                tree = ast.parse(code)
+                if not tree.body or not isinstance(tree.body[0], ast.FunctionDef):
+                    raise ValueError("Skill definition must begin with a function definition")
+                name = tree.body[0].name
+                script = assignments + '\n' + code + f"\nprint(repr({name}(**{call_inputs!r})))"
+            elif '\n' in code or code.startswith('return '):
+                body = '\n'.join('    ' + line for line in code.splitlines())
+                script = assignments + f"\ndef skill_entry({', '.join(skill.parameters)}):\n{body}\nprint(repr(skill_entry(**{call_inputs!r})))"
             else:
-                # Multi-line or function block: wrap in a function if needed
-                if not code_str.startswith("def "):
-                    params_str = ", ".join(skill.parameters)
-                    indented_body = "\n".join(
-                        "    " + line for line in code_str.splitlines()
-                    )
-                    wrapper = f"def _exec({params_str}):\n{indented_body}"
-                    exec(wrapper, global_scope, local_scope)  # noqa: S102
-                    fn = local_scope["_exec"]
-                    val = fn(**{k: kwargs[k] for k in skill.parameters})
-                else:
-                    exec(code_str, global_scope, local_scope)  # noqa: S102
-                    # Find function name
-                    fn_name = code_str.split("(")[0].replace("def ", "").strip()
-                    val = local_scope[fn_name](
-                        **{k: kwargs[k] for k in skill.parameters}
-                    )
-
-            trace.append(f"Skill execution succeeded. Output: {val}")
-            return ExecutionResult(
-                skill_name=skill.name,
-                success=True,
-                result=val,
-                trace=trace,
-            )
-
-        except ZeroDivisionError:
-            err_msg = "Division by zero is undefined."
-            trace.append(f"Runtime Exception: {err_msg}")
-            return ExecutionResult(
-                skill_name=skill.name,
-                success=False,
-                error=err_msg,
-                trace=trace,
-            )
-        except (
-            ArithmeticError,
-            NameError,
-            TypeError,
-            ValueError,
-            SyntaxError,
-            KeyError,
-            IndexError,
-        ) as ex:
-            err_msg = f"{type(ex).__name__}: {ex}"
-            trace.append(f"Execution failed: {err_msg}")
-            return ExecutionResult(
-                skill_name=skill.name,
-                success=False,
-                error=err_msg,
-                trace=trace,
-            )
+                script = assignments + f"\nprint(repr({code}))"
+            # repr is used for safe data serialization; ast.literal_eval decodes the result.
+            result = run(script, memory_mb=256, builtins=list(active_policy.execution_builtins) + ['print', 'repr'],
+                         modules=list(active_policy.execution_modules))
+            if result.returncode:
+                error = result.stderr.strip()
+                if 'ZeroDivisionError' in error: error = 'Division by zero is undefined.'
+                return ExecutionResult(skill_name=skill.name, success=False, error=error, trace=trace)
+            value = ast.literal_eval(result.stdout.strip())
+            trace.append(f"Skill execution succeeded. Output: {value}")
+            return ExecutionResult(skill_name=skill.name, success=True, result=value, trace=trace)
+        except (ValueError, TypeError, SyntaxError, OSError, subprocess.TimeoutExpired) as exc:
+            return ExecutionResult(skill_name=skill.name, success=False, error=f"{type(exc).__name__}: {exc}", trace=trace)

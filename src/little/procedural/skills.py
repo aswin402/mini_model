@@ -130,4 +130,5 @@ def register_builtin_skills(
         unit_policy=unit_policy,
         catalog=catalog,
     ):
-        memory.save_skill(skill)
+        if memory.get_skill(skill.name) is None:
+            memory.save_skill(skill)

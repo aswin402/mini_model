@@ -30,17 +30,24 @@ pub struct TurboIndexRust {
 }
 
 impl TurboIndexRust {
-    pub fn new(dimension: usize, signs: &[f32]) -> Self {
-        assert_eq!(dimension, signs.len(), "Dimension must match signs length");
-        assert!((dimension & (dimension - 1)) == 0, "Dimension must be a power of 2");
+    pub fn new(dimension: usize, signs: &[f32]) -> Result<Self, &'static str> {
+        if dimension != 512 || signs.len() != 512 {
+            return Err("TurboQuant supports dimension 512 only");
+        }
+        if signs
+            .iter()
+            .any(|sign| !sign.is_finite() || sign.abs() != 1.0)
+        {
+            return Err("rotation signs must be +1 or -1");
+        }
         let scale_factor = 1.0 / (dimension as f32).sqrt();
-        Self {
+        Ok(Self {
             dimension,
             signs: signs.to_vec(),
             scale_factor,
             vectors: Vec::new(),
             id_to_index: HashMap::new(),
-        }
+        })
     }
 
     pub fn rotate(&self, vector: &[f32], out: &mut [f32]) {
@@ -190,7 +197,9 @@ impl TurboIndexRust {
         let q_1bit = self.quantize_1bit(&q_rot);
 
         let total_vecs = self.vectors.len();
-        let coarse_pool_size = (top_k * coarse_multiplier).min(total_vecs).max(1);
+        let coarse_pool_size = (top_k.saturating_mul(coarse_multiplier))
+            .min(total_vecs)
+            .max(1);
 
         let mut coarse_scores: Vec<(u32, usize)> = Vec::with_capacity(total_vecs);
         for (idx, qv) in self.vectors.iter().enumerate() {
@@ -233,7 +242,11 @@ impl TurboIndexRust {
             }
         }
 
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(top_k);
         results
     }

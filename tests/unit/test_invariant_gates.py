@@ -1,9 +1,7 @@
-import pytest
-from little.memory.store import MemoryStore
 from little.inference.invariant_gates import (
     DeepSeekInvariantVerifier,
-    InvariantGateResult,
 )
+from little.memory.store import MemoryStore
 
 
 def test_invariant_gate_dag_acyclicity():
@@ -62,6 +60,8 @@ def test_proof_chain_trace_exposes_each_invariant_gate():
     memory = MemoryStore(":memory:")
     verifier = DeepSeekInvariantVerifier(memory)
 
+    memory.add_relation("APPLE", "is_a", "FRUIT")
+    memory.add_relation("FRUIT", "is_a", "PLANT")
     result = verifier.verify_proof_chain(
         [("APPLE", "is_a", "FRUIT"), ("FRUIT", "is_a", "PLANT")]
     )

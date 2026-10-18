@@ -1,5 +1,7 @@
 # LITTLE (MIVI) v2.0 — Comprehensive Implementation Plan: Hybrid Adaptive Neural Mesh (ANM)
 
+> Active maintenance plan (2026-10-13): [Verified system repair](docs/superpowers/plans/2026-10-13-verified-system-repair.md), with [execution tracker](docs/superpowers/plans/2026-10-13-verified-system-repair-todo.md). The historical claims below are research history, not verified guarantees of the current implementation.
+
 **Version:** 2.0  
 **Architecture:** Hybrid Neuro-Symbolic Cognitive Operating System  
 **Budget Target:** < 500 MB RAM + ROM on pure CPU / edge hardware  

@@ -7,6 +7,7 @@ evidence tracking and local persistence.
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from pathlib import Path
 from types import TracebackType
@@ -30,8 +31,28 @@ from little.memory.ledger import EvidenceLedger
 from little.memory.memory_policy import MemoryPolicy
 from little.memory.schema import SCHEMA_V1
 
-
 _USE_MEMORY_POLICY = object()
+
+
+class _TransactionalConnection(sqlite3.Connection):
+    """Nested store operations use savepoints instead of committing their caller."""
+
+    def __enter__(self):
+        counter = getattr(self, "_savepoint_counter", 0) + 1
+        self._savepoint_counter = counter
+        stack = getattr(self, "_savepoints", [])
+        name = f"little_transaction_{counter}"
+        self.execute(f"SAVEPOINT {name}")
+        stack.append(name)
+        self._savepoints = stack
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        name = self._savepoints.pop()
+        if exc_type is not None:
+            self.execute(f"ROLLBACK TO SAVEPOINT {name}")
+        self.execute(f"RELEASE SAVEPOINT {name}")
+        return False
 
 
 class MemoryStore:
@@ -52,7 +73,7 @@ class MemoryStore:
         if self.db_path != ":memory:":
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
-        self._conn = sqlite3.connect(self.db_path)
+        self._conn = sqlite3.connect(self.db_path, factory=_TransactionalConnection)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON;")
         if self.db_path != ":memory:":
@@ -68,8 +89,10 @@ class MemoryStore:
         seed_ontology: bool = False,
         construction_pack: str | Path | None = None,
     ) -> None:
-        with self._conn:
-            self._conn.executescript(SCHEMA_V1)
+        self._conn.executescript(SCHEMA_V1)
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(evidence_records)")}
+        if "source_experience_id" not in columns:
+            self._conn.execute("ALTER TABLE evidence_records ADD COLUMN source_experience_id TEXT")
         self.seed_default_constructions(construction_pack=construction_pack)
         if seed_ontology:
             self.seed_ontology()
@@ -83,6 +106,20 @@ class MemoryStore:
     def close(self) -> None:
         if self._conn:
             self._conn.close()
+
+    def transaction(self):
+        """Group nested graph and audit operations into one atomic promotion."""
+        return self._conn
+
+    @property
+    def revision(self) -> int:
+        """Mutation token for invalidating derived in-process graph state."""
+        return self._conn.total_changes
+
+    @property
+    def semantic_revision(self) -> int:
+        """Mutation token excluding conversational working_turns bookkeeping."""
+        return self._conn.total_changes - getattr(self, "_working_turn_changes", 0)
 
     def __enter__(self) -> Self:
         return self
@@ -210,26 +247,68 @@ class MemoryStore:
         return self.create_concept(name, category=category)
 
     def list_concepts(self) -> list[Concept]:
+        rev = self.semantic_revision
+        if getattr(self, "_cached_concepts_rev", None) == rev and getattr(self, "_cached_concepts", None) is not None:
+            return list(self._cached_concepts)
         cursor = self._conn.execute(
             """
             SELECT id, name, aliases_json, category, attributes_json, confidence, status, created_at
             FROM concepts
+            WHERE id NOT GLOB '__*__' AND name NOT GLOB '__*__'
             ORDER BY name ASC;
             """
         )
-        return [
+        concepts = [
             Concept(
                 id=row["id"],
                 name=row["name"],
-                aliases=json.loads(row["aliases_json"]),
+                aliases=json.loads(row["aliases_json"]) if row["aliases_json"] != "[]" else [],
                 category=row["category"],
-                attributes=json.loads(row["attributes_json"]),
+                attributes=json.loads(row["attributes_json"]) if row["attributes_json"] != "{}" else {},
                 confidence=row["confidence"],
                 status=ConceptStatus(row["status"]),
                 created_at=row["created_at"],
             )
             for row in cursor.fetchall()
         ]
+        self._cached_concepts = concepts
+        self._cached_concepts_rev = rev
+        return list(concepts)
+
+    def prune_polluted_concepts(self, *, dry_run: bool = False) -> list[str]:
+        """Identify and optionally remove polluted test/benchmark concept artifacts and orphaned edges."""
+        rows = self._conn.execute(
+            """
+            SELECT id, name, category FROM concepts
+            WHERE id NOT GLOB '__*__' AND name NOT GLOB '__*__'
+            """
+        ).fetchall()
+        polluted_ids: list[str] = []
+        polluted_names: list[str] = []
+        for row in rows:
+            cid, name, category = row["id"], row["name"], row["category"]
+            if (
+                name in {"test animal", "bench_test"}
+                or name.startswith(("test_", "bench_"))
+                or (category is None and len(name) > 48 and " " in name)
+                or any(ch in name for ch in ("?", ":", "\n", "\r"))
+            ):
+                polluted_ids.append(cid)
+                polluted_names.append(name)
+
+        if not dry_run and polluted_ids:
+            placeholders = ",".join("?" for _ in polluted_ids)
+            with self.transaction() as conn:
+                conn.execute(
+                    f"DELETE FROM relations WHERE subject_id IN ({placeholders}) OR object_id IN ({placeholders});",
+                    [*polluted_ids, *polluted_ids],
+                )
+                conn.execute(
+                    f"DELETE FROM concepts WHERE id IN ({placeholders});",
+                    polluted_ids,
+                )
+            self._cached_concepts = None
+        return sorted(polluted_names)
 
     def update_concept_attributes(
         self, concept_id: str, attributes: dict[str, Any]
@@ -378,6 +457,54 @@ class MemoryStore:
                 ),
             )
         return rel
+
+    def import_relation_record(
+        self,
+        subject_id: str,
+        predicate: str,
+        object_id: str,
+        weight_positive: int,
+        weight_negative: int,
+        confidence: float | None = None,
+        source_experience_id: str | None = None,
+    ) -> Relation:
+        """Restore one exact relation record without reinforcing it on replay."""
+        for value in (weight_positive, weight_negative):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError("relation weights must be non-negative integers")
+        if not predicate.strip():
+            raise ValueError("relation predicate must be non-empty")
+        if confidence is not None and (
+            isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float))
+            or not math.isfinite(confidence)
+            or not 0 <= confidence <= 1
+        ):
+            raise ValueError("relation confidence must be a finite probability")
+        existing = self.get_relations(subject_id=subject_id, predicate=predicate, object_id=object_id)
+        relation = Relation(
+            id=existing[0].id if existing else generate_id("rel"),
+            subject_id=subject_id,
+            predicate=predicate.strip().lower(),
+            object_id=object_id,
+            weight_positive=weight_positive,
+            weight_negative=weight_negative,
+            source_experience_id=source_experience_id,
+            created_at=existing[0].created_at if existing else current_iso_timestamp(),
+        )
+        with self._conn:
+            self._conn.execute(
+                """INSERT INTO relations
+                (id, subject_id, predicate, object_id, weight_positive, weight_negative,
+                 confidence, source_experience_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(subject_id, predicate, object_id) DO UPDATE SET
+                weight_positive=excluded.weight_positive, weight_negative=excluded.weight_negative,
+                confidence=excluded.confidence, source_experience_id=excluded.source_experience_id""",
+                (relation.id, subject_id, relation.predicate, object_id, weight_positive,
+                 weight_negative, relation.confidence, source_experience_id, relation.created_at),
+            )
+        return relation
 
     def bulk_import_triples(
         self,
@@ -542,6 +669,8 @@ class MemoryStore:
             extracted_triples=extracted_triples,
             source=source,
         )
+        # Persist the exact observation; normalization belongs to perception.
+        exp.input_text = input_text
         with self._conn:
             self._conn.execute(
                 """

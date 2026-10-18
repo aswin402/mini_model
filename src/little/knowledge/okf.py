@@ -2,12 +2,13 @@
 
 Implements versioned Markdown + YAML frontmatter knowledge documents with
 bidirectional [[Concept]] wikilinking, DeepSeek-R1 invariant verification
-(I_DAG, I_MUTEX, I_SORT, I_GROUND), and atomic sync with SQLite MemoryStore.
+(I_DAG, I_MUTEX, I_SORT, I_GROUND), and synchronization with SQLite MemoryStore.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,9 +19,10 @@ from little.core.contracts import (
     EvidenceRecord,
     EvidenceStatus,
     SourceType,
-    VerificationStatus,
 )
-from little.core.models import Concept, ConceptStatus, current_iso_timestamp, generate_id
+from little.core.models import (
+    ConceptStatus,
+)
 from little.inference.invariant_gates import DeepSeekInvariantVerifier
 from little.knowledge.okf_policy import OKFPolicy
 from little.knowledge.registry import SchemaRegistry
@@ -94,7 +96,9 @@ def serialize_yaml_value(val: Any, indent: int = 0) -> str:
                     lines.append(f"{ind}- {{}}")
                     continue
                 first_k = keys[0]
-                lines.append(f"{ind}- {first_k}: {serialize_yaml_value(item[first_k], 0)}")
+                lines.append(
+                    f"{ind}- {first_k}: {serialize_yaml_value(item[first_k], 0)}"
+                )
                 for k in keys[1:]:
                     lines.append(f"{ind}  {k}: {serialize_yaml_value(item[k], 0)}")
             elif isinstance(item, (list, tuple)):
@@ -111,7 +115,12 @@ def serialize_yaml_value(val: Any, indent: int = 0) -> str:
         return "null"
     else:
         s = str(val)
-        if any(c in s for c in ":\n#{}[]\"'") or s.lower() in ("true", "false", "null"):
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z_ -]*", s) or s.lower() in (
+            "true",
+            "false",
+            "null",
+            "none",
+        ):
             return json.dumps(s)
         return s
 
@@ -150,8 +159,12 @@ def parse_yaml_frontmatter(text: str) -> tuple[dict[str, Any], str]:
             return []
         if v == "{}":
             return {}
-        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
-            return v[1:-1]
+        if (v.startswith('"') and v.endswith('"')) or (
+            v.startswith("'") and v.endswith("'")
+        ):
+            if v.startswith('"'):
+                return json.loads(v)
+            return v[1:-1].replace("''", "'")
         try:
             if "." in v:
                 return float(v)
@@ -159,7 +172,9 @@ def parse_yaml_frontmatter(text: str) -> tuple[dict[str, Any], str]:
         except ValueError:
             return v
 
-    def parse_block(block_lines: list[str], start_i: int, base_indent: int) -> tuple[Any, int]:
+    def parse_block(
+        block_lines: list[str], start_i: int, base_indent: int
+    ) -> tuple[Any, int]:
         res_dict: dict[str, Any] = {}
         res_list: list[Any] = []
         is_list = False
@@ -179,7 +194,7 @@ def parse_yaml_frontmatter(text: str) -> tuple[dict[str, Any], str]:
             if stripped.startswith("- "):
                 is_list = True
                 content = stripped[2:].strip()
-                if ":" in content and not content.startswith("{"):
+                if ":" in content and not content.startswith(("{", '"', "'")):
                     k, v = content.split(":", 1)
                     k = k.strip()
                     v = v.strip()
@@ -201,7 +216,11 @@ def parse_yaml_frontmatter(text: str) -> tuple[dict[str, Any], str]:
                             j += 1
                             continue
                         nxt_ind = len(nxt) - len(nxt.lstrip())
-                        if nxt_ind == indent + 2 and ":" in nxt_s and not nxt_s.startswith("- "):
+                        if (
+                            nxt_ind == indent + 2
+                            and ":" in nxt_s
+                            and not nxt_s.startswith("- ")
+                        ):
                             sub_k, sub_v = nxt_s.split(":", 1)
                             item_dict[sub_k.strip()] = parse_scalar(sub_v)
                             j += 1
@@ -236,6 +255,26 @@ def parse_yaml_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 
     parsed, _ = parse_block(fm_lines, 0, 0)
     return (parsed if isinstance(parsed, dict) else {}), body
+
+
+def validate_concept_name(name: str) -> str:
+    """Reject filenames and malformed names before any filesystem or store mutation."""
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("Concept name must be a non-empty string")
+    clean = name.strip().lower()
+    if clean in (".", "..") or any(c in clean for c in "/\\\x00\n\r"):
+        raise ValueError(
+            "Concept name cannot contain path separators or control characters"
+        )
+    return clean
+
+
+def concept_file_path(directory: Path, name: str, extension: str) -> Path:
+    clean = validate_concept_name(name)
+    candidate = directory / f"{clean.replace(' ', '_')}{extension}"
+    if candidate.resolve().parent != directory.resolve():
+        raise ValueError("Concept path must remain inside vault")
+    return candidate
 
 
 class OKFEngine:
@@ -275,14 +314,14 @@ class OKFEngine:
         output_dir: str | Path | None = None,
     ) -> Path:
         """Export a concept and its relations from MemoryStore into an OKF document."""
-        clean_name = concept_name.strip().lower()
+        clean_name = validate_concept_name(concept_name)
         concept = self.memory.get_concept(clean_name)
         if not concept:
             raise KeyError(f"Concept '{clean_name}' does not exist in memory")
 
         out_dir = Path(output_dir or self.policy.vault_directory)
         out_dir.mkdir(parents=True, exist_ok=True)
-        file_path = out_dir / f"{clean_name.replace(' ', '_')}{self.policy.file_extension}"
+        file_path = concept_file_path(out_dir, clean_name, self.policy.file_extension)
 
         # Group relations
         all_relations = self.memory.get_relations(subject_id=concept.id)
@@ -292,26 +331,67 @@ class OKFEngine:
         skills = []
         custom_relations = []
 
+        relation_records = []
         for rel in all_relations:
             if rel.subject_id != concept.id:
                 continue
             obj_concept = self.memory.get_concept(rel.object_id)
             obj_name = obj_concept.name if obj_concept else rel.object_id
 
+            relation_records.append(
+                {
+                    "predicate": rel.predicate,
+                    "object": obj_name,
+                    "weight_positive": rel.weight_positive,
+                    "weight_negative": rel.weight_negative,
+                    "confidence": rel.confidence,
+                    "source_experience_id": rel.source_experience_id,
+                    "evidence_json": json.dumps(
+                        [
+                            {
+                                "evidence_id": evidence.evidence_id,
+                                "source_type": evidence.source_type.value,
+                                "source_reference": evidence.source_reference,
+                                "source_text": evidence.source_text,
+                                "extraction_confidence": evidence.extraction_confidence,
+                                "positive": evidence.positive,
+                                "status": evidence.status.value,
+                                "observed_at": evidence.observed_at,
+                                "created_at": evidence.created_at,
+                            }
+                            for evidence in {
+                                evidence.evidence_id: evidence
+                                for evidence in (
+                                    self.memory.evidence.list_for_claim(
+                                        concept.name, rel.predicate, obj_name
+                                    )
+                                    + self.memory.evidence.list_for_claim(
+                                        concept.id, rel.predicate, rel.object_id
+                                    )
+                                )
+                            }.values()
+                        ]
+                    ),
+                }
+            )
+            if rel.weight_positive <= rel.weight_negative:
+                continue
             if rel.predicate == "is_a":
                 is_a_parents.append(obj_name)
             elif rel.predicate in ("disjoint_with", "cannot_be"):
                 disjoint_concepts.append(obj_name)
-            elif rel.predicate in ("has_part", "part_of", "has"):
+            elif rel.predicate in ("has_part", "has"):
                 parts.append(obj_name)
             elif rel.predicate in ("capable_of", "can"):
                 skills.append(obj_name)
             else:
-                custom_relations.append({
-                    "predicate": rel.predicate,
-                    "object": obj_name,
-                    "confidence": round(rel.confidence, 3),
-                })
+                custom_relations.append(
+                    {
+                        "predicate": rel.predicate,
+                        "object": obj_name,
+                        "confidence": round(rel.confidence, 3),
+                    }
+                )
 
         # Build frontmatter
         fm: dict[str, Any] = {
@@ -330,8 +410,8 @@ class OKFEngine:
             "confidence": round(concept.confidence, 3),
             "status": concept.status.value,
         }
-        if custom_relations:
-            fm["relations"] = custom_relations
+        fm["format"] = "little.okf.v2"
+        fm["relations"] = relation_records
 
         # Build Markdown Body with [[Wikilinks]]
         title = concept.name.title()
@@ -346,16 +426,24 @@ class OKFEngine:
             body_lines.append(f"- **Taxonomic Hierarchy**: Belongs to {parents_links}.")
         if parts:
             parts_links = ", ".join(f"[[{p}]]" for p in parts)
-            body_lines.append(f"- **Mereological Structure**: Composed of {parts_links}.")
+            body_lines.append(
+                f"- **Mereological Structure**: Composed of {parts_links}."
+            )
         if skills:
             skills_links = ", ".join(f"[[{s}]]" for s in skills)
-            body_lines.append(f"- **Procedural Capabilities**: Exhibits skills {skills_links}.")
+            body_lines.append(
+                f"- **Procedural Capabilities**: Exhibits skills {skills_links}."
+            )
 
         body_lines.append("")
         body_lines.append("## Notes & Empirical Grounding")
-        body_lines.append(f"Recorded in persistent SQLite memory with confidence {concept.confidence:.2f}.")
+        body_lines.append(
+            f"Recorded in persistent SQLite memory with confidence {concept.confidence:.2f}."
+        )
 
-        content = f"---\n{serialize_yaml_value(fm)}\n---\n\n" + "\n".join(body_lines) + "\n"
+        content = (
+            f"---\n{serialize_yaml_value(fm)}\n---\n\n" + "\n".join(body_lines) + "\n"
+        )
         file_path.write_text(content, encoding="utf-8")
         return file_path
 
@@ -375,13 +463,102 @@ class OKFEngine:
         path = Path(file_path)
         doc = self.parse_file(path)
         name = doc.concept_name
-        if not name:
+        missing = [
+            key
+            for key in self.policy.required_frontmatter_fields
+            if key not in doc.frontmatter
+        ]
+        try:
+            validate_concept_name(doc.frontmatter.get("name"))
+        except ValueError as exc:
+            missing.append(str(exc))
+        if "id" in self.policy.required_frontmatter_fields and (
+            not isinstance(doc.frontmatter.get("id"), str)
+            or not doc.frontmatter["id"].strip()
+        ):
+            missing.append("id must be a non-empty string")
+        if "taxonomy" in doc.frontmatter and not isinstance(
+            doc.frontmatter["taxonomy"], dict
+        ):
+            missing.append("taxonomy must be an object")
+        confidence = doc.frontmatter.get("confidence", 1.0)
+        if (
+            isinstance(confidence, bool)
+            or not isinstance(confidence, (float, int))
+            or not math.isfinite(confidence)
+            or not 0 <= confidence <= 1
+        ):
+            missing.append("confidence must be between zero and one")
+        if not isinstance(doc.frontmatter.get("aliases", []), list) or not isinstance(
+            doc.frontmatter.get("attributes", {}), dict
+        ):
+            missing.append("aliases must be a list and attributes must be an object")
+        if missing:
             return OKFImportResult(
                 concept_name="",
                 file_path=str(path),
                 passed_verification=False,
-                rejection_reasons=["Document frontmatter missing valid 'name' field"],
+                rejection_reasons=[
+                    f"Missing or invalid required frontmatter: {missing}"
+                ],
             )
+
+        versioned = doc.frontmatter.get("format") == "little.okf.v2"
+        records = doc.frontmatter.get("relations", [])
+        if versioned:
+            try:
+                if not isinstance(records, list):
+                    raise TypeError("relations must be a list")
+                for record in records:
+                    if (
+                        not isinstance(record, dict)
+                        or not isinstance(record.get("predicate"), str)
+                        or not record["predicate"].strip()
+                    ):
+                        raise ValueError("relation predicate is required")
+                    validate_concept_name(record.get("object"))
+                    for key in ("weight_positive", "weight_negative"):
+                        value = record.get(key)
+                        if type(value) is not int or value < 0:
+                            raise ValueError(f"{key} must be a nonnegative integer")
+                    explicit = json.loads(record.get("evidence_json", "[]"))
+                    if not isinstance(explicit, list):
+                        raise TypeError("evidence_json must contain a list")
+                    for item in explicit:
+                        if (
+                            not isinstance(item, dict)
+                            or type(item.get("positive")) is not bool
+                        ):
+                            raise ValueError("Evidence polarity must be boolean")
+                        EvidenceRecord(
+                            evidence_id=item["evidence_id"],
+                            subject_id=name,
+                            predicate=record["predicate"],
+                            object_id=record["object"],
+                            source_type=SourceType(item["source_type"]),
+                            source_reference=item["source_reference"],
+                            source_text=item["source_text"],
+                            extraction_confidence=item["extraction_confidence"],
+                            positive=item["positive"],
+                            status=EvidenceStatus(item["status"]),
+                            observed_at=item["observed_at"],
+                            created_at=item["created_at"],
+                        )
+                    confidence = record.get("confidence")
+                    if (
+                        isinstance(confidence, bool)
+                        or not isinstance(confidence, (float, int))
+                        or not math.isfinite(confidence)
+                        or not 0 <= confidence <= 1
+                    ):
+                        raise ValueError("confidence must be between zero and one")
+            except (ValueError, TypeError, KeyError) as exc:
+                return OKFImportResult(
+                    name,
+                    str(path),
+                    passed_verification=False,
+                    rejection_reasons=[str(exc)],
+                )
 
         # 1. Ensure or update concept
         new_created = False
@@ -403,39 +580,59 @@ class OKFEngine:
         # 2. Extract all candidate claims from taxonomy, mereology, skills, and relations
         candidate_claims: list[CandidateClaim] = []
 
-        tax = doc.frontmatter.get("taxonomy", {})
+        tax = {} if versioned else doc.frontmatter.get("taxonomy", {})
         if isinstance(tax, dict):
             is_a_parents = tax.get("is_a", [])
             if isinstance(is_a_parents, list):
                 for parent in is_a_parents:
                     if parent and isinstance(parent, str) and parent.strip():
                         candidate_claims.append(
-                            CandidateClaim(subject=name, predicate="is_a", object=parent.strip().lower(), probability=1.0)
+                            CandidateClaim(
+                                subject=name,
+                                predicate="is_a",
+                                object=parent.strip().lower(),
+                                probability=1.0,
+                            )
                         )
             disjoints = tax.get("disjoint_with", [])
             if isinstance(disjoints, list):
                 for disjoint in disjoints:
                     if disjoint and isinstance(disjoint, str) and disjoint.strip():
                         candidate_claims.append(
-                            CandidateClaim(subject=name, predicate="disjoint_with", object=disjoint.strip().lower(), probability=1.0)
+                            CandidateClaim(
+                                subject=name,
+                                predicate="disjoint_with",
+                                object=disjoint.strip().lower(),
+                                probability=1.0,
+                            )
                         )
 
-        mereo = doc.frontmatter.get("mereology", {})
+        mereo = {} if versioned else doc.frontmatter.get("mereology", {})
         if isinstance(mereo, dict):
             parts = mereo.get("parts", [])
             if isinstance(parts, list):
                 for part in parts:
                     if part and isinstance(part, str) and part.strip():
                         candidate_claims.append(
-                            CandidateClaim(subject=name, predicate="has_part", object=part.strip().lower(), probability=1.0)
+                            CandidateClaim(
+                                subject=name,
+                                predicate="has_part",
+                                object=part.strip().lower(),
+                                probability=1.0,
+                            )
                         )
 
-        skills = doc.frontmatter.get("procedural_skills", [])
+        skills = [] if versioned else doc.frontmatter.get("procedural_skills", [])
         if isinstance(skills, list):
             for skill in skills:
                 if skill and isinstance(skill, str) and skill.strip():
                     candidate_claims.append(
-                        CandidateClaim(subject=name, predicate="can", object=skill.strip().lower(), probability=1.0)
+                        CandidateClaim(
+                            subject=name,
+                            predicate="can",
+                            object=skill.strip().lower(),
+                            probability=1.0,
+                        )
                     )
 
         for rel in doc.frontmatter.get("relations", []):
@@ -445,17 +642,32 @@ class OKFEngine:
                 prob = float(rel.get("confidence", 1.0))
                 if p and o:
                     candidate_claims.append(
-                        CandidateClaim(subject=name, predicate=p, object=o, probability=prob)
+                        CandidateClaim(
+                            subject=name,
+                            predicate=p,
+                            object=o,
+                            probability=prob,
+                            positive=(
+                                rel.get("weight_positive", 1)
+                                > rel.get("weight_negative", 0)
+                            ),
+                            attributes={"record": rel} if versioned else {},
+                        )
                     )
 
         # Also extract implicit relations from [[Wikilinks]] if not already present
-        for link in doc.wikilinks:
+        for link in [] if versioned else doc.wikilinks:
             if link.target and link.target != name:
                 # Default associative relation if not specifically asserted
                 exists = any(c.object == link.target for c in candidate_claims)
                 if not exists:
                     candidate_claims.append(
-                        CandidateClaim(subject=name, predicate="related_to", object=link.target, probability=0.85)
+                        CandidateClaim(
+                            subject=name,
+                            predicate="related_to",
+                            object=link.target,
+                            probability=0.85,
+                        )
                     )
 
         # 3. Verify each candidate claim with DeepSeek-R1 Invariant Verification Gates
@@ -463,7 +675,11 @@ class OKFEngine:
         rejected = 0
         reasons = []
 
-        for claim in candidate_claims:
+        unique_claims = {
+            (claim.subject, claim.predicate, claim.object, claim.positive): claim
+            for claim in candidate_claims
+        }
+        for claim in unique_claims.values():
             # Ensure target concept exists in memory so graph checks can evaluate
             target_concept = self.memory.get_or_create_concept(claim.object)
 
@@ -473,19 +689,31 @@ class OKFEngine:
                 obj=claim.object,
             )
 
-            if not gate_result.passed:
+            if claim.positive and not gate_result.passed:
                 rejected += 1
                 msg = f"Rejected ({claim.subject}, {claim.predicate}, {claim.object}): {gate_result.error_message}"
                 reasons.append(msg)
                 continue
 
             # Invariant gates passed: commit relation and evidence
-            self.memory.add_relation(
-                subject_id=concept.id,
-                predicate=claim.predicate,
-                object_id=target_concept.id,
-                positive=True,
-            )
+            record = claim.attributes.get("record")
+            if record is not None:
+                self.memory.import_relation_record(
+                    concept.id,
+                    claim.predicate,
+                    target_concept.id,
+                    record["weight_positive"],
+                    record["weight_negative"],
+                    confidence=record["confidence"],
+                    source_experience_id=record.get("source_experience_id"),
+                )
+            else:
+                self.memory.add_relation(
+                    concept.id,
+                    claim.predicate,
+                    target_concept.id,
+                    positive=claim.positive,
+                )
             # Record evidence record
             evidence_rec = EvidenceRecord.from_claim(
                 claim=claim,
@@ -494,7 +722,31 @@ class OKFEngine:
                 source_text=f"OKF vault document: {path.name}",
             )
             evidence_rec.status = EvidenceStatus.ACCEPTED
-            self.memory.evidence.append(evidence_rec)
+            explicit_evidence = (
+                json.loads(record.get("evidence_json", "[]")) if record else []
+            )
+            if explicit_evidence:
+                for item in explicit_evidence:
+                    if self.memory.evidence.get(item["evidence_id"]) is not None:
+                        continue
+                    self.memory.evidence.append(
+                        EvidenceRecord(
+                            subject_id=name,
+                            predicate=claim.predicate,
+                            object_id=claim.object,
+                            evidence_id=item["evidence_id"],
+                            source_type=SourceType(item["source_type"]),
+                            source_reference=item["source_reference"],
+                            source_text=item["source_text"],
+                            extraction_confidence=item["extraction_confidence"],
+                            positive=item["positive"],
+                            status=EvidenceStatus(item["status"]),
+                            observed_at=item["observed_at"],
+                            created_at=item["created_at"],
+                        )
+                    )
+            else:
+                self.memory.evidence.append(evidence_rec)
             added += 1
 
         return OKFImportResult(
@@ -507,7 +759,9 @@ class OKFEngine:
             new_concept_created=new_created,
         )
 
-    def import_vault(self, vault_dir: str | Path | None = None) -> list[OKFImportResult]:
+    def import_vault(
+        self, vault_dir: str | Path | None = None
+    ) -> list[OKFImportResult]:
         """Import all OKF files in a directory."""
         v_dir = Path(vault_dir or self.policy.vault_directory)
         if not v_dir.exists():

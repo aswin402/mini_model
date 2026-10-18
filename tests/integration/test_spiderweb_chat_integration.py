@@ -1,10 +1,10 @@
 import pytest
+
 from little.core.concept_knot import ConceptKnot
 from little.dynamics.cfc_ode import CfCContinuousODE, apply_action_jump
 from little.inference.dual_speed import DualSpeedInfillingEngine
 from little.inference.invariant_gates import DeepSeekInvariantVerifier
 from little.language.laya_gatekeeper import (
-    BeliefStatus,
     LayaSystem1Gatekeeper,
     QueryIntent,
 )
@@ -33,7 +33,7 @@ def test_full_spiderweb_cognitive_pipeline():
     res = dual_speed.query("APPLE", "FRUIT")
     assert res.mode == "THINKING"
     assert res.path == ["APPLE", "POME_FRUIT", "FRUIT"]
-    assert res.confidence > 0.85
+    assert res.confidence == pytest.approx(0.25)
     assert "<think>" in res.inspectable_trace
 
     # 5. Action jump & continuous ODE

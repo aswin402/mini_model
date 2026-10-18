@@ -18,9 +18,11 @@ Profiles latency (ms), Headroom context token compression, and process RSS memor
 
 from __future__ import annotations
 
-import json
-import os
+import re
 import resource
+import shutil
+import sys
+import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -56,13 +58,51 @@ class CategorySummary:
 
 
 class RealWorldChatBenchmark:
-    """Executes the 38-turn real-world conversational matrix against CognitiveKernel."""
+    """Executes the 44-turn real-world conversational matrix against CognitiveKernel."""
 
-    def __init__(self, db_path: str = "data/little.db") -> None:
-        self.memory = MemoryStore(db_path)
-        self.kernel = CognitiveKernel(memory=self.memory)
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        workspace_root: Path | None = None,
+    ) -> None:
+        self._temp_dir = (
+            tempfile.TemporaryDirectory(prefix="little-rw-bench-")
+            if workspace_root is None
+            else None
+        )
+        self._workspace_root = (
+            Path(workspace_root)
+            if workspace_root is not None
+            else Path(self._temp_dir.name)
+        )
+        (self._workspace_root / "scratch").mkdir(parents=True, exist_ok=True)
+        source_vault = Path("data/knowledge_vault")
+        target_vault = self._workspace_root / "data" / "knowledge_vault"
+        if source_vault.is_dir() and not target_vault.exists():
+            shutil.copytree(source_vault, target_vault)
+
+        if db_path is None:
+            import sqlite3
+
+            default_db = Path("data/little.db")
+            self.memory = MemoryStore(
+                ":memory:", seed_ontology=not default_db.is_file()
+            )
+            if default_db.is_file():
+                src_conn = sqlite3.connect(default_db)
+                try:
+                    src_conn.backup(self.memory._conn)
+                finally:
+                    src_conn.close()
+                self.memory._init_db(seed_ontology=False)
+                self.memory.prune_polluted_concepts()
+        else:
+            self.memory = MemoryStore(db_path)
+
+        self.kernel = CognitiveKernel(
+            memory=self.memory, workspace_root=self._workspace_root
+        )
         self.rust = RustAccelerationCore.get()
-        os.makedirs("scratch", exist_ok=True)
 
     def _get_rss_mb(self) -> float:
         """Process resident set size in megabytes."""
@@ -74,8 +114,29 @@ class RealWorldChatBenchmark:
                         return round(kb / 1024.0, 2)
         except OSError:
             pass
-        usage_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        return round(usage_kb / 1024.0, 2)
+        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        divisor = 1024.0 * 1024.0 if sys.platform == "darwin" else 1024.0
+        return round(usage / divisor, 2)
+
+    @staticmethod
+    def _is_refuted_reply(r: str) -> bool:
+        low = r.lower()
+        if any(
+            u in low
+            for u in (
+                "do not know",
+                "don't know",
+                "don't have that information",
+                "no evidence",
+                "unknown",
+            )
+        ):
+            return False
+        if re.search(r"\byes\b", low):
+            return False
+        return bool(
+            re.search(r"\b(no|not|distinct|refuted|impossible|incompatible)\b", low)
+        )
 
     def run(self) -> dict[str, Any]:
         turns = [
@@ -129,27 +190,27 @@ class RealWorldChatBenchmark:
             # Category 4: Invariant Refutation & Mutual Exclusivity
             # -------------------------------------------------------------
             ("Invariant Refutation", "Is a reptile an amphibian?", "refuted_mutex_vertebrate",
-             lambda r: any(w in r.lower() for w in ("no", "not", "distinct", "refuted"))),
+             self._is_refuted_reply),
             ("Invariant Refutation", "Is a star a planet?", "refuted_mutex_celestial",
-             lambda r: any(w in r.lower() for w in ("no", "not", "distinct", "refuted"))),
+             self._is_refuted_reply),
             ("Invariant Refutation", "Is a falcon a dog?", "refuted_disjoint_family",
-             lambda r: any(w in r.lower() for w in ("no", "not", "distinct", "refuted"))),
+             self._is_refuted_reply),
             ("Invariant Refutation", "Is a solid a gas?", "refuted_mutex_state_of_matter",
-             lambda r: any(w in r.lower() for w in ("no", "not", "distinct", "refuted"))),
+             self._is_refuted_reply),
 
             # -------------------------------------------------------------
             # Category 5: Exact CAS & Symbolic Math
             # -------------------------------------------------------------
             ("Exact Math & CAS", "What is 45 * 12 + 180 / 6?", "compound_cas_arithmetic",
-             lambda r: "570" in r),
+             lambda r: bool(re.search(r"\b570\b", r))),
             ("Exact Math & CAS", "What is (3/4) + (2/5)?", "fraction_cas_arithmetic",
-             lambda r: "1.15" in r or "23/20" in r),
+             lambda r: bool(re.search(r"\b(1\.15|23/20)\b", r))),
             ("Exact Math & CAS", "Sarah has 15 apples. She gives 4 apples to Bob, then buys 7 more apples. How many apples does Sarah have now?", "word_problem_proportional",
-             lambda r: "18" in r),
+             lambda r: bool(re.search(r"\b18\b", r))),
             ("Exact Math & CAS", "Convert 36 inches to feet", "unit_conversion_graph",
-             lambda r: "3" in r),
+             lambda r: bool(re.search(r"\b3(?:\.0+)?\b", r))),
             ("Exact Math & CAS", "Is 104729 prime?", "symbolic_primality_test",
-             lambda r: any(w in r.lower() for w in ("yes", "true", "is_prime"))),
+             lambda r: bool(re.search(r"\b(yes|true)\b", r.lower())) and "not prime" not in r.lower()),
 
             # -------------------------------------------------------------
             # Category 6: Deterministic AST Code Synthesis

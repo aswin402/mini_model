@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+import tempfile
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Any
 
 from little.actions import (
     ActionPolicy,
@@ -16,7 +19,10 @@ from little.actions import (
 )
 from little.active.crawler import KnowledgeCrawler
 from little.active.latent_knot_inducer import LatentKnotInducer
-from little.active.self_study import AutonomousSelfStudyEngine, DreamReport, SleepConsolidationReport
+from little.active.self_study import (
+    AutonomousSelfStudyEngine,
+    SleepConsolidationReport,
+)
 from little.active.stream_learner import (
     ChunkIngestResult,
     ContinuousStreamLearner,
@@ -24,10 +30,14 @@ from little.active.stream_learner import (
 )
 from little.core.cognitive_command import CognitiveCommandRegistry
 from little.core.contracts import CandidateFrame, SourceType
-from little.core.models import BeliefStatus, InferenceResult, LearningResult, generate_id
+from little.core.models import (
+    BeliefStatus,
+    InferenceResult,
+    LearningResult,
+    generate_id,
+)
 from little.core.runtime_policy import RuntimePolicy
 from little.dynamics.continuous_simulation import PhysicalSimulationEngine
-from little.perception.sensory import SensoryGroundingEngine
 from little.inference.thinking_controller import CognitiveMode, ThinkingController
 from little.knowledge.living_wiki import LivingWiki
 from little.language.dialogue_surface import DialogueSurfaceEngine
@@ -37,6 +47,7 @@ from little.memory.headroom import HeadroomContextManager
 from little.memory.paged_store import PagedConceptStore
 from little.memory.store import MemoryStore
 from little.neural import NeuralRouter, RoutingDecision
+from little.perception.sensory import SensoryGroundingEngine
 from little.procedural.code_synthesizer import ASTCodeSynthesizer, SynthesizedProgram
 from little.procedural.math_cas import UnitConversionGraph
 
@@ -65,6 +76,7 @@ class CognitiveKernel:
         neural_router: NeuralRouter | None = None,
         action_policy: ActionPolicy | None = None,
         workspace_root: Path | None = None,
+        wiki: LivingWiki | None = None,
     ) -> None:
         self.memory = memory
         explicit_runtime_policy = runtime_policy is not None
@@ -95,19 +107,36 @@ class CognitiveKernel:
         self.dialogue_surface = DialogueSurfaceEngine(
             policy=getattr(self.runtime_policy, "dialogue_surface", None)
         )
-        self.action_policy = action_policy or ActionPolicy.default(workspace_root=workspace_root)
-        self.neural_router = neural_router or NeuralRouter()
-        self.action_router = ActionRouter(action_policy=self.action_policy, neural_router=self.neural_router)
-        self.tool_executor = ToolExecutor(action_policy=self.action_policy)
+        self.action_policy = action_policy or self.runtime_policy.actions or ActionPolicy.default(workspace_root=workspace_root)
+        if workspace_root is not None and action_policy is None:
+            self.action_policy = replace(self.action_policy, workspace_root=workspace_root.resolve())
+        self.neural_router = neural_router or NeuralRouter(policy=self.runtime_policy.neural)
+        self.action_router = ActionRouter(action_policy=self.action_policy, neural_router=self.neural_router, tool_policy=self.runtime_policy.tools)
+        self.tool_executor = ToolExecutor(action_policy=self.action_policy, tool_policy=self.runtime_policy.tools)
         self.tool_grounder = ToolGroundingEngine(memory_store=self.memory)
-        self.code_synthesizer = ASTCodeSynthesizer()
-        self.headroom = HeadroomContextManager(memory=self.memory)
-        self.wiki = LivingWiki(memory=self.memory)
+        self.code_synthesizer = ASTCodeSynthesizer(policy=self.runtime_policy.code)
+        self.headroom = HeadroomContextManager(memory=self.memory, policy=self.runtime_policy.headroom)
+        self._vault_owner = None
+        self._owns_wiki = wiki is None
+        if wiki is None:
+            configured_vault = Path(self.runtime_policy.wiki.vault_directory) if self.runtime_policy.wiki else None
+            if workspace_root is not None:
+                vault = workspace_root / "data" / "knowledge_vault"
+            elif configured_vault is not None and configured_vault.is_absolute():
+                vault = configured_vault
+            elif self.memory.db_path != ":memory:":
+                vault = Path(self.memory.db_path).resolve().parent / "knowledge_vault"
+            else:
+                self._vault_owner = tempfile.TemporaryDirectory(prefix="little-vault-")
+                vault = Path(self._vault_owner.name)
+            self.wiki = LivingWiki(memory=self.memory, vault_dir=vault, policy=self.runtime_policy.wiki)
+        else:
+            self.wiki = wiki
         self.crawler = KnowledgeCrawler(memory=self.memory, wiki=self.wiki)
         self.latent_inducer = LatentKnotInducer(memory=self.memory, wiki=self.wiki)
         self.paged_store = PagedConceptStore(
             memory=self.memory,
-            policy=getattr(self.runtime_policy, "memory", None),
+            policy=(self.runtime_policy.memory if explicit_runtime_policy and self.runtime_policy.memory else self.memory.memory_policy),
         )
         self.stream_learner = ContinuousStreamLearner(
             kernel=self,
@@ -119,16 +148,40 @@ class CognitiveKernel:
             tool_grounder=self.tool_grounder,
             action_policy=self.action_policy,
             memory=self.memory,
+            policy=self.runtime_policy.planning,
+            tool_policy=self.runtime_policy.tools,
         )
         self.self_study = AutonomousSelfStudyEngine(
             memory=self.memory,
             wiki=self.wiki,
             crawler=self.crawler,
+            policy=self.runtime_policy.study,
         )
         self.simulation_engine = PhysicalSimulationEngine()
         self.sensory_engine = SensoryGroundingEngine(self.memory)
         self.command_dispatcher = CognitiveCommandRegistry()
         self._last_execution_record: dict[str, Any] | None = None
+
+    def close(self) -> None:
+        """Release resources owned by the kernel; caller-owned memory stays open."""
+        if self._owns_wiki:
+            self.wiki.vector_index.close()
+            self.wiki.compressor.close()
+        if self._vault_owner is not None:
+            self._vault_owner.cleanup()
+            self._vault_owner = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
+    def learn_routing_feedback(self, text: str, pathway) -> None:
+        """Apply explicit user/developer routing feedback; never infer labels from answers."""
+        from little.neural.models import Pathway
+        target = Pathway(pathway)
+        self.neural_router.learn(self.neural_router.encoder.encode(text), target)
 
     def _record_execution(
         self,
@@ -244,19 +297,18 @@ class CognitiveKernel:
 
     def recall_conversation_history(self) -> str:
         """Recall prior inquiries from episodic working memory."""
-        user_turns = [t for t in self.headroom._turns if t.role == "user"]
-        prior_turns = user_turns[:-1] if len(user_turns) > 1 else []
+        user_turns = self.headroom.recent_turns("user", limit=3)
+        prior_turns = user_turns[1:]
 
         if not prior_turns:
             return "This is your first inquiry in our current conversation. What would you like to explore or teach me?"
 
-        last_user_turn = prior_turns[-1]
-        last_query = last_user_turn.raw_text.strip()
+        last_query = prior_turns[0][1].strip()
 
         if len(prior_turns) == 1:
             return f"Just before this, you asked: \"{last_query}\"."
 
-        second_last = prior_turns[-2].raw_text.strip()
+        second_last = prior_turns[1][1].strip()
         return (
             f"Just before this, you asked: \"{last_query}\". "
             f"Before that, you asked: \"{second_last}\"."
@@ -291,7 +343,7 @@ class CognitiveKernel:
 
     def teach(self, text: str) -> ChunkIngestResult:
         """Continuously ingest and verify new knowledge from natural language text."""
-        return self.stream_learner.ingest_chunk(text)
+        return self.stream_learner.ingest_chunk(text, source_type=SourceType.USER)
 
     def sleep(self, max_dream_steps: int = 3) -> SleepConsolidationReport:
         """Run an offline sleep consolidation cycle (dreaming, invariant mining, cluster induction, and episodic compaction)."""

@@ -12,8 +12,11 @@ Evaluates 6 core real-world capabilities:
 from __future__ import annotations
 
 import os
+import re
+import tempfile
 import time
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from little.core.kernel import CognitiveKernel
@@ -45,10 +48,35 @@ class ModalitySummary:
 class SOTABenchmarkSuite:
     """Executes the full comprehensive benchmark matrix on LITTLE."""
 
-    def __init__(self) -> None:
+    def __init__(self, workspace_root: Path | None = None) -> None:
+        self._temp_dir = (
+            tempfile.TemporaryDirectory(prefix="little-bench-")
+            if workspace_root is None
+            else None
+        )
+        self._workspace_root = (
+            Path(workspace_root)
+            if workspace_root is not None
+            else Path(self._temp_dir.name)
+        )
         self.memory = MemoryStore(":memory:", seed_ontology=True)
-        self.kernel = CognitiveKernel(memory=self.memory)
+        self.kernel = CognitiveKernel(
+            memory=self.memory, workspace_root=self._workspace_root
+        )
         self.rust = RustAccelerationCore.get()
+
+    @staticmethod
+    def _has_unknown_marker(low: str) -> bool:
+        return any(
+            u in low
+            for u in (
+                "do not know",
+                "don't know",
+                "don't have that information",
+                "no evidence",
+                "unknown",
+            )
+        )
 
     def run_all(self) -> dict[str, Any]:
         results: list[BenchmarkItemResult] = []
@@ -74,21 +102,21 @@ class SOTABenchmarkSuite:
             t0 = time.perf_counter()
             reply = self.kernel.chat(prompt)
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            low = reply.lower()
+            is_unknown = self._has_unknown_marker(low)
 
             passed = False
-            if exp_type == "social_pleasantry" and ("hello" in reply.lower() or "glad" in reply.lower() or "great" in reply.lower()):
-                passed = True
-            elif exp_type.startswith("learned_") and ("learned" in reply.lower() or "understood" in reply.lower() or "recorded your name" in reply.lower()):
-                passed = True
-            elif exp_type == "supported" and "yes" in reply.lower():
-                passed = True
-            elif exp_type == "transitive_supported" and "yes" in reply.lower():
-                passed = True
-            elif exp_type == "mutex_supported" and "yes" in reply.lower():
-                passed = True
-            elif exp_type == "refuted" and ("no" in reply.lower() or "refuted" in reply.lower() or "impossible" in reply.lower()):
-                passed = True
-            elif exp_type == "recalled_identity" and "aswin" in reply.lower():
+            if exp_type == "social_pleasantry" and not is_unknown and (
+                "hello" in low or "glad" in low or "great" in low
+            ) or exp_type.startswith("learned_") and not is_unknown and (
+                "learned" in low or "understood" in low or "recorded your name" in low
+            ) or exp_type in ("supported", "transitive_supported", "mutex_supported") and not is_unknown and bool(
+                re.search(r"\byes\b", low)
+            ) and not bool(re.search(r"\bno\b", low)) or exp_type == "refuted" and not is_unknown and not bool(
+                re.search(r"\byes\b", low)
+            ) and bool(
+                re.search(r"\b(no|refuted|impossible|distinct|incompatible)\b", low)
+            ) or exp_type == "recalled_identity" and not is_unknown and "aswin" in low:
                 passed = True
 
             results.append(BenchmarkItemResult(
@@ -104,36 +132,25 @@ class SOTABenchmarkSuite:
         # ---------------------------------------------------------------------
         # 2. Mathematical Reasoning & Symbolic CAS
         # ---------------------------------------------------------------------
-        math_tests = [
-            ("What is 125 * 8 - 45 / 3?", "125*8 - 45/3 = 985"),
-            ("What is (2/3) + (5/6)?", "3/2 = 1.5"),
-            ("Solve x: 3*x + 15 = 45", "x = 10"),
-            ("How many feet in 36 inches?", "3"),
-            ("Is 104729 prime?", "True"),
-            ("What is the fibonacci of 20?", "6765"),
-            ("Sarah has 15 apples. She gives 4 apples to Bob, then buys 7 more apples. How many apples does Sarah have now?", "18"),
+        math_tests: list[tuple[str, str, tuple[str, ...]]] = [
+            ("What is 125 * 8 - 45 / 3?", "125*8 - 45/3 = 985", (r"\b985\b",)),
+            ("What is (2/3) + (5/6)?", "3/2 = 1.5", (r"\b1\.5\b", r"\b3/2\b")),
+            ("Solve x: 3*x + 15 = 45", "x = 10", (r"\b10\b",)),
+            ("How many feet in 36 inches?", "3", (r"\b3(?:\.0+)?\b",)),
+            ("Is 104729 prime?", "True", (r"\byes\b", r"\btrue\b", r"\bis prime\b")),
+            ("What is the fibonacci of 20?", "6765", (r"\b6765\b",)),
+            ("Sarah has 15 apples. She gives 4 apples to Bob, then buys 7 more apples. How many apples does Sarah have now?", "18", (r"\b18\b",)),
         ]
 
-        for prompt, expected_ans in math_tests:
+        for prompt, expected_ans, patterns in math_tests:
             t0 = time.perf_counter()
             reply = self.kernel.chat(prompt)
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            low = reply.lower()
 
-            passed = False
-            if "985" in reply:
-                passed = True
-            elif "1.5" in reply or "3/2" in reply:
-                passed = True
-            elif "10" in reply:
-                passed = True
-            elif "3" in reply:
-                passed = True
-            elif "yes" in reply.lower() or "true" in reply.lower():
-                passed = True
-            elif "6765" in reply:
-                passed = True
-            elif "18" in reply:
-                passed = True
+            passed = not self._has_unknown_marker(low) and any(
+                re.search(pat, low) is not None for pat in patterns
+            )
 
             results.append(BenchmarkItemResult(
                 modality="Math & CAS Reasoning",
@@ -178,7 +195,11 @@ class SOTABenchmarkSuite:
         # ---------------------------------------------------------------------
         # 4. Typed Action Core & Tool Execution
         # ---------------------------------------------------------------------
-        os.makedirs("scratch", exist_ok=True)
+        ws_root = getattr(self, "_workspace_root", None)
+        if ws_root is not None:
+            (Path(ws_root) / "scratch").mkdir(parents=True, exist_ok=True)
+        else:
+            os.makedirs("scratch", exist_ok=True)
         tool_tests = [
             ("calculate 250 * 4", "calculator"),
             ("what is the current time?", "system_time"),
@@ -194,17 +215,7 @@ class SOTABenchmarkSuite:
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
             passed = False
-            if tool_name == "calculator" and "1000" in reply:
-                passed = True
-            elif tool_name == "system_time" and ("time is" in reply.lower() or "utc" in reply.lower()):
-                passed = True
-            elif tool_name == "web_search" and "quantum computing" in reply.lower():
-                passed = True
-            elif tool_name == "file_writer" and "wrote" in reply.lower():
-                passed = True
-            elif tool_name == "file_reader" and "benchmark data" in reply:
-                passed = True
-            elif tool_name == "python_repl" and "84" in reply:
+            if tool_name == "calculator" and re.search(r"\b1000\b", reply) or tool_name == "system_time" and ("time is" in reply.lower() or "utc" in reply.lower()) or tool_name == "web_search" and "quantum computing" in reply.lower() or tool_name == "file_writer" and "wrote" in reply.lower() or tool_name == "file_reader" and "benchmark data" in reply or tool_name == "python_repl" and re.search(r"\b84\b", reply):
                 passed = True
 
             results.append(BenchmarkItemResult(

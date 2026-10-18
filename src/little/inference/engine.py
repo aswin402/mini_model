@@ -11,9 +11,9 @@ from collections import deque
 from typing import Any
 
 from little.core.models import BeliefStatus, InferenceResult
-from little.knowledge.registry import SchemaRegistry
 from little.core.semantic_predicate_policy import SemanticPredicatePolicy
 from little.inference.reasoning_policy import ReasoningPolicy
+from little.knowledge.registry import SchemaRegistry
 from little.memory.store import MemoryStore
 
 
@@ -30,14 +30,11 @@ class InferenceEngine:
     ) -> None:
         self.memory = memory
         self.policy = policy or ReasoningPolicy.default()
-        self.max_depth = (
-            self.policy.max_depth if max_depth is None else max_depth
-        )
+        self.max_depth = self.policy.max_depth if max_depth is None else max_depth
         self.registry = registry or SchemaRegistry.default()
         self.semantic = semantic_policy or SemanticPredicatePolicy.default()
         self.taxonomy_predicate = (
-            self.registry.primary_predicate("taxonomy")
-            or self.semantic.taxonomy
+            self.registry.primary_predicate("taxonomy") or self.semantic.taxonomy
         )
         self.part_predicate = self.semantic.part
         self.whole_predicate = self.semantic.whole
@@ -129,11 +126,43 @@ class InferenceEngine:
                     trace=trace,
                 )
             elif rel.weight_negative > rel.weight_positive:
+                support = (
+                    self._find_transitive_path(
+                        subj_concept.id, target_concept.id, clean_pred
+                    )
+                    if clean_pred in self.transitive_predicates
+                    else None
+                )
+                refutation_conf = (
+                    rel.confidence
+                    if rel.confidence > 0.0
+                    else round(
+                        rel.weight_negative
+                        / (rel.weight_positive + rel.weight_negative + 1.0),
+                        4,
+                    )
+                )
+                if support:
+                    names, confidence = support
+                    trace.append(
+                        "Direct opposition conflicts with a supported transitive proof."
+                    )
+                    return InferenceResult(
+                        query=query_str,
+                        status=BeliefStatus.CONTRADICTED,
+                        answer=None,
+                        confidence=min(refutation_conf, confidence),
+                        evidence=[
+                            f"NOT ({subj_concept.name} {matched_pred} {target_concept.name})",
+                            f"Chain: {' -> '.join(names)}",
+                        ],
+                        trace=trace,
+                    )
                 return InferenceResult(
                     query=query_str,
                     status=BeliefStatus.REFUTED,
                     answer=False,
-                    confidence=rel.confidence,
+                    confidence=refutation_conf,
                     evidence=[
                         f"NOT ({subj_concept.name} {matched_pred} {target_concept.name})"
                     ],
@@ -419,16 +448,14 @@ class InferenceEngine:
         target_id: str,
         predicate: str,
     ) -> tuple[list[str], float] | None:
-        """Bidirectional Frontier Collision Search (meeting-in-the-middle) with DeepSeek Invariant Gates.
+        """Bidirectional search over supported premises within a graph hop bound.
 
         Searches forward from start_id (outgoing edges: current -> next) and backward
         from target_id (incoming edges: prev -> current) simultaneously.
         Reduces computational graph search complexity from O(b^d) to O(2 * b^(d/2)).
 
-        Enforces 3 Invariant Verification Gates:
-        1. I_DAG: Acyclicity invariant (no repeating nodes).
-        2. I_mutex: Mutual exclusivity invariant (no disjoint conflict along the chain).
-        3. I_ground: Empirical grounding invariant (weight_positive > weight_negative).
+        Paths have no repeated nodes and only positive net evidence edges.
+        Persisted evidence is not an independent guarantee of external truth.
         """
         if start_id == target_id:
             c = self.memory.get_concept(start_id)
@@ -441,7 +468,9 @@ class InferenceEngine:
 
         # Backward search state: ... -> target_id
         # visited_bwd[node_id] = (path_ids_to_target, cumulative_confidence)
-        visited_bwd: dict[str, tuple[list[str], float]] = {target_id: ([target_id], 1.0)}
+        visited_bwd: dict[str, tuple[list[str], float]] = {
+            target_id: ([target_id], 1.0)
+        }
         q_bwd: deque[str] = deque([target_id])
 
         depth_fwd = 0
@@ -449,7 +478,7 @@ class InferenceEngine:
 
         while q_fwd and q_bwd:
             # Check maximum depth bounds
-            if depth_fwd + depth_bwd > self.max_depth:
+            if depth_fwd + depth_bwd >= self.max_depth:
                 break
 
             # Always expand the smaller frontier to minimize branching factor (Bi-A* optimization)
@@ -466,7 +495,7 @@ class InferenceEngine:
                         subject_id=curr_fwd, predicate=predicate
                     )
                     for rel in relations:
-                        # Gate 3: I_ground (Empirical evidence verification)
+                        # Traverse positive net evidence premises only.
                         if rel.weight_positive <= rel.weight_negative:
                             continue
 
@@ -508,7 +537,7 @@ class InferenceEngine:
                         object_id=curr_bwd, predicate=predicate
                     )
                     for rel in relations:
-                        # Gate 3: I_ground (Empirical evidence verification)
+                        # Traverse positive net evidence premises only.
                         if rel.weight_positive <= rel.weight_negative:
                             continue
 
@@ -562,12 +591,9 @@ class InferenceEngine:
                 for rel in self.memory.get_relations(
                     subject_id=s_node, predicate=disj_pred
                 ):
-                    if (
-                        rel.object_id in target_ancestors
-                        and (
-                            rel.weight_positive > rel.weight_negative
-                            or rel.weight_negative > rel.weight_positive
-                        )
+                    if rel.object_id in target_ancestors and (
+                        rel.weight_positive > rel.weight_negative
+                        or rel.weight_negative > rel.weight_positive
                     ):
                         c1 = self.memory.get_concept(s_node)
                         c2 = self.memory.get_concept(rel.object_id)
@@ -580,12 +606,9 @@ class InferenceEngine:
                 for rel in self.memory.get_relations(
                     subject_id=t_node, predicate=disj_pred
                 ):
-                    if (
-                        rel.object_id in subj_ancestors
-                        and (
-                            rel.weight_positive > rel.weight_negative
-                            or rel.weight_negative > rel.weight_positive
-                        )
+                    if rel.object_id in subj_ancestors and (
+                        rel.weight_positive > rel.weight_negative
+                        or rel.weight_negative > rel.weight_positive
                     ):
                         c1 = self.memory.get_concept(t_node)
                         c2 = self.memory.get_concept(rel.object_id)

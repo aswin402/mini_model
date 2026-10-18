@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,23 @@ class HeadroomPolicy:
     eviction_salience_threshold: float
     memory_headroom_budget_mb: float
 
+    def __post_init__(self) -> None:
+        for name in ("max_active_tokens", "max_active_concepts", "max_working_episodes"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+        for name in ("recency_decay_lambda", "eviction_salience_threshold", "memory_headroom_budget_mb"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be a finite non-negative number")
+        if self.memory_headroom_budget_mb <= 0 or self.eviction_salience_threshold > 1:
+            raise ValueError("headroom budget must be positive and salience threshold at most one")
+        if not self.salience_weights or any(
+            isinstance(value, bool) or not isinstance(value, (int, float))
+            or not math.isfinite(value) or value < 0 for value in self.salience_weights.values()
+        ) or sum(self.salience_weights.values()) <= 0:
+            raise ValueError("salience weights must be finite, non-negative, and not all zero")
+
     @classmethod
     def load(cls, directory: str | Path) -> HeadroomPolicy:
         path = Path(directory) / "headroom_policy.json"
@@ -31,13 +49,13 @@ class HeadroomPolicy:
         if payload.get("format") != "little.headroom.v1":
             raise ValueError(f"{path} has an unsupported headroom format")
 
-        tokens = int(payload.get("max_active_tokens", 2048))
-        concepts = int(payload.get("max_active_concepts", 64))
-        episodes = int(payload.get("max_working_episodes", 32))
-        decay = float(payload.get("recency_decay_lambda", 0.01))
+        tokens = payload.get("max_active_tokens", 2048)
+        concepts = payload.get("max_active_concepts", 64)
+        episodes = payload.get("max_working_episodes", 32)
+        decay = payload.get("recency_decay_lambda", 0.01)
         weights = dict(payload.get("salience_weights", {"recency": 0.4, "frequency": 0.3, "activation": 0.3}))
-        thresh = float(payload.get("eviction_salience_threshold", 0.25))
-        budget = float(payload.get("memory_headroom_budget_mb", 50.0))
+        thresh = payload.get("eviction_salience_threshold", 0.25)
+        budget = payload.get("memory_headroom_budget_mb", 50.0)
 
         return cls(
             max_active_tokens=tokens,

@@ -19,6 +19,8 @@ A wolf is a mammal.
 A human is a mammal.
 
 An eagle is a bird.
+A hawk is a bird.
+A falcon is a bird.
 An owl is a bird.
 A sparrow is a bird.
 A penguin is a bird.
@@ -47,6 +49,10 @@ A spider is an arachnid.
 A dolphin can swim.
 A bat can fly.
 An eagle can fly.
+A hawk can fly.
+A falcon can fly.
+A salmon lives in water.
+A trout lives in water.
 A cheetah can run fast.
 A human can speak languages.
 A human can solve mathematical problems.

@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import math
 import re
+import sys
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from little.core.models import generate_id
 from little.memory.headroom_policy import HeadroomPolicy
@@ -39,8 +40,7 @@ class WorkingTurn:
     @property
     def token_count(self) -> int:
         if self.is_compressed:
-            # Compressed turns consume ~10 tokens for semantic frame pointer
-            return 10
+            return max(1, len((self.compressed_summary or "").split()))
         return len(self.tokens) or max(1, len(self.raw_text.split()))
 
 
@@ -82,6 +82,7 @@ class HeadroomContextManager:
         self._concept_activations: dict[str, float] = {}
         self._concept_last_seen: dict[str, float] = {}
         self._eviction_count: int = 0
+        self.session_id = generate_id("session")
 
     def _tokenize(self, text: str) -> tuple[str, ...]:
         clean = text.lower().strip()
@@ -100,7 +101,14 @@ class HeadroomContextManager:
         tokens = self._tokenize(text)
         c_ids = tuple(str(c).strip().lower() for c in (concept_ids or ()))
 
-        turn = WorkingTurn(
+        experience_id = getattr(experience_id, "id", experience_id)
+        changes_before = self.memory._conn.total_changes
+        with self.memory.transaction():
+            if experience_id is None or self.memory.get_experience(experience_id) is None:
+                experience_id = self.memory.add_experience(
+                    input_text=text, source=f"conversation:{role}"
+                ).id
+            turn = WorkingTurn(
             turn_id=generate_id("turn"),
             role=role,
             raw_text=text,
@@ -108,6 +116,14 @@ class HeadroomContextManager:
             tokens=tokens,
             concept_ids=c_ids,
             experience_id=experience_id,
+            )
+            self.memory._conn.execute(
+                "INSERT INTO working_turns (turn_id, session_id, role, experience_id, timestamp) VALUES (?, ?, ?, ?, ?)",
+                (turn.turn_id, self.session_id, role, experience_id, now),
+            )
+        changes_delta = self.memory._conn.total_changes - changes_before
+        self.memory._working_turn_changes = (
+            getattr(self.memory, "_working_turn_changes", 0) + changes_delta
         )
 
         # Update concept activation statistics
@@ -160,12 +176,13 @@ class HeadroomContextManager:
     def enforce_headroom(self) -> None:
         """Ensure active tokens and concepts remain strictly under policy limits."""
         # 1. Check token limits: compress older, low-salience turns
-        while self.total_active_tokens() > self.policy.max_active_tokens and len(self._turns) > 2:
+        while self.total_active_tokens() > self.policy.max_active_tokens and self._turns:
             # Find candidate for compression (oldest non-compressed turn, excluding last 2 turns)
             compress_candidate: WorkingTurn | None = None
             min_salience = 999.0
 
-            for turn in self._turns[:-2]:
+            eligible = self._turns[:-2] if len(self._turns) > 2 else self._turns
+            for turn in eligible:
                 if not turn.is_compressed:
                     sal = self.compute_turn_salience(turn).total_salience
                     if sal < min_salience:
@@ -176,6 +193,18 @@ class HeadroomContextManager:
                 self._compress_turn(compress_candidate)
             else:
                 # All eligible turns are compressed; evict oldest compressed turn
+                self._evict_oldest_compressed()
+
+        while len(self._turns) > self.policy.max_working_episodes:
+            self._compress_turn(self._turns[0])
+            self._evict_oldest_compressed()
+
+        # This is the Python working-set estimate, not a bound on process RSS.
+        while self._turns and self.stats().estimated_ram_kb > self.policy.memory_headroom_budget_mb * 1024:
+            candidate = next((turn for turn in self._turns if not turn.is_compressed), None)
+            if candidate is not None:
+                self._compress_turn(candidate)
+            else:
                 self._evict_oldest_compressed()
 
         # 2. Check concept limits: prune lowest-salience concept entries
@@ -201,12 +230,14 @@ class HeadroomContextManager:
         """Reversible Context Compression (CCR): summarize turn into structured semantic pointer."""
         c_names = ", ".join(turn.concept_ids) if turn.concept_ids else "general"
         summary = f"[{turn.role.upper()} discussed {c_names} (ref: {turn.experience_id or turn.turn_id})]"
-        turn.compressed_summary = summary
+        turn.compressed_summary = " ".join(summary.split()[: self.policy.max_active_tokens])
         turn.is_compressed = True
+        turn.raw_text = ""
+        turn.tokens = ()
 
     def _evict_oldest_compressed(self) -> None:
         """Evict oldest compressed turn from RAM to disk."""
-        for i, turn in enumerate(self._turns[:-2]):
+        for i, turn in enumerate(self._turns):
             if turn.is_compressed:
                 self._turns.pop(i)
                 self._eviction_count += 1
@@ -225,7 +256,22 @@ class HeadroomContextManager:
                     if exp:
                         return exp.input_text
                 return turn.raw_text
-        raise KeyError(f"Turn '{turn_id}' not found in active context")
+        row = self.memory._conn.execute(
+            "SELECT experience_id FROM working_turns WHERE turn_id=?", (turn_id,)
+        ).fetchone()
+        if row:
+            experience = self.memory.get_experience(row["experience_id"])
+            if experience is not None:
+                return experience.input_text
+        raise KeyError(f"Turn '{turn_id}' has no persisted experience")
+
+    def recent_turns(self, role: str, limit: int = 3) -> list[tuple[str, str]]:
+        """Return newest persisted turns in this conversation, including evictions."""
+        rows = self.memory._conn.execute(
+            "SELECT turn_id, experience_id FROM working_turns WHERE session_id=? AND role=? "
+            "ORDER BY timestamp DESC, rowid DESC LIMIT ?", (self.session_id, role, limit),
+        ).fetchall()
+        return [(row["turn_id"], self.decompress_turn(row["turn_id"])) for row in rows]
 
     def get_active_context(self) -> list[dict[str, str]]:
         """Return formatted working memory context for reasoning engines."""
@@ -247,9 +293,14 @@ class HeadroomContextManager:
         """Return current memory and compression metrics."""
         compressed = sum(1 for t in self._turns if t.is_compressed)
         # Approximate working memory in KB
-        text_bytes = sum(len(t.raw_text) for t in self._turns)
-        struct_bytes = len(self._turns) * 256 + len(self._concept_frequencies) * 128
-        total_kb = round((text_bytes + struct_bytes) / 1024.0, 2)
+        total_bytes = sys.getsizeof(self._turns)
+        for turn in self._turns:
+            total_bytes += sys.getsizeof(turn) + sys.getsizeof(turn.__dict__)
+            total_bytes += sum(sys.getsizeof(value) for value in turn.__dict__.values())
+            total_bytes += sum(sys.getsizeof(token) for token in turn.tokens)
+        for values in (self._concept_frequencies, self._concept_activations, self._concept_last_seen):
+            total_bytes += sys.getsizeof(values) + sum(sys.getsizeof(key) + sys.getsizeof(value) for key, value in values.items())
+        total_kb = round(total_bytes / 1024.0, 2)
 
         return HeadroomStats(
             active_turns=len(self._turns),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,20 @@ class AgenticPlanningPolicy:
         "I_ground_provenance",
     )
 
+    def __post_init__(self) -> None:
+        if type(self.max_steps) is not int or self.max_steps <= 0:
+            raise ValueError("max_steps must be a positive integer")
+        if type(self.max_retries_per_step) is not int or self.max_retries_per_step < 0:
+            raise ValueError("max_retries_per_step must be a nonnegative integer")
+        if type(self.enable_backtracking) is not bool:
+            raise TypeError("enable_backtracking must be boolean")
+        if (
+            type(self.step_timeout_seconds) not in (int, float)
+            or not math.isfinite(self.step_timeout_seconds)
+            or self.step_timeout_seconds <= 0
+        ):
+            raise ValueError("step_timeout_seconds must be finite and positive")
+
     @classmethod
     def load(cls, directory: str | Path) -> AgenticPlanningPolicy:
         path = Path(directory) / "agentic_planning_policy.json"
@@ -58,15 +73,19 @@ class AgenticPlanningPolicy:
         if not isinstance(payload, dict):
             raise TypeError(f"{path} must contain a JSON object")
         if payload.get("format") != "little.agentic_planning_policy.v1":
-            raise ValueError(f"{path} has an unsupported agentic planning policy format")
+            raise ValueError(
+                f"{path} has an unsupported agentic planning policy format"
+            )
 
         return cls(
-            max_steps=int(payload.get("max_steps", 8)),
-            max_retries_per_step=int(payload.get("max_retries_per_step", 2)),
-            step_timeout_seconds=float(payload.get("step_timeout_seconds", 5.0)),
-            enable_backtracking=bool(payload.get("enable_backtracking", True)),
+            max_steps=payload.get("max_steps", 8),
+            max_retries_per_step=payload.get("max_retries_per_step", 2),
+            step_timeout_seconds=payload.get("step_timeout_seconds", 5.0),
+            enable_backtracking=payload.get("enable_backtracking", True),
             chainable_tools=tuple(str(t) for t in payload.get("chainable_tools", ())),
-            conjunction_delimiters=tuple(str(d) for d in payload.get("conjunction_delimiters", ())),
+            conjunction_delimiters=tuple(
+                str(d) for d in payload.get("conjunction_delimiters", ())
+            ),
             variable_reference_patterns=tuple(
                 str(p) for p in payload.get("variable_reference_patterns", ())
             ),

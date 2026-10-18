@@ -1,6 +1,6 @@
 """Unit tests for the Neural Semantic Frame and Slot Extractor."""
 
-from little.neural import ExtractedSemanticFrame, NeuralFrameExtractor, SemanticFramePolicy
+from little.neural import NeuralFrameExtractor
 
 
 def test_filler_stripping_and_conversational_extraction():
@@ -95,7 +95,7 @@ def test_conjunction_decomposition():
     assert "oxygen" in objs
     for f in frames:
         assert f.subject == "water"
-        assert f.predicate == "part_of"
+        assert f.predicate == "has_part"
 
 
 def test_invalid_and_empty_inputs_safe():

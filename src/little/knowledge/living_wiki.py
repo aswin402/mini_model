@@ -8,15 +8,27 @@ and microsecond semantic search via TurboQuant vector indexing.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from little.knowledge.living_wiki_policy import LivingWikiPolicy
-from little.knowledge.okf import OKFDocument, OKFEngine
+from little.knowledge.okf import (
+    OKFDocument,
+    OKFEngine,
+    concept_file_path,
+    validate_concept_name,
+)
 from little.memory.store import MemoryStore
 from little.neural.encoder import NeuralStateEncoder
-from little.neural.turbo_quant import TurboQuantCompressor, TurboQuantIndex, VectorSearchResult
+from little.neural.turbo_quant import (
+    TurboQuantCompressor,
+    TurboQuantIndex,
+    VectorSearchResult,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -70,29 +82,47 @@ class LivingWiki:
         self.nodes: dict[str, WikiNode] = {}
         self.build_graph()
 
+    @staticmethod
+    def _extract_out_links(doc: OKFDocument) -> set[str]:
+        name = doc.concept_name
+        out_targets: set[str] = set()
+        tax = doc.frontmatter.get("taxonomy", {})
+        if isinstance(tax, dict):
+            for parent in tax.get("is_a", []):
+                if parent and isinstance(parent, str):
+                    out_targets.add(parent.strip().lower())
+        for relation in doc.frontmatter.get("relations", []):
+            if isinstance(relation, dict) and isinstance(
+                relation.get("object"), str
+            ):
+                out_targets.add(validate_concept_name(relation["object"]))
+        mereology = doc.frontmatter.get("mereology", {})
+        if isinstance(mereology, dict):
+            out_targets.update(
+                validate_concept_name(part)
+                for part in mereology.get("parts", [])
+            )
+        for link in doc.wikilinks:
+            if link.target and link.target != name:
+                out_targets.add(link.target)
+        return out_targets
+
     def build_graph(self) -> None:
         """Scan knowledge vault, construct link topology, and build TurboQuant index."""
+        if getattr(self, "vector_index", None) is not None:
+            self.vector_index.close()
         self.nodes.clear()
+        self.vector_index = TurboQuantIndex(self.compressor)
 
         # 1. First pass: Load all existing OKF documents
-        for file_path in self.vault_dir.glob(f"*{self.okf_engine.policy.file_extension}"):
+        for file_path in self.vault_dir.glob(
+            f"*{self.okf_engine.policy.file_extension}"
+        ):
             try:
                 doc = self.okf_engine.parse_file(file_path)
                 name = doc.concept_name
-                if not name:
-                    continue
-
-                out_targets = set()
-                # Targets from explicit taxonomy and relations
-                tax = doc.frontmatter.get("taxonomy", {})
-                if isinstance(tax, dict):
-                    for parent in tax.get("is_a", []):
-                        if parent and isinstance(parent, str):
-                            out_targets.add(parent.strip().lower())
-                # Targets from [[Wikilinks]]
-                for link in doc.wikilinks:
-                    if link.target and link.target != name:
-                        out_targets.add(link.target)
+                validate_concept_name(name)
+                out_targets = self._extract_out_links(doc)
 
                 node = WikiNode(
                     concept_name=name,
@@ -112,7 +142,8 @@ class LivingWiki:
                     vector=state.embedding,
                     metadata={"name": name, "file": str(file_path)},
                 )
-            except Exception:
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                logger.warning("Unable to index wiki page %s: %s", file_path, exc)
                 continue
 
         # 2. Second pass: Construct backward links and stub nodes for missing concepts
@@ -161,38 +192,56 @@ class LivingWiki:
     ) -> list[VectorSearchResult]:
         """Sub-millisecond coarse-to-fine TurboQuant semantic search over living wiki."""
         state = self.encoder.encode(query)
-        return self.vector_index.search(state.embedding, top_k=top_k, threshold=threshold)
+        return self.vector_index.search(
+            state.embedding, top_k=top_k, threshold=threshold
+        )
 
     def save_or_update_page(self, doc: OKFDocument) -> Path:
         """Persist or update an OKF page in the vault and refresh graph & vector index."""
-        name = doc.concept_name
-        file_path = self.vault_dir / f"{name.replace(' ', '_')}{self.okf_engine.policy.file_extension}"
+        name = validate_concept_name(doc.concept_name)
+        file_path = concept_file_path(
+            self.vault_dir, name, self.okf_engine.policy.file_extension
+        )
 
         from little.knowledge.okf import serialize_yaml_value
 
         content = f"---\n{serialize_yaml_value(doc.frontmatter)}\n---\n\n{doc.body}\n"
         file_path.write_text(content, encoding="utf-8")
 
-        # Update or create node
-        out_targets = {link.target for link in doc.wikilinks if link.target != name}
-        node = self.nodes.get(name)
-        if node:
-            node.file_path = file_path
-            node.document = doc
-            node.out_links = out_targets
-            node.is_stub = False
-        else:
-            node = WikiNode(
-                concept_name=name,
-                file_path=file_path,
-                document=doc,
-                out_links=out_targets,
-                is_stub=False,
-            )
-            self.nodes[name] = node
+        parsed_doc = self.okf_engine.parse_file(file_path)
+        out_targets = self._extract_out_links(parsed_doc)
 
-        # Update vector index
-        full_text = f"{name} {doc.body}"
+        prev_node = self.nodes.get(name)
+        existing_in_links = set(prev_node.in_links) if prev_node else set()
+        if prev_node:
+            for old_target in prev_node.out_links - out_targets:
+                t_node = self.nodes.get(old_target)
+                if t_node:
+                    t_node.in_links.discard(name)
+                    if t_node.is_stub and not t_node.in_links:
+                        self.nodes.pop(old_target, None)
+
+        self.nodes[name] = WikiNode(
+            concept_name=name,
+            file_path=file_path,
+            document=parsed_doc,
+            out_links=out_targets,
+            in_links=existing_in_links,
+            attributes=dict(parsed_doc.frontmatter.get("attributes", {})),
+            is_stub=False,
+        )
+
+        for target in out_targets:
+            if target in self.nodes:
+                self.nodes[target].in_links.add(name)
+            else:
+                self.nodes[target] = WikiNode(
+                    concept_name=target,
+                    in_links={name},
+                    is_stub=True,
+                )
+
+        full_text = f"{name} {parsed_doc.body}"
         state = self.encoder.encode(full_text)
         self.vector_index.add(
             id=name,
@@ -213,7 +262,8 @@ class LivingWiki:
             doc = self.okf_engine.parse_file(path)
             self.save_or_update_page(doc)
             return path
-        except Exception:
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            logger.warning("Unable to synchronize wiki concept %s: %s", clean_name, exc)
             return None
 
     def stats(self) -> WikiGraphStats:

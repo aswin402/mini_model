@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.resources
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,11 @@ class RuntimePaths:
     def schema_directory(self) -> Path:
         """Return the directory containing the versioned runtime schema."""
         return self.construction_pack.parent
+
+    @property
+    def world_corpus_directory(self) -> Path:
+        """Immutable corpus belongs beside the knowledge pack, independent of state."""
+        return self.knowledge_pack.parent / "world_corpus"
 
     @classmethod
     def load(cls, directory: str | Path) -> RuntimePaths:
@@ -49,10 +55,11 @@ class RuntimePaths:
             raise ValueError(f"{path} is missing runtime paths: {missing}")
 
         def resource(key: str) -> Path:
+            import os
             value = values[key]
             if not isinstance(value, str) or not value.strip():
                 raise TypeError(f"{path} runtime path {key!r} must be a string")
-            return directory / value
+            return Path(os.path.normpath(directory / value))
 
         database = values["database"]
         if not isinstance(database, str) or not database.strip():
@@ -68,5 +75,15 @@ class RuntimePaths:
 
     @classmethod
     def default(cls) -> RuntimePaths:
-        root = Path(__file__).resolve().parents[3]
-        return cls.load(root / "data" / "schemas")
+        module = Path(__file__).resolve()
+        root = module.parents[3]
+        source_package = root / "src" / "little"
+        if (root / "pyproject.toml").is_file() and module.parent.parent == source_package and (root / "data" / "schemas" / "runtime_paths.json").is_file():
+            return cls.load(root / "data" / "schemas")
+        package = importlib.resources.files("little")
+        schema = package.joinpath("_resources", "schemas")
+        # Standard wheel installers unpack package resources into actual directories.
+        # Path-based consumers intentionally require this installed layout.
+        if not isinstance(schema, Path):
+            raise RuntimeError("LITTLE resources require an unpacked wheel installation")
+        return cls.load(schema)

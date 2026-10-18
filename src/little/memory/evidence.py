@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from little.core.contracts import (
     CommitDecision,
+    CommitStatus,
     EvidenceRecord,
     EvidenceStatus,
     ProofTrace,
@@ -33,10 +34,10 @@ class EvidenceStore:
                 """
                 INSERT INTO evidence_records (
                     evidence_id, subject_id, predicate, object_id, value_json,
-                    source_type, source_reference, source_text, observed_at,
+                    source_type, source_reference, source_experience_id, source_text, observed_at,
                     valid_from, valid_to, support_weight, opposition_weight,
                     extraction_confidence, polarity, status, derivation_proof_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     record.evidence_id,
@@ -46,6 +47,7 @@ class EvidenceStore:
                     None,
                     record.source_type.value,
                     record.source_reference,
+                    record.source_experience_id,
                     record.source_text,
                     record.observed_at,
                     None,
@@ -65,7 +67,7 @@ class EvidenceStore:
         row = self._conn.execute(
             """
             SELECT evidence_id, subject_id, predicate, object_id,
-                   source_type, source_reference, source_text,
+                   source_type, source_reference, source_experience_id, source_text,
                    extraction_confidence, polarity, status, derivation_proof_id,
                    observed_at, created_at
             FROM evidence_records
@@ -81,7 +83,7 @@ class EvidenceStore:
         rows = self._conn.execute(
             """
             SELECT evidence_id, subject_id, predicate, object_id,
-                   source_type, source_reference, source_text,
+                   source_type, source_reference, source_experience_id, source_text,
                    extraction_confidence, polarity, status, derivation_proof_id,
                    observed_at, created_at
             FROM evidence_records
@@ -96,7 +98,7 @@ class EvidenceStore:
         rows = self._conn.execute(
             """
             SELECT evidence_id, subject_id, predicate, object_id,
-                   source_type, source_reference, source_text,
+                   source_type, source_reference, source_experience_id, source_text,
                    extraction_confidence, polarity, status, derivation_proof_id,
                    observed_at, created_at
             FROM evidence_records
@@ -136,6 +138,9 @@ class EvidenceStore:
         return proof.proof_id
 
     def save_decision(self, decision: CommitDecision) -> str:
+        current = self.current_decision(decision.evidence_id)
+        if current is not None:
+            return self.replace_decision(decision)
         with self._conn:
             self._conn.execute(
                 """
@@ -153,6 +158,19 @@ class EvidenceStore:
                 ),
             )
         return decision.decision_id
+
+    def current_decision(self, evidence_id: str) -> CommitDecision | None:
+        row = self._conn.execute(
+            "SELECT * FROM commit_decisions WHERE evidence_id=? ORDER BY created_at DESC LIMIT 1",
+            (evidence_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return CommitDecision(
+            decision_id=row["decision_id"], evidence_id=row["evidence_id"],
+            status=CommitStatus(row["status"]), checks=json.loads(row["checks_json"]),
+            reasons=json.loads(row["reasons_json"]), created_at=row["created_at"],
+        )
 
     def replace_decision(self, decision: CommitDecision) -> str:
         """Replace the current decision for evidence while preserving one row."""
@@ -188,6 +206,7 @@ class EvidenceStore:
             object_id=row["object_id"],
             source_type=SourceType(row["source_type"]),
             source_reference=row["source_reference"],
+            source_experience_id=row["source_experience_id"],
             source_text=row["source_text"],
             extraction_confidence=row["extraction_confidence"],
             positive=bool(row["polarity"]),

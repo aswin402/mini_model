@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set
+
 from little.inference.invariant_gates import DeepSeekInvariantVerifier
 from little.inference.reasoning_policy import ReasoningPolicy
 from little.memory.store import MemoryStore
@@ -23,11 +23,11 @@ from little.memory.store import MemoryStore
 @dataclass
 class InfillingResult:
     mode: str
-    path: List[str]
+    path: list[str]
     confidence: float
     inspectable_trace: str
     latency_ms: float
-    infilled_value: Optional[str] = None
+    infilled_value: str | None = None
     query_type: str = "PATH"
     ponder_depth: int = 1
     halt_reason: str = "direct_reflex"
@@ -46,7 +46,7 @@ class DualSpeedInfillingEngine:
         self.verifier = verifier
         self.policy = policy or ReasoningPolicy.default()
 
-    def _resolve_variants(self, node: str) -> Set[str]:
+    def _resolve_variants(self, node: str) -> set[str]:
         variants = {
             node,
             node.lower(),
@@ -69,21 +69,51 @@ class DualSpeedInfillingEngine:
                 return c.name.strip().upper().replace(" ", "_")
         return id_or_name.strip().upper().replace(" ", "_")
 
-    def _get_outgoing(self, node: str, predicate: str | None = None) -> List[str]:
-        objs: Set[str] = set()
+    def _get_outgoing(self, node: str, predicate: str | None = None) -> list[str]:
+        objs: set[str] = set()
         for variant in self._resolve_variants(node):
             for r in self.memory.get_relations(subject_id=variant, predicate=predicate):
                 if r.weight_positive > r.weight_negative:
                     objs.add(self._to_name(r.object_id))
         return list(objs)
 
-    def _get_incoming(self, node: str, predicate: str | None = None) -> List[str]:
-        subjs: Set[str] = set()
+    def _get_incoming(self, node: str, predicate: str | None = None) -> list[str]:
+        subjs: set[str] = set()
         for variant in self._resolve_variants(node):
             for r in self.memory.get_relations(object_id=variant, predicate=predicate):
                 if r.weight_positive > r.weight_negative:
                     subjs.add(self._to_name(r.subject_id))
         return list(subjs)
+
+    def _path_confidence(self, path: list[str], predicate: str | None) -> float:
+        confidence = 1.0
+        for subject, target in zip(path, path[1:]):
+            premises = [
+                r
+                for sid in self._resolve_variants(subject)
+                for r in self.memory.get_relations(subject_id=sid, predicate=predicate)
+                if self._to_name(r.object_id) == target
+                and r.weight_positive > r.weight_negative
+            ]
+            if not premises:
+                return 0.0
+            confidence *= max(r.confidence for r in premises)
+        return round(confidence, 4)
+
+    def _opposed(self, subject: str, predicate: str, target: str) -> bool:
+        return any(
+            r.weight_negative >= r.weight_positive
+            for sid in self._resolve_variants(subject)
+            for r in self.memory.get_relations(subject_id=sid, predicate=predicate)
+            if self._to_name(r.object_id) == target
+        )
+
+    def _valid_path(self, path: list[str], predicate: str) -> bool:
+        if self._opposed(path[0], predicate, path[-1]):
+            return False
+        return self.verifier.verify_proof_chain(
+            [(a, predicate, b) for a, b in zip(path, path[1:])]
+        ).passed
 
     def query(
         self, subject: str, target: str, predicate: str | None = None
@@ -98,26 +128,50 @@ class DualSpeedInfillingEngine:
 
         # 1. FAST MODE: Single-hop direct index / cache hit (<0.2ms)
         direct_objs = self._get_outgoing(subj_clean, pred_clean)
-        if target_clean in direct_objs:
+        if target_clean in direct_objs and self.policy.max_depth >= 1:
+            gate = self.verifier.verify_proof_chain(
+                [(subj_clean, pred_clean, target_clean)]
+            )
+            if not gate.passed or self._opposed(subj_clean, pred_clean, target_clean):
+                return InfillingResult(
+                    "FAST",
+                    [],
+                    self.policy.unknown_confidence,
+                    f"{gate.violated_gate or 'CONTRADICTED'}: {gate.error_message}",
+                    (time.perf_counter() - t0) * 1000,
+                    halt_reason="invariant_violation_refuted",
+                )
             lat = (time.perf_counter() - t0) * 1000.0
             return InfillingResult(
                 mode="FAST",
                 path=[subj_clean, target_clean],
-                confidence=self.policy.fast_confidence,
+                confidence=self._path_confidence(
+                    [subj_clean, target_clean], pred_clean
+                ),
                 inspectable_trace=f"Direct reflex hit: ({subj_clean}, {pred_clean}, {target_clean})",
                 latency_ms=lat,
                 ponder_depth=1,
                 halt_reason="direct_reflex_hit",
             )
 
+        if pred_clean not in self.verifier.registry.predicates(transitive=True):
+            return InfillingResult(
+                "THINKING",
+                [],
+                self.policy.unknown_confidence,
+                "UNKNOWN: predicate does not permit transitive composition",
+                (time.perf_counter() - t0) * 1000,
+                halt_reason="nontransitive_predicate",
+            )
+
         # 2. THINKING MODE: Adaptive Depth Pondering with Bidirectional Collision Search
-        fwd_paths: Dict[str, List[str]] = {subj_clean: [subj_clean]}
-        bwd_paths: Dict[str, List[str]] = {target_clean: [target_clean]}
+        fwd_paths: dict[str, list[str]] = {subj_clean: [subj_clean]}
+        bwd_paths: dict[str, list[str]] = {target_clean: [target_clean]}
 
-        fwd_frontier: Set[str] = {subj_clean}
-        bwd_frontier: Set[str] = {target_clean}
+        fwd_frontier: set[str] = {subj_clean}
+        bwd_frontier: set[str] = {target_clean}
 
-        collision_node: Optional[str] = None
+        collision_node: str | None = None
         max_depth = self.policy.max_depth
         depth = 0
         halt_reason = "unresolved"
@@ -134,14 +188,18 @@ class DualSpeedInfillingEngine:
             bwd_count_before = len(bwd_frontier)
 
             # Expand Forward Frontier
-            next_fwd: Set[str] = set()
+            next_fwd: set[str] = set()
             for node in fwd_frontier:
                 curr_path = fwd_paths[node]
                 for obj_c in self._get_outgoing(node, pred_clean):
                     if obj_c not in fwd_paths:
                         fwd_paths[obj_c] = curr_path + [obj_c]
                         next_fwd.add(obj_c)
-                        if obj_c in bwd_paths:
+                        if (
+                            obj_c in bwd_paths
+                            and len(fwd_paths[obj_c]) + len(bwd_paths[obj_c]) - 2
+                            <= max_depth
+                        ):
                             collision_node = obj_c
                             halt_reason = "collision_verified"
                             break
@@ -152,14 +210,18 @@ class DualSpeedInfillingEngine:
                 fwd_frontier = next_fwd
 
                 # Expand Backward Frontier
-                next_bwd: Set[str] = set()
+                next_bwd: set[str] = set()
                 for node in bwd_frontier:
                     curr_path = bwd_paths[node]
                     for sub_c in self._get_incoming(node, pred_clean):
                         if sub_c not in bwd_paths:
                             bwd_paths[sub_c] = [sub_c] + curr_path
                             next_bwd.add(sub_c)
-                            if sub_c in fwd_paths:
+                            if (
+                                sub_c in fwd_paths
+                                and len(fwd_paths[sub_c]) + len(bwd_paths[sub_c]) - 2
+                                <= max_depth
+                            ):
                                 collision_node = sub_c
                                 halt_reason = "collision_verified"
                                 break
@@ -170,19 +232,19 @@ class DualSpeedInfillingEngine:
             # Adaptive Halting Check
             if collision_node:
                 trace_log.append(
-                    f"<ponder depth=\"{depth}\" fwd_nodes=\"{fwd_count_before}\" bwd_nodes=\"{bwd_count_before}\" collision=\"{collision_node}\" halt=\"true\" reason=\"collision_detected\" />"
+                    f'<ponder depth="{depth}" fwd_nodes="{fwd_count_before}" bwd_nodes="{bwd_count_before}" collision="{collision_node}" halt="true" reason="collision_detected" />'
                 )
                 break
 
             if not fwd_frontier and not bwd_frontier:
                 halt_reason = "frontier_exhausted"
                 trace_log.append(
-                    f"<ponder depth=\"{depth}\" fwd_nodes=\"0\" bwd_nodes=\"0\" halt=\"true\" reason=\"frontier_exhausted\" />"
+                    f'<ponder depth="{depth}" fwd_nodes="0" bwd_nodes="0" halt="true" reason="frontier_exhausted" />'
                 )
                 break
 
             trace_log.append(
-                f"<ponder depth=\"{depth}\" fwd_nodes=\"{len(fwd_frontier)}\" bwd_nodes=\"{len(bwd_frontier)}\" halt=\"false\" status=\"expanding\" />"
+                f'<ponder depth="{depth}" fwd_nodes="{len(fwd_frontier)}" bwd_nodes="{len(bwd_frontier)}" halt="false" status="expanding" />'
             )
 
         if not collision_node and depth >= max_depth and halt_reason == "unresolved":
@@ -202,28 +264,40 @@ class DualSpeedInfillingEngine:
             ]
             gate_res = self.verifier.verify_proof_chain(proof_steps)
 
-            if gate_res.passed:
+            if gate_res.passed and not self._opposed(
+                subj_clean, pred_clean, target_clean
+            ):
                 trace_log.append(
                     f"Frontier collision verified at junction node: {collision_node}"
                 )
-                trace_log.append(f"Full proof path discovered: {' -> '.join(full_path)}")
-                trace_log.extend([f"Gate check: {step}" for step in gate_res.proof_trace])
+                trace_log.append(
+                    f"Full proof path discovered: {' -> '.join(full_path)}"
+                )
+                trace_log.extend(
+                    [f"Gate check: {step}" for step in gate_res.proof_trace]
+                )
                 trace_log.append("</think>")
 
                 return InfillingResult(
                     mode="THINKING",
                     path=full_path,
-                    confidence=self.policy.verified_confidence,
+                    confidence=self._path_confidence(full_path, pred_clean),
                     inspectable_trace="\n".join(trace_log),
                     latency_ms=lat,
                     ponder_depth=depth,
                     halt_reason="proof_closed_verified",
                 )
             else:
+                if self._opposed(subj_clean, pred_clean, target_clean):
+                    trace_log.append(
+                        "CONTRADICTED: supported path has direct opposition"
+                    )
                 trace_log.append(
                     f"Frontier collision refuted by invariant gates at junction: {collision_node}"
                 )
-                trace_log.extend([f"Gate violation: {step}" for step in gate_res.proof_trace])
+                trace_log.extend(
+                    [f"Gate violation: {step}" for step in gate_res.proof_trace]
+                )
                 trace_log.append("</think>")
                 return InfillingResult(
                     mode="THINKING",
@@ -253,13 +327,13 @@ class DualSpeedInfillingEngine:
 
     def infill_object(
         self, subject: str, predicate: str, max_results: int = 10
-    ) -> List[InfillingResult]:
+    ) -> list[InfillingResult]:
         """Bidirectional infilling of missing object: (S, P, [?]) with adaptive depth expansion."""
         t0 = time.perf_counter()
         subj_clean = subject.strip().upper().replace(" ", "_")
         pred_clean = predicate.strip().lower()
 
-        results: List[InfillingResult] = []
+        results: list[InfillingResult] = []
 
         # 1. FAST MODE: Single-hop direct out-edges (<0.2ms)
         direct_objs = self._get_outgoing(subj_clean, pred_clean)
@@ -269,7 +343,7 @@ class DualSpeedInfillingEngine:
                 InfillingResult(
                     mode="FAST",
                     path=[subj_clean, obj],
-                    confidence=self.policy.fast_confidence,
+                    confidence=self._path_confidence([subj_clean, obj], pred_clean),
                     inspectable_trace=f"Direct reflex hit: ({subj_clean}, {pred_clean}, {obj})",
                     latency_ms=lat,
                     infilled_value=obj,
@@ -282,12 +356,16 @@ class DualSpeedInfillingEngine:
         # 2. THINKING MODE: If transitive predicate and more results requested
         is_transitive = pred_clean in self.verifier.registry.predicates(transitive=True)
         if is_transitive and len(results) < max_results:
-            frontier: Set[str] = {subj_clean}
-            visited_paths: Dict[str, List[str]] = {subj_clean: [subj_clean]}
+            frontier: set[str] = {subj_clean}
+            visited_paths: dict[str, list[str]] = {subj_clean: [subj_clean]}
             depth = 0
-            while frontier and depth < self.policy.max_depth and len(results) < max_results:
+            while (
+                frontier
+                and depth < self.policy.max_depth
+                and len(results) < max_results
+            ):
                 depth += 1
-                next_frontier: Set[str] = set()
+                next_frontier: set[str] = set()
                 for curr in frontier:
                     curr_path = visited_paths[curr]
                     for nxt in self._get_outgoing(curr, pred_clean):
@@ -301,7 +379,9 @@ class DualSpeedInfillingEngine:
                                     InfillingResult(
                                         mode="THINKING",
                                         path=nxt_path,
-                                        confidence=self.policy.verified_confidence,
+                                        confidence=self._path_confidence(
+                                            nxt_path, pred_clean
+                                        ),
                                         inspectable_trace=f"Transitive forward expansion ({depth} hops): {' -> '.join(nxt_path)}",
                                         latency_ms=lat,
                                         infilled_value=nxt,
@@ -312,17 +392,22 @@ class DualSpeedInfillingEngine:
                                 )
                 frontier = next_frontier
 
-        return results[:max_results]
+        return [
+            r
+            for r in results
+            if len(r.path) - 1 <= self.policy.max_depth
+            and self._valid_path(r.path, pred_clean)
+        ][:max_results]
 
     def infill_subject(
         self, target: str, predicate: str, max_results: int = 10
-    ) -> List[InfillingResult]:
+    ) -> list[InfillingResult]:
         """Bidirectional infilling of missing subject: ([?], P, O) with adaptive depth expansion."""
         t0 = time.perf_counter()
         target_clean = target.strip().upper().replace(" ", "_")
         pred_clean = predicate.strip().lower()
 
-        results: List[InfillingResult] = []
+        results: list[InfillingResult] = []
 
         # 1. FAST MODE: Single-hop direct incoming edges (<0.2ms)
         direct_subjs = self._get_incoming(target_clean, pred_clean)
@@ -332,7 +417,7 @@ class DualSpeedInfillingEngine:
                 InfillingResult(
                     mode="FAST",
                     path=[subj, target_clean],
-                    confidence=self.policy.fast_confidence,
+                    confidence=self._path_confidence([subj, target_clean], pred_clean),
                     inspectable_trace=f"Direct reflex hit: ({subj}, {pred_clean}, {target_clean})",
                     latency_ms=lat,
                     infilled_value=subj,
@@ -345,12 +430,16 @@ class DualSpeedInfillingEngine:
         # 2. THINKING MODE: If transitive predicate and more results requested
         is_transitive = pred_clean in self.verifier.registry.predicates(transitive=True)
         if is_transitive and len(results) < max_results:
-            frontier: Set[str] = {target_clean}
-            visited_paths: Dict[str, List[str]] = {target_clean: [target_clean]}
+            frontier: set[str] = {target_clean}
+            visited_paths: dict[str, list[str]] = {target_clean: [target_clean]}
             depth = 0
-            while frontier and depth < self.policy.max_depth and len(results) < max_results:
+            while (
+                frontier
+                and depth < self.policy.max_depth
+                and len(results) < max_results
+            ):
                 depth += 1
-                next_frontier: Set[str] = set()
+                next_frontier: set[str] = set()
                 for curr in frontier:
                     curr_path = visited_paths[curr]
                     for prev in self._get_incoming(curr, pred_clean):
@@ -364,7 +453,9 @@ class DualSpeedInfillingEngine:
                                     InfillingResult(
                                         mode="THINKING",
                                         path=prev_path,
-                                        confidence=self.policy.verified_confidence,
+                                        confidence=self._path_confidence(
+                                            prev_path, pred_clean
+                                        ),
                                         inspectable_trace=f"Transitive backward expansion ({depth} hops): {' -> '.join(prev_path)}",
                                         latency_ms=lat,
                                         infilled_value=prev,
@@ -375,30 +466,40 @@ class DualSpeedInfillingEngine:
                                 )
                 frontier = next_frontier
 
-        return results[:max_results]
+        return [
+            r
+            for r in results
+            if len(r.path) - 1 <= self.policy.max_depth
+            and self._valid_path(r.path, pred_clean)
+        ][:max_results]
 
     def infill_path(
         self, subject: str, target: str, max_depth: int = 4
-    ) -> List[InfillingResult]:
+    ) -> list[InfillingResult]:
         """Bidirectional Frontier Collision Search connecting S and O across any relation: (S, [?], O)."""
         t0 = time.perf_counter()
         subj_clean = subject.strip().upper().replace(" ", "_")
         target_clean = target.strip().upper().replace(" ", "_")
 
-        fwd_paths: Dict[str, List[str]] = {subj_clean: [subj_clean]}
-        bwd_paths: Dict[str, List[str]] = {target_clean: [target_clean]}
-        fwd_frontier: Set[str] = {subj_clean}
-        bwd_frontier: Set[str] = {target_clean}
+        fwd_paths: dict[str, list[str]] = {subj_clean: [subj_clean]}
+        bwd_paths: dict[str, list[str]] = {target_clean: [target_clean]}
+        fwd_frontier: set[str] = {subj_clean}
+        bwd_frontier: set[str] = {target_clean}
 
-        collision_results: List[InfillingResult] = []
-        seen_paths: Set[tuple[str, ...]] = set()
+        collision_results: list[InfillingResult] = []
+        seen_paths: set[tuple[str, ...]] = set()
         depth = 0
 
-        while depth < max_depth and fwd_frontier and bwd_frontier and len(collision_results) < 10:
+        while (
+            depth < max_depth
+            and fwd_frontier
+            and bwd_frontier
+            and len(collision_results) < 10
+        ):
             depth += 1
 
             # Expand Forward
-            next_fwd: Set[str] = set()
+            next_fwd: set[str] = set()
             for node in fwd_frontier:
                 curr_path = fwd_paths[node]
                 for obj in self._get_outgoing(node, None):
@@ -408,14 +509,14 @@ class DualSpeedInfillingEngine:
                         if obj in bwd_paths:
                             full_p = curr_path + [obj] + bwd_paths[obj][1:]
                             p_tup = tuple(full_p)
-                            if p_tup not in seen_paths:
+                            if len(full_p) - 1 <= max_depth and p_tup not in seen_paths:
                                 seen_paths.add(p_tup)
                                 lat = (time.perf_counter() - t0) * 1000.0
                                 collision_results.append(
                                     InfillingResult(
                                         mode="THINKING",
                                         path=full_p,
-                                        confidence=self.policy.verified_confidence,
+                                        confidence=self._path_confidence(full_p, None),
                                         inspectable_trace=f"Meeting-in-the-middle collision at '{obj}': {' -> '.join(full_p)}",
                                         latency_ms=lat,
                                         infilled_value=obj,
@@ -427,7 +528,7 @@ class DualSpeedInfillingEngine:
             fwd_frontier = next_fwd
 
             # Expand Backward
-            next_bwd: Set[str] = set()
+            next_bwd: set[str] = set()
             for node in bwd_frontier:
                 curr_path = bwd_paths[node]
                 for sub in self._get_incoming(node, None):
@@ -437,14 +538,14 @@ class DualSpeedInfillingEngine:
                         if sub in fwd_paths:
                             full_p = fwd_paths[sub] + curr_path
                             p_tup = tuple(full_p)
-                            if p_tup not in seen_paths:
+                            if len(full_p) - 1 <= max_depth and p_tup not in seen_paths:
                                 seen_paths.add(p_tup)
                                 lat = (time.perf_counter() - t0) * 1000.0
                                 collision_results.append(
                                     InfillingResult(
                                         mode="THINKING",
                                         path=full_p,
-                                        confidence=self.policy.verified_confidence,
+                                        confidence=self._path_confidence(full_p, None),
                                         inspectable_trace=f"Meeting-in-the-middle collision at '{sub}': {' -> '.join(full_p)}",
                                         latency_ms=lat,
                                         infilled_value=sub,
@@ -455,4 +556,28 @@ class DualSpeedInfillingEngine:
                                 )
             bwd_frontier = next_bwd
 
-        return collision_results
+        verified = []
+        for result in collision_results:
+            chain = []
+            for subject, target in zip(result.path, result.path[1:]):
+                candidates = [
+                    r
+                    for sid in self._resolve_variants(subject)
+                    for r in self.memory.get_relations(subject_id=sid)
+                    if self._to_name(r.object_id) == target
+                    and r.weight_positive > r.weight_negative
+                    and self.verifier.verify_proof_chain(
+                        [(subject, r.predicate, target)]
+                    ).passed
+                ]
+                if not candidates:
+                    break
+                premise = max(candidates, key=lambda r: r.confidence)
+                chain.append(premise)
+            else:
+                confidence = 1.0
+                for premise in chain:
+                    confidence *= premise.confidence
+                result.confidence = round(confidence, 4)
+                verified.append(result)
+        return verified

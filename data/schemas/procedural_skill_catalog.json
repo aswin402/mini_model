@@ -216,7 +216,7 @@
         "        operand = eval_node(node.operand)",
         "        return operators[type(node.op)](operand)",
         "    else:",
-        "        raise ValueError(f'Unsupported AST node: {type(node).__name__}')",
+        "        raise ValueError(f'Unsupported AST node: {type(node)}')",
         "",
         "tree = ast.parse(str(expression).strip(), mode='eval')",
         "res = eval_node(tree.body)",

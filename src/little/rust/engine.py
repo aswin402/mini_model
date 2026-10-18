@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import ctypes
 import json
-import os
-import sys
+import math
 from collections import deque
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -37,12 +37,16 @@ class RustAccelerationCore:
 
     def _load_library(self) -> ctypes.CDLL | None:
         """Search workspace and system paths for liblittle_core shared library."""
+        repository = Path(__file__).resolve().parents[3]
         search_dirs = [
+            repository / "rust" / "little_core" / "target" / "release",
             Path(__file__).resolve().parent,
-            Path(__file__).resolve().parents[2] / "rust" / "little_core" / "target" / "release",
-            Path(__file__).resolve().parents[4] / "target" / "release",
-            Path.cwd() / "target" / "release",
+            repository / "target" / "release",
         ]
+        # A surrounding Cargo workspace may own the target directory.
+        search_dirs.extend(parent / "target" / "release" for parent in repository.parents
+                           if (parent / "Cargo.toml").is_file())
+
 
         lib_names = ["liblittle_core.so", "liblittle_core.dylib", "little_core.dll"]
         for d in search_dirs:
@@ -277,6 +281,8 @@ class RustAccelerationCore:
         """Create a native Rust TurboQuant index handle."""
         if self._lib is None or not hasattr(self._lib, "little_core_turbo_index_create"):
             return None
+        if dimension != 512 or len(signs) != 512 or any(not math.isfinite(s) or abs(s) != 1 for s in signs):
+            raise ValueError("Native TurboQuant requires 512 signs of +1 or -1")
         c_signs = (ctypes.c_float * len(signs))(*signs)
         return self._lib.little_core_turbo_index_create(dimension, c_signs, len(signs))
 
@@ -295,6 +301,10 @@ class RustAccelerationCore:
         """Add a continuous vector into native Rust TurboQuant index."""
         if self._lib is None or not handle or not hasattr(self._lib, "little_core_turbo_index_add"):
             return False
+        if len(vector) != 512 or any(not math.isfinite(value) or abs(value) > 3.4028235e38 for value in vector):
+            raise ValueError("Native vector must contain 512 finite float32 coordinates")
+        if not id_str or '\x00' in id_str:
+            raise ValueError("Native vector ID must not be empty or contain NUL")
         c_vec = (ctypes.c_float * len(vector))(*vector)
         id_bytes = id_str.encode("utf-8")
         meta_bytes = json.dumps(metadata or {}).encode("utf-8")
@@ -328,6 +338,10 @@ class RustAccelerationCore:
         """Execute sub-millisecond coarse-to-fine vector search in native Rust."""
         if self._lib is None or not handle or not hasattr(self._lib, "little_core_turbo_index_search"):
             return []
+        if len(query_vector) != 512 or any(not math.isfinite(value) or abs(value) > 3.4028235e38 for value in query_vector):
+            raise ValueError("Native query must contain 512 finite float32 coordinates")
+        if type(top_k) is not int or top_k < 0 or type(coarse_multiplier) is not int or coarse_multiplier < 1 or not math.isfinite(threshold) or not -1 <= threshold <= 1:
+            raise ValueError("Invalid native search limits")
         c_query = (ctypes.c_float * len(query_vector))(*query_vector)
         ptr = self._lib.little_core_turbo_index_search(
             handle, c_query, len(query_vector), top_k, ctypes.c_float(threshold), coarse_multiplier
@@ -343,6 +357,8 @@ class RustAccelerationCore:
         if self._lib is None or not handle or not hasattr(self._lib, "little_core_turbo_rotate"):
             return []
         dim = len(vector)
+        if dim != 512 or any(not math.isfinite(value) or abs(value) > 3.4028235e38 for value in vector):
+            raise ValueError("Native rotation requires 512 finite float32 coordinates")
         c_vec = (ctypes.c_float * dim)(*vector)
         c_out = (ctypes.c_float * dim)()
         res = self._lib.little_core_turbo_rotate(handle, c_vec, dim, c_out)

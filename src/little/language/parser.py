@@ -735,9 +735,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
     ) -> tuple[str, str, Any] | None:
         """Extract (subject, predicate, target) from natural English questions."""
         q = cls.normalize_text(text).rstrip("?").strip()
-        if q.endswith("."):
-            q = q[:-1].strip()
-        elif q.endswith("!") and not re.search(r"\d+!$", q):
+        if q.endswith(".") or q.endswith("!") and not re.search(r"\d+!$", q):
             q = q[:-1].strip()
         for pattern in cls._question_prefix_patterns().patterns:
             if pattern.strategy != "prefix_delegate":
@@ -1154,6 +1152,7 @@ class LearningEngine:
         frame: CandidateFrame,
         *,
         source_type: SourceType = SourceType.USER,
+        source_reference: str | None = None,
     ) -> LearningResult:
         """Verify and commit candidates without parsing the source text again."""
         text = frame.source_text
@@ -1218,6 +1217,13 @@ class LearningEngine:
         relations_created: list[str] = []
         update_types: list[UpdateType] = []
         accepted_claims: list[CandidateClaim] = []
+        exp = self.memory.add_experience(
+            input_text=text,
+            extracted_triples=[{"subject": claim.subject, "predicate": claim.predicate,
+                                "object": claim.object, "is_negative": not claim.positive}
+                               for claim in frame.claims],
+            source=source_type.value,
+        )
         registry = self.memory.ledger.registry
         self.registry = registry
         self.verifier.registry = registry
@@ -1236,8 +1242,9 @@ class LearningEngine:
                 frame,
                 claim,
                 source_type=source_type,
-                source_reference=f"frame:{frame.frame_id}",
+                source_reference=source_reference or f"frame:{frame.frame_id}",
                 positive=claim.positive,
+                source_experience_id=exp.id,
             )
             subject_before = self.memory.get_concept(claim.subject)
             relation_schema = registry.relation(claim.predicate)
@@ -1319,7 +1326,6 @@ class LearningEngine:
                 )
                 accepted_claims.append(claim)
 
-        exp = self.memory.add_experience(input_text=text, extracted_triples=extracted)
         if accepted_claims:
             first = accepted_claims[0]
             self.last_subject = first.subject

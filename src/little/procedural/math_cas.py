@@ -6,12 +6,15 @@ dimensional unit conversion graphs, and geometry with transparent step-by-step t
 
 from __future__ import annotations
 
+import ast
 import math
+import operator
 import re
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from fractions import Fraction
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 from little.procedural.unit_conversion_policy import UnitConversionPolicy
 
@@ -40,7 +43,7 @@ class UnitConversionGraph:
 
     def __init__(self, policy: UnitConversionPolicy | None = None) -> None:
         # Adjacency list: unit -> list of (target_unit, forward_fn, inverse_fn, scale_desc)
-        self.adj: Dict[str, List[Tuple[str, Callable[[float], float], str]]] = {}
+        self.adj: dict[str, list[tuple[str, Callable[[float], float], str]]] = {}
         self.policy = policy or UnitConversionPolicy.default()
         self._build_standard_units()
 
@@ -108,7 +111,7 @@ class UnitConversionGraph:
             )
 
         # BFS queue: (current_node, current_val, steps_list)
-        queue: deque[Tuple[str, float, List[str]]] = deque([(start, float(value), [])])
+        queue: deque[tuple[str, float, list[str]]] = deque([(start, float(value), [])])
         visited = {start}
 
         while queue:
@@ -151,6 +154,8 @@ class SymbolicCAS:
     def solve_rational_expression(self, expr: str) -> MathSolution:
         """Parse and evaluate rational expressions with exact Fractions and step-by-step reduction."""
         steps: list[str] = [f"Evaluating rational expression: '{expr}'"]
+        if len(expr) > 4096:
+            return MathSolution(status="ERROR", result=None, steps=["Expression size limit exceeded"])
         # Basic binary fraction operations: "A/B + C/D", "A/B * C/D", etc.
         m = re.match(
             r"^\s*(\d+(?:/\d+)?)\s*([\+\-\*\/])\s*(\d+(?:/\d+)?)\s*$",
@@ -159,18 +164,47 @@ class SymbolicCAS:
         if not m:
             # Fallback simple arithmetic evaluation using Fraction
             try:
-                # Replace '/' with Fraction constructor
-                clean_expr = expr.strip()
-                res = eval(clean_expr, {"__builtins__": {}}, {"Fraction": Fraction})
-                frac_res = Fraction(res).limit_denominator()
+                tree = ast.parse(expr.strip(), mode="eval")
+                if sum(1 for _ in ast.walk(tree)) > 256:
+                    raise ValueError("Expression complexity limit exceeded")
+                operations = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod}
+                def evaluate(node, depth=0):
+                    if depth > 32: raise ValueError("Expression depth limit exceeded")
+                    if isinstance(node, ast.Constant) and type(node.value) in (int, float):
+                        literal = ast.get_source_segment(expr.strip(), node)
+                        exponent = re.search(r"[eE]([+-]?\d+)$", literal)
+                        if exponent and abs(int(exponent.group(1))) > 1000:
+                            raise ValueError("Numeric literal exponent limit exceeded")
+                        result = Fraction(literal)
+                    elif isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+                        result = evaluate(node.operand, depth + 1) * (-1 if isinstance(node.op, ast.USub) else 1)
+                    elif isinstance(node, ast.BinOp):
+                        left, right = evaluate(node.left, depth + 1), evaluate(node.right, depth + 1)
+                        if isinstance(node.op, ast.Pow):
+                            if right.denominator != 1 or abs(right) > 1000: raise ValueError("Exponent limit exceeded")
+                            exp_int = abs(int(right))
+                            base_bits = max(left.numerator.bit_length(), left.denominator.bit_length())
+                            if base_bits * exp_int > 16384:
+                                raise ValueError("Arithmetic size limit exceeded")
+                            result = left ** int(right)
+                        elif type(node.op) in operations:
+                            result = Fraction(operations[type(node.op)](left, right))
+                        else: raise ValueError("Unsupported arithmetic operator")
+                    else: raise ValueError("Only numeric arithmetic is permitted")
+                    if result.numerator.bit_length() > 16384 or result.denominator.bit_length() > 16384: raise ValueError("Arithmetic size limit exceeded")
+                    return result
+                frac_res = evaluate(tree.body)
                 steps.append(f"Direct symbolic evaluation: {frac_res}")
                 return MathSolution(status="SOLVED", result=frac_res, steps=steps)
             except Exception as e:
                 return MathSolution(status="ERROR", result=None, steps=[f"Parsing error: {e}"])
 
         left_str, op, right_str = m.group(1), m.group(2), m.group(3)
-        f_left = Fraction(left_str)
-        f_right = Fraction(right_str)
+        try:
+            f_left = Fraction(left_str)
+            f_right = Fraction(right_str)
+        except (ValueError, ZeroDivisionError) as exc:
+            return MathSolution(status="ERROR", result=None, steps=[f"Parsing error: {exc}"])
 
         steps.append(f"Parsed left operand: {f_left.numerator}/{f_left.denominator}")
         steps.append(f"Parsed right operand: {f_right.numerator}/{f_right.denominator}")
@@ -212,12 +246,12 @@ class SymbolicCAS:
 
     def solve_linear_system_2x2(
         self,
-        a1: float | int | Fraction,
-        b1: float | int | Fraction,
-        c1: float | int | Fraction,
-        a2: float | int | Fraction,
-        b2: float | int | Fraction,
-        c2: float | int | Fraction,
+        a1: float | Fraction,
+        b1: float | Fraction,
+        c1: float | Fraction,
+        a2: float | Fraction,
+        b2: float | Fraction,
+        c2: float | Fraction,
     ) -> MathSolution:
         """Solve a 2x2 system of linear equations using Cramer's rule with exact fractions.
 
@@ -228,7 +262,7 @@ class SymbolicCAS:
         f_a2, f_b2, f_c2 = Fraction(a2), Fraction(b2), Fraction(c2)
 
         steps: list[str] = [
-            f"Solving 2x2 linear system via Cramer's rule:",
+            "Solving 2x2 linear system via Cramer's rule:",
             f"  (1) {f_a1}x + {f_b1}y = {f_c1}",
             f"  (2) {f_a2}x + {f_b2}y = {f_c2}",
         ]
@@ -261,9 +295,9 @@ class SymbolicCAS:
 
     def solve_quadratic(
         self,
-        a: float | int,
-        b: float | int,
-        c: float | int,
+        a: float,
+        b: float,
+        c: float,
     ) -> MathSolution:
         """Solve a quadratic equation a*x^2 + b*x + c = 0 via discriminant derivation."""
         if a == 0:
@@ -282,21 +316,21 @@ class SymbolicCAS:
             sqrt_delta = math.sqrt(delta)
             r1 = (-b + sqrt_delta) / (2 * a)
             r2 = (-b - sqrt_delta) / (2 * a)
-            steps.append(f"Δ > 0: Two distinct real roots:")
+            steps.append("Δ > 0: Two distinct real roots:")
             steps.append(f"  x₁ = (-b + √Δ) / (2a) = ({-b} + {sqrt_delta:.4f}) / ({2*a}) = {r1:.4f}")
             steps.append(f"  x₂ = (-b - √Δ) / (2a) = ({-b} - {sqrt_delta:.4f}) / ({2*a}) = {r2:.4f}")
             latex = f"x \\in \\{{{r1:.4f}, {r2:.4f}\\}}"
             return MathSolution(status="SOLVED", result={"roots": [r1, r2]}, latex_trace=latex, steps=steps)
         elif delta == 0:
             r = -b / (2 * a)
-            steps.append(f"Δ = 0: One repeated real root:")
+            steps.append("Δ = 0: One repeated real root:")
             steps.append(f"  x = -b / (2a) = {-b} / ({2*a}) = {r:.4f}")
             latex = f"x = {r:.4f}"
             return MathSolution(status="SOLVED", result={"roots": [r]}, latex_trace=latex, steps=steps)
         else:
             real_part = -b / (2 * a)
             imag_part = math.sqrt(-delta) / (2 * a)
-            steps.append(f"Δ < 0: Complex conjugate roots:")
+            steps.append("Δ < 0: Complex conjugate roots:")
             steps.append(f"  x = {real_part:.4f} ± {imag_part:.4f}i")
             latex = f"x = {real_part:.4f} \\pm {imag_part:.4f}i"
             return MathSolution(status="COMPLEX_ROOTS", result={"real": real_part, "imag": imag_part}, latex_trace=latex, steps=steps)

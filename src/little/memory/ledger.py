@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable
+from functools import wraps
+from typing import TYPE_CHECKING
 
 from little.core.contracts import (
     CandidateAction,
     CandidateClaim,
     CandidateFrame,
-    CommitStatus,
     CommitDecision,
+    CommitStatus,
     EvidenceRecord,
     EvidenceStatus,
     SourceType,
@@ -22,6 +25,14 @@ from little.knowledge.registry import ActionSchema, SchemaRegistry
 
 if TYPE_CHECKING:
     from little.memory.store import MemoryStore
+
+
+def _atomic_promotion(method):
+    @wraps(method)
+    def promote(self, *args, **kwargs):
+        with self.memory.transaction():
+            return method(self, *args, **kwargs)
+    return promote
 
 
 class EvidenceLedger:
@@ -44,7 +55,10 @@ class EvidenceLedger:
         claim: CandidateClaim,
         source_type: SourceType,
         source_reference: str,
-        positive: bool = True,
+        positive: bool | None = None,
+        evidence_id: str | None = None,
+        source_experience_id: str | None = None,
+        derivation_proof_id: str | None = None,
     ) -> EvidenceRecord:
         evidence = EvidenceRecord.from_claim(
             claim,
@@ -53,24 +67,51 @@ class EvidenceLedger:
             source_text=frame.source_text,
             positive=positive,
         )
+        evidence.source_experience_id = source_experience_id
+        evidence.derivation_proof_id = derivation_proof_id
+        if evidence_id is not None:
+            evidence.evidence_id = evidence_id
+            existing = self.memory.evidence.get(evidence_id)
+            if existing is not None:
+                if (existing.subject_id, existing.predicate, existing.object_id, existing.positive,
+                    existing.source_type, existing.source_reference, existing.source_text) != (
+                    evidence.subject_id, evidence.predicate, evidence.object_id, evidence.positive,
+                    evidence.source_type, evidence.source_reference, evidence.source_text):
+                    raise ValueError("evidence identity already refers to a different claim or source")
+                return existing
         return self.memory.evidence.append(evidence)
 
+    @_atomic_promotion
     def commit_relation(
         self,
         evidence: EvidenceRecord,
         verification: VerificationResult,
         positive: bool | None = None,
     ) -> CommitDecision:
+        previous = self.memory.evidence.current_decision(evidence.evidence_id)
+        if previous is not None and previous.status is CommitStatus.ACCEPTED:
+            return previous
         if verification.status is VerificationStatus.PASSED:
             subject = self.memory.get_or_create_concept(evidence.subject_id)
             object_ = self.memory.get_or_create_concept(evidence.object_id or "")
+            if evidence.source_experience_id is None:
+                evidence.source_experience_id = self.memory.add_experience(
+                    input_text=evidence.source_text or f"{evidence.subject_id} {evidence.predicate} {evidence.object_id}",
+                    extracted_triples=[{"subject": evidence.subject_id, "predicate": evidence.predicate,
+                                        "object": evidence.object_id, "evidence_id": evidence.evidence_id}],
+                    source=evidence.source_type.value,
+                ).id
+                self.memory._conn.execute(
+                    "UPDATE evidence_records SET source_experience_id=? WHERE evidence_id=?",
+                    (evidence.source_experience_id, evidence.evidence_id),
+                )
             self.memory.add_relation(
                 subject.id,
                 evidence.predicate,
                 object_.id,
                 # An explicit call argument wins; otherwise preserve evidence polarity.
                 positive=evidence.positive if positive is None else positive,
-                source_experience_id=evidence.source_reference,
+                source_experience_id=evidence.source_experience_id,
             )
             self.memory.evidence.update_status(
                 evidence.evidence_id, EvidenceStatus.ACCEPTED
@@ -88,6 +129,7 @@ class EvidenceLedger:
         self.memory.evidence.save_decision(decision)
         return decision
 
+    @_atomic_promotion
     def commit_property(
         self,
         evidence: EvidenceRecord,
@@ -98,6 +140,9 @@ class EvidenceLedger:
         update_policy: str = "append",
         value_format: str = "preserve",
     ) -> CommitDecision:
+        previous = self.memory.evidence.current_decision(evidence.evidence_id)
+        if previous is not None and previous.status is CommitStatus.ACCEPTED:
+            return previous
         if verification.status is VerificationStatus.PASSED:
             if update_policy not in ("append", "replace"):
                 raise ValueError(f"Unknown attribute update policy: {update_policy}")
@@ -107,6 +152,12 @@ class EvidenceLedger:
             concept = self.memory.get_or_create_concept(evidence.subject_id)
             attributes = dict(concept.attributes)
             if update_policy == "replace":
+                self.memory._conn.execute(
+                    "UPDATE evidence_records SET status=? WHERE subject_id=? AND predicate=? "
+                    "AND status=? AND evidence_id<>?",
+                    (EvidenceStatus.SUPERSEDED.value, evidence.subject_id, evidence.predicate,
+                     EvidenceStatus.ACCEPTED.value, evidence.evidence_id),
+                )
                 attributes[key] = formatted_value
             elif key in attributes:
                 current = attributes[key]
@@ -128,6 +179,7 @@ class EvidenceLedger:
         self.memory.evidence.save_decision(decision)
         return decision
 
+    @_atomic_promotion
     def commit_action(
         self,
         frame: CandidateFrame,
@@ -135,6 +187,9 @@ class EvidenceLedger:
         *,
         source_type: SourceType = SourceType.USER,
     ) -> LearningResult:
+        experience = self.memory.add_experience(
+            input_text=frame.source_text, extracted_triples=[], source=source_type.value,
+        )
         evidence = self.memory.evidence.append(
             EvidenceRecord(
                 evidence_id=generate_id("evidence"),
@@ -144,6 +199,7 @@ class EvidenceLedger:
                 object_id=None,
                 source_type=source_type,
                 source_reference=f"frame:{frame.frame_id}",
+                source_experience_id=experience.id,
                 source_text=frame.source_text,
                 extraction_confidence=action.probability,
             )
@@ -192,13 +248,19 @@ class EvidenceLedger:
 
         if verification.status is VerificationStatus.PASSED:
             try:
-                execution = _coerce_execution_result(
-                    executor(ActionExecutionContext(self.memory), frame, arguments)
+                with self.memory.transaction():
+                    execution = _coerce_execution_result(
+                        executor(ActionExecutionContext(self.memory), frame, arguments)
+                    )
+            except Exception as exc:
+                reason = (
+                    f"Action executor violated the semantic write boundary: {exc}"
+                    if isinstance(exc, ActionExecutionViolation)
+                    else f"Action executor failed: {type(exc).__name__}: {exc}"
                 )
-            except ActionExecutionViolation as exc:
                 failure = VerificationResult(
                     VerificationStatus.FAILED,
-                    reasons=[f"Action executor violated the semantic write boundary: {exc}"],
+                    reasons=[reason],
                 )
                 self.memory.evidence.update_status(
                     evidence.evidence_id, EvidenceStatus.REJECTED
@@ -256,6 +318,7 @@ class EvidenceLedger:
                     source_type=source_type,
                     source_reference=f"action:{evidence.evidence_id}",
                     positive=claim.positive,
+                    source_experience_id=experience.id,
                 )
                 effect_verification = self._verify_effect(claim)
                 effect_decision = self.commit_relation(
@@ -277,27 +340,23 @@ class EvidenceLedger:
                         f"({claim.subject} {claim.predicate} {claim.object})"
                     )
 
-            exp = self.memory.add_experience(
-                input_text=frame.source_text,
-                extracted_triples=extracted_effects,
-                source="action_execution",
+            self.memory._conn.execute(
+                "UPDATE experiences SET extracted_triples_json=?, source=? WHERE id=?",
+                (json.dumps(extracted_effects), "action_execution", experience.id),
             )
             base_result = execution.result
             return LearningResult(
                 input_text=base_result.input_text,
                 update_type=base_result.update_type,
-                experience_id=exp.id,
+                experience_id=experience.id,
                 concepts_created=base_result.concepts_created,
                 relations_created=accepted_relations,
                 message=base_result.message,
             )
-        exp = self.memory.add_experience(
-            input_text=frame.source_text, extracted_triples=[]
-        )
         return LearningResult(
             input_text=frame.source_text,
             update_type=UpdateType.NO_OP,
-            experience_id=exp.id,
+            experience_id=experience.id,
             message=verification.reasons[0],
         )
 
@@ -419,10 +478,10 @@ class ActionExecutionContext:
     """
 
     __slots__ = (
-        "__store",
-        "__relation_names",
-        "__transformation_policy",
         "__dynamics_registry",
+        "__relation_names",
+        "__store",
+        "__transformation_policy",
     )
 
     def __init__(self, memory: MemoryStore) -> None:

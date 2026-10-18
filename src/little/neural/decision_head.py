@@ -8,14 +8,13 @@ Shannon entropy and strictly proper scoring rules (Brier score & RPS).
 from __future__ import annotations
 
 import math
-from pathlib import Path
 import re
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Sequence
 
 from little.memory.store import MemoryStore
-from little.neural.encoder import GENERIC_WORDS, NeuralStateEncoder
+from little.neural.encoder import NeuralStateEncoder
 from little.neural.models import NeuralState
 
 
@@ -67,7 +66,24 @@ class ScoreDecision:
     latent_state: NeuralState | None = None
 
 
-def compute_brier_score(probabilities: dict[str, float] | Sequence[float], target: str | int) -> float:
+def _validate_distribution(probabilities: Sequence[float]) -> None:
+    if not probabilities or any(
+        isinstance(p, bool)
+        or not isinstance(p, (int, float))
+        or not math.isfinite(p)
+        or not 0 <= p <= 1
+        for p in probabilities
+    ):
+        raise ValueError(
+            "Probabilities must be nonempty finite values between zero and one"
+        )
+    if not math.isclose(sum(probabilities), 1.0, abs_tol=1e-3):
+        raise ValueError("Probabilities must sum to one")
+
+
+def compute_brier_score(
+    probabilities: dict[str, float] | Sequence[float], target: str | int
+) -> float:
     """Compute the strictly proper Brier score for a categorical probability distribution.
 
     BS = (1/K) * sum_{k=1}^K (p_k - y_k)^2, where y_k is 1 for target, else 0.
@@ -76,12 +92,17 @@ def compute_brier_score(probabilities: dict[str, float] | Sequence[float], targe
     if isinstance(probabilities, dict):
         keys = list(probabilities.keys())
         p_vals = [probabilities[k] for k in keys]
-        target_idx = keys.index(target) if isinstance(target, str) and target in keys else 0
+        if target not in keys:
+            raise ValueError("Unknown target label")
+        target_idx = keys.index(target)
     else:
         p_vals = list(probabilities)
-        target_idx = int(target) if 0 <= int(target) < len(p_vals) else 0
+        if type(target) is not int or not 0 <= target < len(p_vals):
+            raise ValueError("Target index is outside the distribution")
+        target_idx = target
 
-    k = max(1, len(p_vals))
+    _validate_distribution(p_vals)
+    k = len(p_vals)
     sum_sq = 0.0
     for idx, p in enumerate(p_vals):
         y = 1.0 if idx == target_idx else 0.0
@@ -101,6 +122,7 @@ def compute_shannon_entropy(probabilities: Sequence[float]) -> float:
 
 def compute_normalized_entropy(probabilities: Sequence[float]) -> float:
     """Compute Shannon entropy normalized by ln(K) into [0.0, 1.0]."""
+    _validate_distribution(probabilities)
     k = len(probabilities)
     if k <= 1:
         return 0.0
@@ -109,8 +131,13 @@ def compute_normalized_entropy(probabilities: Sequence[float]) -> float:
     return round(min(1.0, max(0.0, h / max_h)), 6)
 
 
-def compute_ranked_probability_score(probabilities: Sequence[float], target_idx: int) -> float:
+def compute_ranked_probability_score(
+    probabilities: Sequence[float], target_idx: int
+) -> float:
     """Compute the Ranked Probability Score (RPS) for ordinal scales."""
+    if type(target_idx) is not int or not 0 <= target_idx < len(probabilities):
+        raise ValueError("Target index is outside the distribution")
+    _validate_distribution(probabilities)
     k = len(probabilities)
     if k <= 1:
         return 0.0
@@ -131,7 +158,7 @@ class LayaDecisionHead:
     """High-speed Non-Autoregressive System 1 Perception and Decision Evaluator.
 
     Inspired by Laya (ModernBERT-based parallel decision architecture) and Jev.
-    Evaluates typed structured decisions in a single forward matrix projection (< 2ms CPU)
+    Classifies intent with a linear projection over hashed encoder features; grounds truth symbolically
     without autoregressive token generation.
     """
 
@@ -156,18 +183,20 @@ class LayaDecisionHead:
         margin_threshold: float = 0.20,
     ) -> None:
         self.encoder = encoder or NeuralStateEncoder()
-        if memory is not None:
-            self.memory = memory
-        elif Path("data/little.db").exists():
-            self.memory = MemoryStore("data/little.db")
-        else:
-            self.memory = None
-        self.temperature = max(0.01, temperature)
+        self.memory = memory
+        if (
+            isinstance(temperature, bool)
+            or not isinstance(temperature, (float, int))
+            or not math.isfinite(temperature)
+            or temperature <= 0
+        ):
+            raise ValueError("Temperature must be finite and positive")
+        self.temperature = temperature
         self.entropy_threshold = entropy_threshold
         self.confidence_threshold = confidence_threshold
         self.margin_threshold = margin_threshold
 
-        # Intent weights matrix: W [len(DEFAULT_INTENTS), 512], b [len(DEFAULT_INTENTS)]
+        # Linear intent weights; truth evaluation uses the injected symbolic memory.
         self._intent_labels = list(self.DEFAULT_INTENTS)
         self._w, self._b = self._init_intent_weights()
 
@@ -203,7 +232,9 @@ class LayaDecisionHead:
         margin = round(top_conf - second_conf, 4)
 
         # Fast path is triggered when decision has low normalized entropy and distinct margin
-        is_fast_path = (norm_entropy < self.entropy_threshold) and (margin >= self.margin_threshold)
+        is_fast_path = (norm_entropy < self.entropy_threshold) and (
+            margin >= self.margin_threshold
+        )
 
         return ChoiceDecision(
             choice=top_intent,
@@ -224,11 +255,24 @@ class LayaDecisionHead:
         temperature: float | None = None,
     ) -> ChoiceDecision:
         """Evaluate an arbitrary set of candidate options non-autoregressively."""
-        if not options:
-            raise ValueError("Candidate options cannot be empty.")
+        if (
+            not options
+            or len(set(options)) != len(options)
+            or any(
+                not isinstance(option, str) or not option.strip() for option in options
+            )
+        ):
+            raise ValueError("Candidate options must be nonempty, unique strings.")
 
         state = self._resolve_state(text_or_state)
-        temp = temperature or self.temperature
+        temp = self.temperature if temperature is None else temperature
+        if (
+            isinstance(temp, bool)
+            or not isinstance(temp, (int, float))
+            or not math.isfinite(temp)
+            or temp <= 0
+        ):
+            raise ValueError("Temperature must be finite and positive")
         in_dim = len(state.embedding)
 
         # Project candidate options into normalized semantic embedding vectors
@@ -239,12 +283,15 @@ class LayaDecisionHead:
         # Dot product logits: S . P_k * (5.0 / temp)
         scale = 5.0 / temp
         logits = [
-            sum(state.embedding[i] * opt_prototypes[k][i] for i in range(in_dim)) * scale
+            sum(state.embedding[i] * opt_prototypes[k][i] for i in range(in_dim))
+            * scale
             for k in range(len(options))
         ]
 
         # Check token / semantic grounding with memory
-        prompt_text = text_or_state if isinstance(text_or_state, str) else text_or_state.text
+        prompt_text = (
+            text_or_state if isinstance(text_or_state, str) else text_or_state.text
+        )
         prompt_tokens = set(re.findall(r"[a-z0-9_]+", prompt_text.lower()))
 
         grounded_targets: set[str] = set()
@@ -274,9 +321,12 @@ class LayaDecisionHead:
         sum_exp = sum(exps)
         probs = [e / sum_exp for e in exps]
 
-        prob_dict = {
-            options[idx]: round(probs[idx], 4) for idx in range(len(options))
-        }
+        prob_dict = {options[idx]: round(probs[idx], 4) for idx in range(len(options))}
+        if prob_dict:
+            top_opt = max(prob_dict, key=lambda k: prob_dict[k])
+            residual = round(1.0 - sum(prob_dict.values()), 4)
+            if residual != 0.0:
+                prob_dict[top_opt] = round(max(0.0, min(1.0, prob_dict[top_opt] + residual)), 4)
 
         entropy = compute_shannon_entropy(probs)
         norm_entropy = compute_normalized_entropy(probs)
@@ -286,7 +336,9 @@ class LayaDecisionHead:
         second_conf = ranked[1][1] if len(ranked) > 1 else 0.0
         margin = round(top_conf - second_conf, 4)
 
-        is_fast = (norm_entropy < self.entropy_threshold) and (margin >= self.margin_threshold)
+        is_fast = (norm_entropy < self.entropy_threshold) and (
+            margin >= self.margin_threshold
+        )
 
         return ChoiceDecision(
             choice=top_choice,
@@ -308,50 +360,38 @@ class LayaDecisionHead:
 
         Maps subjective probability of truth into SUPPORTED, CONTRADICTED, UNCERTAIN, or UNKNOWN.
         """
-        prompt = statement or (text_or_state if isinstance(text_or_state, str) else text_or_state.text)
+        prompt = statement or (
+            text_or_state if isinstance(text_or_state, str) else text_or_state.text
+        )
         state = self._resolve_state(prompt)
 
-        prompt_tokens = set(re.findall(r"[a-z0-9_]+", prompt.lower()))
+        from little.core.models import BeliefStatus
+        from little.inference.engine import InferenceEngine
+        from little.language.parser import SimpleParser
 
-        positive_evidence = 0.0
-        negative_evidence = 0.0
-        known_concepts = 0
-
-        if self.memory:
-            for tok in prompt_tokens:
-                c = self.memory.get_concept(tok)
-                if c:
-                    known_concepts += 1
-                    rels = self.memory.get_relations(subject_id=c.id)
-                    for r in rels:
-                        obj = self.memory.get_concept(r.object_id)
-                        if obj and obj.name.lower() in prompt.lower():
-                            positive_evidence += r.confidence
-            if any(neg in prompt_tokens for neg in ("not", "never", "cannot", "false", "untrue")):
-                if positive_evidence > 0:
-                    negative_evidence = positive_evidence
-                    positive_evidence = 0.0
-
-        if known_concepts == 0:
-            p_true = 0.5
-            c_star = 0.0
-            status = EpistemicBeliefState.UNKNOWN
-            is_fast = False
-        elif positive_evidence > 0 and positive_evidence > negative_evidence:
-            p_true = round(min(0.98, 0.5 + 0.45 * (positive_evidence / (positive_evidence + 1.0))), 4)
-            c_star = round(2.0 * abs(p_true - 0.5), 4)
-            status = EpistemicBeliefState.SUPPORTED if c_star >= 0.20 else EpistemicBeliefState.UNCERTAIN
-            is_fast = status == EpistemicBeliefState.SUPPORTED
-        elif negative_evidence > 0 and negative_evidence > positive_evidence:
-            p_true = round(max(0.02, 0.5 - 0.45 * (negative_evidence / (negative_evidence + 1.0))), 4)
-            c_star = round(2.0 * abs(p_true - 0.5), 4)
-            status = EpistemicBeliefState.CONTRADICTED if c_star >= 0.20 else EpistemicBeliefState.UNCERTAIN
-            is_fast = status == EpistemicBeliefState.CONTRADICTED
-        else:
-            p_true = 0.5
-            c_star = 0.0
-            status = EpistemicBeliefState.UNKNOWN
-            is_fast = False
+        p_true, c_star = 0.5, 0.0
+        status = EpistemicBeliefState.UNKNOWN
+        is_fast = False
+        triples = SimpleParser.parse_statement(prompt)
+        if self.memory is not None and len(triples) == 1:
+            triple = triples[0]
+            result = InferenceEngine(self.memory).infer(
+                triple.subject, triple.predicate, triple.object_
+            )
+            if result.status in (BeliefStatus.SUPPORTED, BeliefStatus.REFUTED):
+                supported = result.status == BeliefStatus.SUPPORTED
+                if triple.is_negative:
+                    supported = not supported
+                c_star = result.confidence
+                p_true = 0.5 + (0.5 * c_star if supported else -0.5 * c_star)
+                status = (
+                    EpistemicBeliefState.SUPPORTED
+                    if supported
+                    else EpistemicBeliefState.CONTRADICTED
+                )
+                is_fast = c_star >= self.confidence_threshold
+            elif result.status in (BeliefStatus.AMBIGUOUS, BeliefStatus.CONTRADICTED):
+                status = EpistemicBeliefState.UNCERTAIN
 
         probs = [round(1.0 - p_true, 4), p_true]
         entropy = compute_shannon_entropy(probs)
@@ -399,22 +439,24 @@ class LayaDecisionHead:
         target_intent: str,
         learning_rate: float = 0.05,
     ) -> float:
-        """Lifelong online learning updating weights using proper scoring gradient."""
+        """Update linear weights with a softmax cross-entropy gradient; return Brier diagnostic."""
         if target_intent not in self._intent_labels:
-            return 0.0
+            raise ValueError("Unknown target intent")
 
         target_idx = self._intent_labels.index(target_intent)
         decision = self.classify_intent(state)
-        current_probs = [decision.probabilities.get(lbl, 0.0) for lbl in self._intent_labels]
+        current_probs = [
+            decision.probabilities.get(lbl, 0.0) for lbl in self._intent_labels
+        ]
 
         # Proper scoring loss (Brier score)
         bs = compute_brier_score(current_probs, target_idx)
 
-        # Gradient step on cross-entropy / Brier
+        # Gradient step on softmax cross-entropy (Brier above is diagnostic)
         for k in range(len(self._intent_labels)):
             y_k = 1.0 if k == target_idx else 0.0
             error = y_k - current_probs[k]
-            grad_scale = learning_rate * error
+            grad_scale = learning_rate * error / self.temperature
             for i in range(len(state.embedding)):
                 self._w[k][i] += grad_scale * state.embedding[i]
             self._b[k] += grad_scale
@@ -444,6 +486,7 @@ class LayaDecisionHead:
 
         # Dynamic mapping of cognitive intents to policy pathways
         from little.neural.models import Pathway
+
         pathway_map = {
             "math": Pathway.MATH,
             "action": Pathway.TOOL,
@@ -454,10 +497,40 @@ class LayaDecisionHead:
 
         # Structural linguistic and curiosity markers
         structural_markers: dict[str, list[str]] = {
-            "statement": ["is", "are", "has", "have", "fact", "record", "named", "known", "called"],
+            "statement": [
+                "is",
+                "are",
+                "has",
+                "have",
+                "fact",
+                "record",
+                "named",
+                "known",
+                "called",
+            ],
             "question": ["what", "who", "where", "when", "why", "how", "which", "?"],
-            "curiosity": ["gap", "gaps", "dream", "study", "explore", "learn", "hypothesize", "curious", "knowledge", "epistemic"],
-            "social": ["hello", "hi", "hey", "thanks", "thank", "welcome", "bye", "goodbye"],
+            "curiosity": [
+                "gap",
+                "gaps",
+                "dream",
+                "study",
+                "explore",
+                "learn",
+                "hypothesize",
+                "curious",
+                "knowledge",
+                "epistemic",
+            ],
+            "social": [
+                "hello",
+                "hi",
+                "hey",
+                "thanks",
+                "thank",
+                "welcome",
+                "bye",
+                "goodbye",
+            ],
         }
 
         w: list[list[float]] = []

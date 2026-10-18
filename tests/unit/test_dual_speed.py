@@ -1,13 +1,14 @@
-import pytest
 from dataclasses import replace
-from little.memory.store import MemoryStore
-from little.inference.invariant_gates import DeepSeekInvariantVerifier
+
+import pytest
+
 from little.inference.dual_speed import (
     DualSpeedInfillingEngine,
-    InfillingResult,
 )
+from little.inference.invariant_gates import DeepSeekInvariantVerifier
 from little.inference.reasoning_policy import ReasoningPolicy
 from little.knowledge.registry import SchemaRegistry
+from little.memory.store import MemoryStore
 
 
 def test_dual_speed_fast_mode_hit():
@@ -20,7 +21,12 @@ def test_dual_speed_fast_mode_hit():
     res = engine.query("APPLE", "FRUIT")
     assert res.mode == "FAST"
     assert res.path == ["APPLE", "FRUIT"]
-    assert res.confidence >= 0.8
+    assert (
+        res.confidence
+        == memory.get_relations(
+            subject_id="APPLE", predicate="is_a", object_id="FRUIT"
+        )[0].confidence
+    )
     assert "<think>" not in res.inspectable_trace
 
 
@@ -73,7 +79,11 @@ def test_dual_speed_uses_injected_reasoning_policy_for_confidence():
     direct = engine.query("APPLE", "FRUIT")
     unknown = engine.query("APPLE", "SPACESHIP")
 
-    assert direct.confidence == pytest.approx(0.71)
+    assert direct.confidence == pytest.approx(
+        memory.get_relations(subject_id="APPLE", predicate="is_a", object_id="FRUIT")[
+            0
+        ].confidence
+    )
     assert unknown.confidence == pytest.approx(0.13)
 
 

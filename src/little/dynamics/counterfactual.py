@@ -53,18 +53,25 @@ class CounterfactualDynamicsEngine:
     def resolve_temperature(self, text: str, default: float = 20.0) -> float:
         """Resolve numeric temperature in Celsius or text alias from data-driven policy."""
         clean = text.lower().strip()
-        # Direct regex for numbers: e.g. 4C, 4°C, 4 degrees, 30 deg
-        m = re.search(r"(-?\d+(?:\.\d+)?)\s*(?:°\s*c|deg\s*c|c\b|degrees?)?", clean)
+        # Direct regex for numbers with explicit temperature units: e.g. 4C, 4°C, 68F, 68°F, 4 degrees, 30 deg
+        m = re.search(
+            r"(-?\d+(?:\.\d+)?)\s*(?:°\s*([cf])|deg(?:rees?)?(?:\s*([cf]))?|(celsius|fahrenheit)|([cf])\b)",
+            clean,
+        )
         if m:
             val = float(m.group(1))
-            # If explicitly Fahrenheit (e.g. 68F)
-            if "f" in clean and "c" not in clean:
+            unit = (m.group(2) or m.group(3) or m.group(4) or m.group(5) or "").lower()
+            if unit in ("f", "fahrenheit"):
                 return (val - 32.0) * 5.0 / 9.0
             return val
 
         for alias, temp in self.policy.temperature_aliases.items():
             if alias in clean:
                 return temp
+
+        m_bare = re.match(r"^(-?\d+(?:\.\d+)?)$", clean)
+        if m_bare:
+            return float(m_bare.group(1))
         return default
 
     def resolve_duration_hours(self, text: str, default: float = 2.0) -> float:
@@ -256,7 +263,12 @@ class CounterfactualDynamicsEngine:
 
         # Single hypothetical: "What if an apple slice is kept at 4C for 10 hours?"
         dur = self.resolve_duration_hours(body, default=self.policy.default_duration_hours)
-        temp = self.resolve_temperature(body, default=self.policy.default_counterfactual_temperature_c)
+        default_temp = (
+            self.policy.default_baseline_temperature_c
+            if matched_prefix and matched_prefix.startswith("simulate")
+            else self.policy.default_counterfactual_temperature_c
+        )
+        temp = self.resolve_temperature(body, default=default_temp)
 
         m_subj = re.search(
             r"^(?:an?\s+)?([a-z0-9_ ]+?)(?:\s+is|\s+was|\s+were|\s+at|\s+in|\s+kept|\s+left|\s+decay|\s+oxidation|\s+over|\s+for)",

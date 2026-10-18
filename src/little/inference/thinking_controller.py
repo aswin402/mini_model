@@ -91,9 +91,7 @@ class ThinkingController:
         self.parser = configured_parser(
             self.runtime_policy.parser if explicit_runtime_policy else None,
             constructions=(
-                self.runtime_policy.constructions
-                if explicit_runtime_policy
-                else None
+                self.runtime_policy.constructions if explicit_runtime_policy else None
             ),
             unit_conversions=UnitConversionGraph(self.runtime_policy.units),
         )
@@ -118,8 +116,10 @@ class ThinkingController:
 
     def _parse_question(self, text: str) -> tuple[str, str, Any] | None:
         catalog = list(self.parser.CONSTRUCTIONS) + self.memory.list_constructions()
-        parsed = self.parser.CONSTRUCTION_ENGINE.parse_question_from_catalog_with_procedural(
-            text, catalog
+        parsed = (
+            self.parser.CONSTRUCTION_ENGINE.parse_question_from_catalog_with_procedural(
+                text, catalog
+            )
         )
         if parsed:
             return parsed
@@ -140,11 +140,18 @@ class ThinkingController:
         if parsed_query is not _UNSPECIFIED_QUERY and parsed_query is not None:
             parsed = parsed_query
         elif parsed_queries:
-            parsed = next((candidate for candidate in parsed_queries if candidate is not None), None)
+            parsed = next(
+                (candidate for candidate in parsed_queries if candidate is not None),
+                None,
+            )
         else:
             parsed = self._parse_question(clean_question) if parse_input else None
 
-        if parsed is None and parse_input and not self._is_question_like(clean_question):
+        if (
+            parsed is None
+            and parse_input
+            and not self._is_question_like(clean_question)
+        ):
             statements = self.parser.parse_statement(clean_question)
             if statements:
                 statement = statements[0]
@@ -255,8 +262,9 @@ class ThinkingController:
             or plan.target == "?"
         ):
             return False
-        return plan.predicate.strip().lower() in self.dual_speed.verifier.registry.predicates(
-            transitive=True
+        return (
+            plan.predicate.strip().lower()
+            in self.dual_speed.verifier.registry.predicates(transitive=True)
         )
 
     def _from_infilling(
@@ -376,22 +384,24 @@ class ThinkingController:
             infilling = self.dual_speed.query(
                 plan.subject, plan.target, predicate=plan.predicate
             )
-            if infilling.path:
-                inference = self._from_infilling(plan, infilling)
-            elif self.resolver is not None:
-                inference = self._with_infilling_trace(
-                    self._run_resolver(
-                        plan, parsed_query, parsed_queries, question_parts
-                    ),
-                    infilling,
-                )
-            else:
-                inference = self._with_infilling_trace(
-                    self._unknown_result(
-                        plan, "System 2 found no verified path; answer is UNKNOWN."
-                    ),
-                    infilling,
-                )
+            inference = (
+                self._run_resolver(plan, parsed_query, parsed_queries, question_parts)
+                if self.resolver is not None
+                else self.inference.infer(plan.subject, plan.predicate, plan.target)
+            )
+            proof_trace = (
+                [f"System 2 proof path verified: {' -> '.join(infilling.path)}"]
+                if infilling.path
+                else []
+            )
+            inference = replace(
+                inference,
+                trace=[
+                    *inference.trace,
+                    *proof_trace,
+                    *infilling.inspectable_trace.splitlines(),
+                ],
+            )
         elif self.resolver is not None:
             inference = self._run_resolver(
                 plan, parsed_query, parsed_queries, question_parts
@@ -450,9 +460,7 @@ class ThinkingController:
                         plan, "This query requires a specialized resolver."
                     )
         else:
-            inference = self.inference.infer(
-                plan.subject, plan.predicate, plan.target
-            )
+            inference = self.inference.infer(plan.subject, plan.predicate, plan.target)
 
         trace = [
             f"Controller route: {plan.mode.value}.",

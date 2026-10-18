@@ -7,8 +7,8 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from little.core.models import BeliefStatus, InferenceResult, LearningResult, UpdateType
 from little.active.active_policy import ActiveLearningPolicy
+from little.core.models import BeliefStatus, InferenceResult, LearningResult, UpdateType
 from little.knowledge.policy import LanguagePolicy
 
 if TYPE_CHECKING:
@@ -216,6 +216,13 @@ class ActiveInquisitor:
                 clean_response.startswith(word)
                 for word in self.policy.negative_denials
             ):
+                pred = prompt.pending_predicate.strip().lower()
+                if pred == "can":
+                    return f"{prompt.pending_subject} cannot {prompt.pending_object}."
+                if pred in ("has", "has_part", "has_property"):
+                    return f"{prompt.pending_subject} does not have {prompt.pending_object}."
+                if pred in ("located_in", "is_in"):
+                    return f"{prompt.pending_subject} is not in {prompt.pending_object}."
                 return f"{prompt.pending_subject} is not a {prompt.pending_object}."
             return user_response
 

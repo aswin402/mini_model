@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import datetime
 import re
+import sqlite3
 import sys
 import time
 import uuid
-from pathlib import Path
+from copy import deepcopy
+from dataclasses import replace
 from typing import Any
 
 from little.actions.action_router import ActionRouter
@@ -64,14 +66,21 @@ class AgenticPlanner:
             return False
 
         # Must contain at least one conjunction delimiter or step marker
-        has_conjunction = any(
-            re.search(rf"\b{re.escape(d)}\b", text, re.IGNORECASE)
-            for d in self.policy.conjunction_delimiters
-            if d != ";"
-        ) or ";" in text
+        has_conjunction = (
+            any(
+                re.search(rf"\b{re.escape(d)}\b", text, re.IGNORECASE)
+                for d in self.policy.conjunction_delimiters
+                if d != ";"
+            )
+            or ";" in text
+        )
 
         has_step_marker = bool(
-            re.search(r"(?:^|\s)(?:step\s+\d+:?|\d+\.\s+|first\b|second\b)", text, re.IGNORECASE)
+            re.search(
+                r"(?:^|\s)(?:step\s+\d+:?|\d+\.\s+|first\b|second\b)",
+                text,
+                re.IGNORECASE,
+            )
         )
 
         has_compound_action = bool(
@@ -85,22 +94,30 @@ class AgenticPlanner:
         if not (has_conjunction or has_step_marker or has_compound_action):
             return False
 
-        # Attempt trial decomposition: only compound if >= 2 valid steps are parsed
+        # Preserve partially recognized compound goals so incomplete work is rejected
+        # explicitly by execution instead of falling back to a single tool action.
         plan = self.decompose_goal(text)
-        return len(plan.steps) >= 2
+        return bool(plan.steps) and len(self._split_compound_utterance(text)) >= 2
 
     def decompose_goal(self, goal: str) -> Plan:
         """Deconstruct a compound goal utterance into an ordered Directed Acyclic Graph (DAG) of PlanSteps."""
         raw_subgoals = self._split_compound_utterance(goal)
         steps: list[PlanStep] = []
+        diagnostics: list[str] = []
+        if not goal.strip():
+            diagnostics.append("Goal is empty")
 
         for idx, sub_text in enumerate(raw_subgoals, start=1):
             cleaned = self._clean_subgoal_text(sub_text)
             if not cleaned:
+                diagnostics.append(f"Subgoal {idx} is empty")
                 continue
 
-            tool_call = self._resolve_subgoal_tool_call(cleaned, prev_step_index=idx - 1)
+            tool_call = self._resolve_subgoal_tool_call(
+                cleaned, prev_step_index=idx - 1
+            )
             if tool_call is None:
+                diagnostics.append(f"Unrecognized subgoal {idx}: {cleaned}")
                 continue
 
             # Identify dependencies: step idx depends on prev step if variables reference previous output
@@ -111,7 +128,14 @@ class AgenticPlanner:
                 if isinstance(arg_val, str):
                     if any(
                         p in arg_val
-                        for p in ("$prev", "$result", "$output", "the result", "the output", "the answer")
+                        for p in (
+                            "$prev",
+                            "$result",
+                            "$output",
+                            "the result",
+                            "the output",
+                            "the answer",
+                        )
                     ):
                         if idx > 1:
                             deps.append(idx - 1)
@@ -132,12 +156,15 @@ class AgenticPlanner:
                 arguments_template=args_template,
                 dependencies=tuple(sorted(set(deps))),
                 status=PlanStepStatus.PENDING,
+                confirmed=tool_call.confirmed,
             )
             steps.append(step)
 
         # Enforce max step bound from policy
         if len(steps) > self.policy.max_steps:
-            steps = steps[: self.policy.max_steps]
+            diagnostics.append(
+                f"Plan exceeds max_steps={self.policy.max_steps}; no steps executed"
+            )
 
         plan_id = f"plan_{uuid.uuid4().hex[:8]}"
         created_at = datetime.datetime.now(datetime.UTC).isoformat()
@@ -146,6 +173,7 @@ class AgenticPlanner:
             goal=goal,
             steps=tuple(steps),
             created_at=created_at,
+            diagnostics=tuple(diagnostics),
         )
 
     def plan_and_execute(self, goal: str) -> AgenticPlanExecutionResult:
@@ -153,165 +181,223 @@ class AgenticPlanner:
         plan = self.decompose_goal(goal)
         return self.execute_plan(plan)
 
+    _VARIABLE = re.compile(
+        r"\$(?:step_(?P<index>\d+)|(?P<previous>prev(?:ious)?|result|output))(?:\.output)?(?![\w.])"
+    )
+
+    def _variable_dependencies(
+        self, arguments: dict[str, Any], previous: int
+    ) -> set[int]:
+        references: set[int] = set()
+        for value in arguments.values():
+            if isinstance(value, str):
+                for match in self._VARIABLE.finditer(value):
+                    references.add(
+                        int(match.group("index")) if match.group("index") else previous
+                    )
+        return references
+
     def execute_plan(self, plan: Plan) -> AgenticPlanExecutionResult:
-        """Execute plan with Invariant Gates (I_DAG, I_sort, I_mutex, I_ground) and ReAct backtracking."""
+        """Execute an ordered DAG, exposing incomplete, partial, and provenance failures."""
         start_time = time.perf_counter()
-        invariants_checked: list[str] = []
+        invariants_checked: list[str] = ["I_dag_acyclicity"]
+        diagnostics = list(plan.diagnostics)
+        # Execution state belongs to this run, never to the reusable plan.
+        steps = tuple(
+            replace(
+                step,
+                arguments_template=deepcopy(step.arguments_template),
+                status=PlanStepStatus.PENDING,
+                retries=0,
+                result=None,
+                observation=None,
+            )
+            for step in plan.steps
+        )
+        provenance_available = (
+            getattr(self.tool_grounder, "memory_store", None) is not None
+        )
 
-        # Gate 1: I_DAG Acyclicity check
-        invariants_checked.append("I_dag_acyclicity")
+        def outcome(
+            success: bool,
+            error: str | None = None,
+            output: Any = None,
+            retries: int = 0,
+            backtracks: int = 0,
+        ) -> AgenticPlanExecutionResult:
+            return AgenticPlanExecutionResult(
+                plan_id=plan.plan_id,
+                goal=plan.goal,
+                steps=steps,
+                success=success,
+                final_output=output,
+                error=error,
+                total_execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                trace_hash=AgenticPlanExecutionResult.compute_trace_hash(
+                    plan.plan_id, steps, success
+                ),
+                invariants_checked=tuple(sorted(set(invariants_checked))),
+                retries_used=retries,
+                backtracks_count=backtracks,
+                diagnostics=tuple(diagnostics),
+                provenance_available=provenance_available,
+            )
+
+        if not plan.goal.strip() or not steps:
+            diagnostics.append(
+                "Plan requires a nonempty goal and at least one actionable step"
+            )
+        if len(steps) > self.policy.max_steps:
+            diagnostics.append(f"Plan exceeds max_steps={self.policy.max_steps}")
         if not plan.is_acyclic():
-            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-            return AgenticPlanExecutionResult(
-                plan_id=plan.plan_id,
-                goal=plan.goal,
-                steps=plan.steps,
-                success=False,
-                error="Plan rejected: cyclic or forward step dependencies detected (I_DAG violation)",
-                total_execution_time_ms=elapsed_ms,
-                trace_hash=AgenticPlanExecutionResult.compute_trace_hash(plan.plan_id, plan.steps, False),
-                invariants_checked=tuple(invariants_checked),
+            diagnostics.append(
+                "I_DAG violation: step IDs must be positive, unique, ordered, with existing earlier dependencies"
             )
+        seen: set[int] = set()
+        dependencies: dict[int, set[int]] = {}
+        for step in steps:
+            if step.tool_name not in self.policy.chainable_tools:
+                diagnostics.append(
+                    f"Step {step.step_index}: tool {step.tool_name} is not chainable"
+                )
+            refs = self._variable_dependencies(
+                step.arguments_template, step.step_index - 1
+            )
+            missing = refs - seen
+            if missing:
+                diagnostics.append(
+                    f"Step {step.step_index}: missing or forward output references {sorted(missing)}"
+                )
+            dependencies[step.step_index] = set(step.dependencies) | refs
+            seen.add(step.step_index)
+        if diagnostics:
+            return outcome(False, "Plan rejected: " + "; ".join(diagnostics))
 
-        # Gate 2: I_mutex Resource conflict check
         invariants_checked.append("I_mutex_resource")
-        mutex_err = self._check_mutex_invariants(plan)
-        if mutex_err:
-            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-            return AgenticPlanExecutionResult(
-                plan_id=plan.plan_id,
-                goal=plan.goal,
-                steps=plan.steps,
-                success=False,
-                error=f"Plan rejected: resource mutex violation: {mutex_err}",
-                total_execution_time_ms=elapsed_ms,
-                trace_hash=AgenticPlanExecutionResult.compute_trace_hash(plan.plan_id, plan.steps, False),
-                invariants_checked=tuple(invariants_checked),
+        mutex_error = self._check_mutex_invariants(plan)
+        if mutex_error:
+            diagnostics.append(mutex_error)
+            return outcome(
+                False, f"Plan rejected: resource mutex violation: {mutex_error}"
+            )
+        if not provenance_available:
+            diagnostics.append(
+                "Provenance unavailable: execution-only planner has no memory store"
             )
 
-        # Context environment for variable resolution across steps
-        step_outputs: dict[int, Any] = {}
-        total_retries = 0
-        total_backtracks = 0
-        overall_success = True
-        plan_error: str | None = None
-        executed_steps: list[PlanStep] = []
-
-        for step in plan.steps:
-            if not overall_success:
+        outputs: dict[int, Any] = {}
+        total_retries = total_backtracks = 0
+        failures: list[str] = []
+        for step in steps:
+            if any(dep not in outputs for dep in dependencies[step.step_index]):
                 step.status = PlanStepStatus.SKIPPED
-                step.observation = "Skipped because plan execution failed at earlier step"
-                executed_steps.append(step)
+                step.observation = "Skipped because a dependent step failed"
+                diagnostics.append(f"Step {step.step_index}: {step.observation}")
                 continue
-
-            # Check dependencies: if any dependency did not succeed, skip
-            dep_failed = any(
-                dep not in step_outputs for dep in step.dependencies
-            )
-            if dep_failed:
-                step.status = PlanStepStatus.SKIPPED
-                step.observation = "Skipped because previous dependent step failed"
-                executed_steps.append(step)
-                overall_success = False
-                continue
-
             step.status = PlanStepStatus.RUNNING
-
-            # Resolve variable bindings in arguments template
-            resolved_args = self._resolve_argument_variables(
-                step.tool_name,
-                step.arguments_template,
-                step_outputs=step_outputs,
-                prev_step_idx=step.step_index - 1,
-            )
-
-            # ReAct Execution & Backtracking Loop
-            success = False
-            last_res: ToolExecutionResult | None = None
-            current_args = resolved_args
-
-            while step.retries <= self.policy.max_retries_per_step:
-                tool_call = ToolCall(tool_name=step.tool_name, arguments=current_args)
-
-                # Pre-dispatch verification gate
-                invariants_checked.append("I_sort_type")
-                invariants_checked.append("I_security_sandbox")
-                ver_res = self.verifier.verify(tool_call)
-                if not ver_res.valid:
-                    last_res = ToolExecutionResult(
-                        tool_name=step.tool_name,
-                        arguments=current_args,
-                        success=False,
-                        error=ver_res.error,
+            try:
+                arguments = self._resolve_argument_variables(
+                    step.tool_name,
+                    step.arguments_template,
+                    outputs,
+                    step.step_index - 1,
+                )
+            except (ValueError, TypeError) as exc:
+                step.status = PlanStepStatus.FAILED
+                step.observation = str(exc)
+                failures.append(f"Step {step.step_index}: {exc}")
+                continue
+            last_result = None
+            for attempt in range(self.policy.max_retries_per_step + 1):
+                call = ToolCall(
+                    tool_name=step.tool_name,
+                    arguments=arguments,
+                    confirmed=step.confirmed,
+                )
+                invariants_checked.extend(("I_sort_type", "I_security_sandbox"))
+                verification = self.verifier.verify(call)
+                if not verification.valid:
+                    last_result = ToolExecutionResult(
+                        step.tool_name,
+                        arguments,
+                        False,
+                        error=verification.error,
                         verifiable_hash=ToolExecutionResult.compute_hash(
-                            step.tool_name, current_args, None, False
+                            step.tool_name, arguments, None, False
                         ),
                     )
                 else:
-                    last_res = self.tool_executor.execute(tool_call)
-
-                if last_res.success:
-                    success = True
+                    try:
+                        last_result = self.tool_executor.execute(
+                            call, timeout_seconds=self.policy.step_timeout_seconds
+                        )
+                    except (ValueError, TypeError, OSError, RuntimeError) as exc:
+                        last_result = ToolExecutionResult(
+                            step.tool_name,
+                            arguments,
+                            False,
+                            error=f"Dispatch raised {type(exc).__name__}: {exc}",
+                        )
+                if last_result.success:
                     break
-
-                # Step failed: try backtracking / self-correction if retries remain
-                if step.retries < self.policy.max_retries_per_step and self.policy.enable_backtracking:
-                    corrected_args = self._attempt_self_correction(
-                        step.tool_name, current_args, last_res.error or ""
-                    )
-                    if corrected_args is not None and corrected_args != current_args:
-                        step.retries += 1
-                        total_retries += 1
-                        total_backtracks += 1
-                        current_args = corrected_args
-                        continue
-
+                diagnostics.append(
+                    f"Step {step.step_index} attempt {attempt + 1}: {last_result.error}"
+                )
+                if (
+                    attempt >= self.policy.max_retries_per_step
+                    or not self.policy.enable_backtracking
+                ):
+                    break
+                corrected = self._attempt_self_correction(
+                    step.tool_name, arguments, last_result.error or ""
+                )
+                if corrected is None or corrected == arguments:
+                    break
+                arguments = corrected
                 step.retries += 1
                 total_retries += 1
-                break
-
-            step.result = last_res
-
-            if success and last_res is not None:
+                total_backtracks += 1
+            step.result = last_result
+            if last_result is not None and last_result.success:
+                if provenance_available:
+                    try:
+                        grounded = self.tool_grounder.ground(last_result)
+                    except (
+                        ValueError,
+                        TypeError,
+                        OSError,
+                        RuntimeError,
+                        sqlite3.Error,
+                    ) as exc:
+                        grounded = False
+                        diagnostics.append(
+                            f"Step {step.step_index}: grounding raised {type(exc).__name__}: {exc}"
+                        )
+                    if not grounded:
+                        step.status = PlanStepStatus.FAILED
+                        step.observation = "Tool completed but grounding failed; effects may already exist"
+                        failures.append(f"Step {step.step_index}: grounding failed")
+                        diagnostics.append(step.observation)
+                        continue
+                    invariants_checked.append("I_ground_provenance")
                 step.status = PlanStepStatus.SUCCESS
-                step.observation = str(last_res.output)
-                step_outputs[step.step_index] = last_res.output
-
-                # Gate 4: I_ground provenance - ground into memory
-                invariants_checked.append("I_ground_provenance")
-                self.tool_grounder.ground(last_res)
-                executed_steps.append(step)
+                step.observation = str(last_result.output)
+                outputs[step.step_index] = last_result.output
             else:
                 step.status = PlanStepStatus.FAILED
-                step.observation = f"Execution failed: {last_res.error if last_res else 'Unknown error'}"
-                overall_success = False
-                plan_error = f"Step {step.step_index} ({step.tool_name}) failed: {last_res.error if last_res else 'Unknown error'}"
-                executed_steps.append(step)
-                continue
-
-        elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-        final_output = (
-            step_outputs[executed_steps[-1].step_index]
-            if overall_success and executed_steps and executed_steps[-1].step_index in step_outputs
-            else None
-        )
-
-        trace_hash = AgenticPlanExecutionResult.compute_trace_hash(
-            plan.plan_id, tuple(executed_steps), overall_success
-        )
-
-        return AgenticPlanExecutionResult(
-            plan_id=plan.plan_id,
-            goal=plan.goal,
-            steps=tuple(executed_steps),
-            success=overall_success,
-            final_output=final_output,
-            total_execution_time_ms=elapsed_ms,
-            trace_hash=trace_hash,
-            invariants_checked=tuple(sorted(set(invariants_checked))),
-            retries_used=total_retries,
-            backtracks_count=total_backtracks,
-            error=plan_error,
+                step.observation = f"Execution failed: {last_result.error if last_result else 'No execution result'}"
+                failures.append(
+                    f"Step {step.step_index} ({step.tool_name}) failed: {step.observation}"
+                )
+        success = all(step.status == PlanStepStatus.SUCCESS for step in steps)
+        diagnostics.extend(failures)
+        final_output = outputs.get(steps[-1].step_index) if success else None
+        return outcome(
+            success,
+            "; ".join(failures) or None,
+            final_output,
+            total_retries,
+            total_backtracks,
         )
 
     # -------------------------------------------------------------------------
@@ -322,34 +408,57 @@ class AgenticPlanner:
         """Split compound sentence into sub-goal clauses while respecting quoted expressions."""
         clean = text.strip()
 
-        # Check for numbered/labeled steps (e.g. "step 1: ... step 2: ..." or "1. ... 2. ...")
-        if re.search(r"(?:^|\s)step\s+\d+:?", clean, re.IGNORECASE):
-            parts = re.split(r"(?:^|\s)step\s+\d+:?", clean, flags=re.IGNORECASE)
-            return [p.strip() for p in parts if p.strip()]
-
-        if re.search(r"(?:^|\n)\d+\.\s+", clean):
-            parts = re.split(r"(?:^|\n)\d+\.\s+", clean)
-            return [p.strip() for p in parts if p.strip()]
-
-        # Conjunction delimiter split pattern:
-        # Matches "and then", "then", "after that", "and finally", ";",
-        # or "and write/read/run/calculate"
-        split_pattern = (
-            r"(?:;|\b(?:and\s+then|then|after\s+that|and\s+finally)\b"
-            r"|,?\s*\band\s+(?=(?:write|save|read|run|exec|calculate|compute|search)\b))"
+        # Mask quoted spans while retaining offsets into the original text.
+        masked = re.sub(
+            r"\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'",
+            lambda match: " " * len(match.group()),
+            clean,
         )
-        parts = re.split(split_pattern, clean, flags=re.IGNORECASE)
-        return [p.strip() for p in parts if p.strip()]
+        numbered = False
+        if re.search(r"(?:^|\s)step\s+\d+:?", masked, re.IGNORECASE):
+            pattern = r"(?:^|\s)step\s+\d+:?"
+            numbered = True
+        elif re.search(r"(?:^|\n)\d+\.\s+", masked):
+            pattern = r"(?:^|\n)\d+\.\s+"
+            numbered = True
+        else:
+            delimiters = "|".join(
+                re.escape(value)
+                for value in sorted(
+                    self.policy.conjunction_delimiters, key=len, reverse=True
+                )
+                if value != ";"
+            )
+            pattern = (
+                rf"(?:;|\b(?:{delimiters})\b"
+                r"|,?\s*\band\s+(?=(?:write|save|read|run|exec|calculate|compute|search)\b))"
+            )
+        parts = []
+        cursor = 0
+        for match in re.finditer(pattern, masked, re.IGNORECASE):
+            piece = clean[cursor : match.start()].strip()
+            if not (numbered and cursor == 0 and not piece):
+                parts.append(piece)
+            cursor = match.end()
+        parts.append(clean[cursor:].strip())
+        return parts
 
     def _clean_subgoal_text(self, text: str) -> str:
         """Strip introductory ordinal words and punctuation from sub-goal segment."""
         s = text.strip()
-        s = re.sub(r"^(?:first|second|third|fourth|finally|next|please|now)\s*,?\s*", "", s, flags=re.IGNORECASE)
+        s = re.sub(
+            r"^(?:first|second|third|fourth|finally|next|please|now)\s*,?\s*",
+            "",
+            s,
+            flags=re.IGNORECASE,
+        )
         s = re.sub(r"^step\s*\d+\s*:\s*", "", s, flags=re.IGNORECASE)
         s = re.sub(r"^\d+\.\s*", "", s)
         return s.strip().rstrip(";,")
 
-    def _resolve_subgoal_tool_call(self, text: str, prev_step_index: int) -> ToolCall | None:
+    def _resolve_subgoal_tool_call(
+        self, text: str, prev_step_index: int
+    ) -> ToolCall | None:
         """Map individual sub-goal to a typed ToolCall, supporting variable references."""
         # 1. Direct ActionRouter match
         direct_call = self.action_router.route(text)
@@ -358,7 +467,9 @@ class AgenticPlanner:
             args = dict(direct_call.arguments)
             for k, v in args.items():
                 if isinstance(v, str):
-                    args[k] = self._normalize_variable_reference_string(v, prev_step_index)
+                    args[k] = self._normalize_variable_reference_string(
+                        v, prev_step_index
+                    )
             return ToolCall(tool_name=direct_call.tool_name, arguments=args)
 
         # 2. File Writer shortcuts: "write [the] result to [file] <path>", "save [the] result to <path>"
@@ -371,7 +482,9 @@ class AgenticPlanner:
             file_path = m_write_res.group("file_path").strip()
             content_val = m_write_res.group("content")
             if content_val:
-                content_template = self._normalize_variable_reference_string(content_val.strip(), prev_step_index)
+                content_template = self._normalize_variable_reference_string(
+                    content_val.strip(), prev_step_index
+                )
             else:
                 content_template = "$prev.output"
             return ToolCall(
@@ -380,7 +493,11 @@ class AgenticPlanner:
             )
 
         # 3. File Reader shortcuts: "read [file] <path>"
-        m_read = re.search(r"^(?:read|view|cat)\s+(?:file\s+)?(?P<file_path>[a-zA-Z0-9_\-\./]+)$", text, re.IGNORECASE)
+        m_read = re.search(
+            r"^(?:read|view|cat)\s+(?:file\s+)?(?P<file_path>[a-zA-Z0-9_\-\./]+)$",
+            text,
+            re.IGNORECASE,
+        )
         if m_read:
             return ToolCall(
                 tool_name="file_reader",
@@ -390,10 +507,16 @@ class AgenticPlanner:
         # 4. Calculator shortcuts: "calculate X", "what is 250 * 4", etc.
         m_calc = re.search(r"^(?:calc(?:ulate)?|compute)\s+(.+)$", text, re.IGNORECASE)
         if not m_calc:
-            m_what_math = re.search(r"^(?:what\s+is|how\s+much\s+is|evaluate)\s+(.+?)\??$", text, re.IGNORECASE)
+            m_what_math = re.search(
+                r"^(?:what\s+is|how\s+much\s+is|evaluate)\s+(.+?)\??$",
+                text,
+                re.IGNORECASE,
+            )
             if m_what_math:
                 math_cand = m_what_math.group(1).strip()
-                if any(c.isdigit() for c in math_cand) and any(op in math_cand for op in ("+", "-", "*", "/", "%", "of")):
+                if any(c.isdigit() for c in math_cand) and any(
+                    op in math_cand for op in ("+", "-", "*", "/", "%", "of")
+                ):
                     m_calc = m_what_math
 
         if m_calc:
@@ -404,12 +527,16 @@ class AgenticPlanner:
 
         return None
 
-    def _normalize_variable_reference_string(self, text: str, prev_step_index: int) -> str:
+    def _normalize_variable_reference_string(
+        self, text: str, prev_step_index: int
+    ) -> str:
         """Replace natural pronouns like 'the result', 'the answer' with standard variable references."""
         s = text
         s = re.sub(
             r"\b(?:the\s+result|the\s+output|the\s+answer|that\s+result|it)\b",
-            f"$step_{prev_step_index}.output" if prev_step_index > 0 else "$prev.output",
+            f"$step_{prev_step_index}.output"
+            if prev_step_index > 0
+            else "$prev.output",
             s,
             flags=re.IGNORECASE,
         )
@@ -421,19 +548,22 @@ class AgenticPlanner:
 
     def _check_mutex_invariants(self, plan: Plan) -> str | None:
         """Verify resource mutual exclusivity invariants (e.g. read/write ordering)."""
-        file_writes: dict[str, int] = {}
-        for s in plan.steps:
-            if s.tool_name == "file_writer":
-                fp = str(s.arguments_template.get("file_path", "")).strip()
-                if fp:
-                    file_writes[fp] = s.step_index
 
-        for s in plan.steps:
-            if s.tool_name == "file_reader":
-                fp = str(s.arguments_template.get("file_path", "")).strip()
-                # If a file is written and read in the same plan, the read must occur after the write
-                if fp in file_writes and s.step_index < file_writes[fp]:
-                    return f"Step {s.step_index} attempts to read '{fp}' before it is written in Step {file_writes[fp]}"
+        def path_key(step: PlanStep) -> str:
+            raw = str(step.arguments_template.get("file_path", "")).strip()
+            if not raw or "$" in raw:
+                return raw
+            return str((self.action_policy.workspace_root / raw).resolve())
+
+        first_writes: dict[str, int] = {}
+        for step in plan.steps:
+            if step.tool_name == "file_writer" and path_key(step):
+                first_writes.setdefault(path_key(step), step.step_index)
+        for step in plan.steps:
+            if step.tool_name == "file_reader":
+                key = path_key(step)
+                if key in first_writes and step.step_index < first_writes[key]:
+                    return f"Step {step.step_index} attempts to read '{key}' before it is written in Step {first_writes[key]}"
         return None
 
     def _resolve_argument_variables(
@@ -445,7 +575,6 @@ class AgenticPlanner:
     ) -> dict[str, Any]:
         """Substitute variable references ($prev.output, $step_N.output, $result) with actual values."""
         resolved: dict[str, Any] = {}
-        prev_output = step_outputs.get(prev_step_idx, "")
         tool_def = self.tool_policy.tools.get(tool_name)
 
         for key, val in arguments_template.items():
@@ -453,33 +582,31 @@ class AgenticPlanner:
                 resolved[key] = val
                 continue
 
-            s_val = val
+            def binding(match: re.Match[str]) -> Any:
+                index = (
+                    int(match.group("index")) if match.group("index") else prev_step_idx
+                )
+                if index not in step_outputs:
+                    raise ValueError(f"Missing output binding for step {index}")
+                return step_outputs[index]
 
-            # Exact match replacement (preserving numbers/objects when possible)
-            if s_val in ("$prev.output", "$prev", "$result", "$output"):
-                resolved[key] = prev_output
-            elif m_exact := re.fullmatch(r"\$step_(\d+)(?:\.output)?", s_val):
-                s_idx = int(m_exact.group(1))
-                resolved[key] = step_outputs.get(s_idx, "")
-            else:
-                # Substring interpolation
-                s_val = s_val.replace("$prev.output", str(prev_output))
-                s_val = s_val.replace("$prev", str(prev_output))
-                s_val = s_val.replace("$result", str(prev_output))
-                s_val = s_val.replace("$output", str(prev_output))
-
-                for s_idx, out in step_outputs.items():
-                    s_val = s_val.replace(f"$step_{s_idx}.output", str(out))
-                    s_val = s_val.replace(f"$step_{s_idx}", str(out))
-
-                resolved[key] = s_val
+            exact = self._VARIABLE.fullmatch(val)
+            resolved[key] = (
+                binding(exact)
+                if exact
+                else self._VARIABLE.sub(lambda match: str(binding(match)), val)
+            )
 
             # Type conformity check against ToolDefinition schema
             if tool_def and key in tool_def.parameters:
                 p_type = tool_def.parameters[key].param_type
                 if p_type in ("string", "str") and not isinstance(resolved[key], str):
                     resolved[key] = str(resolved[key])
-                elif p_type in ("int", "integer") and isinstance(resolved[key], str) and resolved[key].strip().isdigit():
+                elif (
+                    p_type in ("int", "integer")
+                    and isinstance(resolved[key], str)
+                    and resolved[key].strip().isdigit()
+                ):
                     resolved[key] = int(resolved[key].strip())
                 elif p_type in ("float", "number") and isinstance(resolved[key], str):
                     try:
@@ -496,18 +623,27 @@ class AgenticPlanner:
         error_msg: str,
     ) -> dict[str, Any] | None:
         """Heuristic backtracker: inspect error and synthesize corrected arguments."""
-        err_lower = error_msg.lower()
-
         # Case 1: Python REPL missing standard import
         if tool_name == "python_repl" and "code" in arguments:
             code = str(arguments["code"])
-            m_name = re.search(r"name\s+'([a-zA-Z0-9_]+)'\s+is\s+not\s+defined", error_msg)
+            m_name = re.search(
+                r"name\s+'([a-zA-Z0-9_]+)'\s+is\s+not\s+defined", error_msg
+            )
             if m_name:
                 missing_mod = m_name.group(1)
                 stdlib_modules = getattr(
                     sys,
                     "stdlib_module_names",
-                    {"math", "json", "sys", "os", "re", "datetime", "random", "statistics"},
+                    {
+                        "math",
+                        "json",
+                        "sys",
+                        "os",
+                        "re",
+                        "datetime",
+                        "random",
+                        "statistics",
+                    },
                 )
                 if missing_mod in stdlib_modules:
                     fixed_code = f"import {missing_mod}\n{code}"

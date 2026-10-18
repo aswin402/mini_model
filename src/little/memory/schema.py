@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS evidence_records (
     value_json TEXT,
     source_type TEXT NOT NULL,
     source_reference TEXT NOT NULL,
+    source_experience_id TEXT,
     source_text TEXT NOT NULL DEFAULT '',
     observed_at TEXT NOT NULL,
     valid_from TEXT,
@@ -134,4 +135,14 @@ CREATE INDEX IF NOT EXISTS idx_evidence_status
     ON evidence_records(status);
 CREATE INDEX IF NOT EXISTS idx_evidence_observed_at
     ON evidence_records(observed_at);
+
+CREATE TABLE IF NOT EXISTS working_turns (
+    turn_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    experience_id TEXT NOT NULL REFERENCES experiences(id),
+    timestamp REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_working_turn_session
+    ON working_turns(session_id, timestamp);
 """

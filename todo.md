@@ -1,5 +1,7 @@
 # LITTLE — TODO
 
+> Active repair work: [2026-10-13 verified system repair tracker](docs/superpowers/plans/2026-10-13-verified-system-repair-todo.md). This tracks audited defects, test evidence, and practical validation separately from the historical research milestones below.
+
 **Version:** 0.1  
 **Priority:** Research-first
 

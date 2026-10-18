@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -30,10 +31,21 @@ class LivingWikiPolicy:
             raise ValueError(f"{path} has an unsupported living-wiki format")
 
         vault_dir = str(payload.get("vault_directory", "data/knowledge_vault"))
-        auto_sync = bool(payload.get("auto_sync_on_mutation", True))
-        crawl_limit = int(payload.get("batch_crawl_limit", 50))
-        verif = bool(payload.get("verification_required", True))
-        min_conf = float(payload.get("min_extraction_confidence", 0.70))
+        auto_sync = payload.get("auto_sync_on_mutation", True)
+        crawl_limit = payload.get("batch_crawl_limit", 50)
+        verif = payload.get("verification_required", True)
+        min_conf = payload.get("min_extraction_confidence", 0.70)
+        if type(auto_sync) is not bool or type(verif) is not bool:
+            raise TypeError("Wiki controls must be booleans")
+        if type(crawl_limit) is not int or crawl_limit < 0:
+            raise ValueError("batch_crawl_limit must be a nonnegative integer")
+        if (
+            isinstance(min_conf, bool)
+            or not isinstance(min_conf, (int, float))
+            or not math.isfinite(min_conf)
+            or not 0 <= min_conf <= 1
+        ):
+            raise ValueError("min_extraction_confidence must be between zero and one")
 
         return cls(
             vault_directory=vault_dir,

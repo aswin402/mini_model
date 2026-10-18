@@ -193,6 +193,8 @@ def test_skill_execution_uses_a_fresh_builtin_namespace_per_run():
     mutation = SkillRunner.execute(mutating_skill)
     probe = SkillRunner.execute(probe_skill)
 
-    assert mutation.success is True
+    # Restricted execution rejects namespace access before running the skill.
+    assert mutation.success is False
+    assert "Forbidden identifier" in mutation.error
     assert probe.success is False
     assert "NameError" in probe.error

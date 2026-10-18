@@ -40,6 +40,7 @@ class ToolCall:
     tool_name: str
     arguments: dict[str, Any]
     call_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    confirmed: bool = False
 
 
 @dataclass(frozen=True)
@@ -74,7 +75,7 @@ class ToolExecutionResult:
             "success": success,
             "out": str(output),
         }
-        encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
+        encoded = json.dumps(payload, sort_keys=True, default=repr).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()[:16]
 
 
@@ -102,6 +103,7 @@ class PlanStep:
     retries: int = 0
     result: ToolExecutionResult | None = None
     observation: str | None = None
+    confirmed: bool = False
 
 
 @dataclass(frozen=True)
@@ -112,15 +114,20 @@ class Plan:
     goal: str
     steps: tuple[PlanStep, ...]
     created_at: str = ""
+    diagnostics: tuple[str, ...] = ()
 
     def is_acyclic(self) -> bool:
         """Verify I_DAG invariant: plan step dependencies must form a strictly acyclic DAG."""
-        # Step indices are 1-based. A step i cannot depend on any j >= i.
-        step_indices = {s.step_index for s in self.steps}
-        for s in self.steps:
-            for dep in s.dependencies:
-                if dep not in step_indices or dep >= s.step_index:
-                    return False
+        seen: set[int] = set()
+        previous = 0
+        for step in self.steps:
+            if (type(step.step_index) is not int or step.step_index <= previous
+                    or step.step_index in seen):
+                return False
+            if any(type(dep) is not int or dep not in seen for dep in step.dependencies):
+                return False
+            seen.add(step.step_index)
+            previous = step.step_index
         return True
 
 
@@ -139,6 +146,8 @@ class AgenticPlanExecutionResult:
     retries_used: int = 0
     backtracks_count: int = 0
     error: str | None = None
+    diagnostics: tuple[str, ...] = ()
+    provenance_available: bool = False
 
     @classmethod
     def compute_trace_hash(cls, plan_id: str, steps: tuple[PlanStep, ...], success: bool) -> str:

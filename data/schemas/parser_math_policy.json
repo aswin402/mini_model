@@ -166,7 +166,7 @@
     },
     {
       "name": "linear_equation",
-      "pattern": "^(?:solve\\s+)?(-?\\d+(?:\\.\\d+)?)\\s*\\*?\\s*x\\s*([+-])\\s*(\\d+(?:\\.\\d+)?)\\s*=\\s*(-?\\d+(?:\\.\\d+)?)$",
+      "pattern": "^(?:solve\\s+(?:(?:for\\s+)?x\\s*[:=]?\\s*)?)?(-?\\d+(?:\\.\\d+)?)\\s*\\*?\\s*x\\s*([+-])\\s*(\\d+(?:\\.\\d+)?)\\s*=\\s*(-?\\d+(?:\\.\\d+)?)$",
       "skill": "SOLVE_LINEAR",
       "captures": [
         {"group": 1, "name": "a", "value_type": "number", "normalizers": ["float"]},
@@ -207,6 +207,16 @@
         {"group": 1, "name": "value", "value_type": "number"},
         {"group": 2, "name": "from_unit", "value_type": "text", "normalizers": ["lower"]},
         {"group": 3, "name": "to_unit", "value_type": "text", "normalizers": ["lower"]}
+      ]
+    },
+    {
+      "name": "how_many_unit_conversion",
+      "pattern": "^(?:how\\s+many|how\\s+much)\\s+([a-zA-Z]+)\\s+(?:are\\s+(?:there\\s+)?|is\\s+)?in\\s+(\\d+(?:\\.\\d+)?)\\s+([a-zA-Z]+)$",
+      "skill": "UNIT_CONVERT",
+      "captures": [
+        {"group": 2, "name": "value", "value_type": "number"},
+        {"group": 3, "name": "from_unit", "value_type": "text", "normalizers": ["lower"]},
+        {"group": 1, "name": "to_unit", "value_type": "text", "normalizers": ["lower"]}
       ]
     },
     {

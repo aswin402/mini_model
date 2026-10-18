@@ -15,7 +15,6 @@ from __future__ import annotations
 import copy
 import math
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
 
 from little.core.models import generate_id
 
@@ -25,14 +24,14 @@ class CobwebInstance:
     """An observation instance passed into the Cobweb conceptual clustering tree."""
 
     concept_id: str
-    features: Dict[str, Set[str]] = field(default_factory=dict)
-    continuous_vector: Optional[List[float]] = None
+    features: dict[str, set[str]] = field(default_factory=dict)
+    continuous_vector: list[float] | None = None
 
-    def get_feature_values(self, attribute: str) -> Set[str]:
+    def get_feature_values(self, attribute: str) -> set[str]:
         return self.features.get(attribute, set())
 
     @property
-    def attributes(self) -> Set[str]:
+    def attributes(self) -> set[str]:
         return set(self.features.keys())
 
 
@@ -42,15 +41,15 @@ class CobwebNode:
     def __init__(self, node_id: str | None = None, parent: CobwebNode | None = None) -> None:
         self.node_id: str = node_id or generate_id("cnode")
         self.parent: CobwebNode | None = parent
-        self.children: List[CobwebNode] = []
+        self.children: list[CobwebNode] = []
         self.concept_count: int = 0
-        self.concept_ids: Set[str] = set()
+        self.concept_ids: set[str] = set()
 
         # attribute -> value -> count of instances having this value
-        self.attribute_counts: Dict[str, Dict[str, int]] = {}
+        self.attribute_counts: dict[str, dict[str, int]] = {}
 
         # Optional latent concept label if this node has been reified
-        self.latent_label: Optional[str] = None
+        self.latent_label: str | None = None
         self.category_utility: float = 0.0
 
     @property
@@ -59,6 +58,8 @@ class CobwebNode:
 
     def add_instance(self, instance: CobwebInstance) -> None:
         """Incorporate an instance's feature counts into this node."""
+        if instance.concept_id in self.concept_ids:
+            raise ValueError(f"Duplicate concept ID {instance.concept_id!r}")
         self.concept_count += 1
         self.concept_ids.add(instance.concept_id)
 
@@ -102,9 +103,9 @@ class CobwebNode:
                 total += prob * prob
         return total
 
-    def get_shared_features(self, min_ratio: float = 0.6) -> Dict[str, List[str]]:
+    def get_shared_features(self, min_ratio: float = 0.6) -> dict[str, list[str]]:
         """Return features that are dominant in this concept node."""
-        shared: Dict[str, List[str]] = {}
+        shared: dict[str, list[str]] = {}
         if self.concept_count == 0:
             return shared
 
@@ -120,14 +121,16 @@ class CobwebTree:
     """Incremental Cobweb conceptual clustering tree with 4 operators."""
 
     def __init__(self, category_utility_threshold: float = 0.25) -> None:
+        if not math.isfinite(category_utility_threshold) or category_utility_threshold < 0:
+            raise ValueError("Category utility threshold must be finite and nonnegative")
         self.root: CobwebNode = CobwebNode(node_id="cnode_root")
         self.cu_threshold: float = category_utility_threshold
-        self.all_instances: Dict[str, CobwebInstance] = {}
+        self.all_instances: dict[str, CobwebInstance] = {}
 
     def calculate_category_utility(
         self,
         parent: CobwebNode,
-        children: List[CobwebNode],
+        children: list[CobwebNode],
     ) -> float:
         """Computes Cobweb Category Utility across a set of child clusters."""
         if not children or parent.concept_count == 0:
@@ -149,8 +152,17 @@ class CobwebTree:
 
     def insert(self, instance: CobwebInstance) -> CobwebNode:
         """Incrementally insert an instance into the Cobweb tree."""
-        self.all_instances[instance.concept_id] = instance
-        return self._cobweb(self.root, instance)
+        if instance.concept_id in self.all_instances:
+            raise ValueError(f"Duplicate concept ID {instance.concept_id!r}")
+        stored = copy.deepcopy(instance)
+        self.all_instances[stored.concept_id] = stored
+        result = self._cobweb(self.root, stored)
+        def refresh(node):
+            for child in node.children:
+                refresh(child)
+            node.category_utility = self.calculate_category_utility(node, node.children)
+        refresh(self.root)
+        return result
 
     def _cobweb(self, current: CobwebNode, instance: CobwebInstance) -> CobwebNode:
         """Recursive Cobweb insertion evaluating 4 operators."""
@@ -256,17 +268,23 @@ class CobwebTree:
         self,
         current: CobwebNode,
         instance: CobwebInstance,
-    ) -> Tuple[Optional[CobwebNode], float, Optional[CobwebNode], float]:
+    ) -> tuple[CobwebNode | None, float, CobwebNode | None, float]:
         """Test inserting instance into each child and return top-2 best children and CU."""
         if not current.children:
             return None, -1.0, None, -1.0
 
-        scores: List[Tuple[float, CobwebNode]] = []
+        scores: list[tuple[float, CobwebNode]] = []
 
         for child in current.children:
-            child.add_instance(instance)
-            cu = self.calculate_category_utility(current, current.children)
-            child.remove_instance(instance)
+            # Trial statistics are detached; never add/remove an existing ID
+            # in the live tree during evaluation.
+            trial = copy.copy(child)
+            trial.concept_ids = set(child.concept_ids)
+            trial.attribute_counts = copy.deepcopy(child.attribute_counts)
+            if instance.concept_id not in trial.concept_ids:
+                trial.add_instance(instance)
+            trial_children = [trial if candidate is child else candidate for candidate in current.children]
+            cu = self.calculate_category_utility(current, trial_children)
             scores.append((cu, child))
 
         scores.sort(key=lambda item: item[0], reverse=True)
@@ -366,14 +384,27 @@ class CobwebTree:
             current.children.append(grand_child)
         current.category_utility = self.calculate_category_utility(current, current.children)
 
-    def get_all_clusters(self, min_size: int = 2) -> List[CobwebNode]:
-        """Collect all intermediate clusters with at least min_size concepts."""
-        clusters: List[CobwebNode] = []
+    def get_all_clusters(self, min_size: int = 2) -> list[CobwebNode]:
+        """Collect clusters meeting size and parent-partition utility thresholds.
+
+        A homogeneous cluster can have zero internal CU; its parent partition
+        determines whether that cluster is meaningfully separated from siblings.
+        """
+        clusters: list[CobwebNode] = []
 
         def traverse(node: CobwebNode) -> None:
             if not node.is_leaf and node != self.root:
-                if len(node.concept_ids) >= min_size:
-                    clusters.append(node)
+                if len(node.concept_ids) >= min_size and node.parent is not None:
+                    cluster_gain = max(
+                        0.0,
+                        node.expected_correct_guesses() - node.parent.expected_correct_guesses(),
+                    )
+                    effective_cu = max(
+                        node.parent.category_utility,
+                        cluster_gain,
+                    )
+                    if effective_cu >= self.cu_threshold:
+                        clusters.append(node)
             for child in node.children:
                 traverse(child)
 

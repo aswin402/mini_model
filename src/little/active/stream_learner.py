@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, List, Optional
+from typing import TYPE_CHECKING
 
 from little.core.contracts import SourceType
 
@@ -32,8 +33,8 @@ class ChunkIngestResult:
 
     source_text: str
     sentences_count: int
-    concepts_created: List[str]
-    relations_created: List[str]
+    concepts_created: list[str]
+    relations_created: list[str]
     contradictions_blocked: int
     is_learned: bool
     latency_ms: float
@@ -47,8 +48,8 @@ class StreamLearningSummary:
     source_id: str
     total_chunks: int = 0
     total_sentences: int = 0
-    total_concepts_created: List[str] = field(default_factory=list)
-    total_relations_created: List[str] = field(default_factory=list)
+    total_concepts_created: list[str] = field(default_factory=list)
+    total_relations_created: list[str] = field(default_factory=list)
     total_contradictions_blocked: int = 0
     total_latency_ms: float = 0.0
 
@@ -67,13 +68,13 @@ class ContinuousStreamLearner:
     def __init__(
         self,
         kernel: CognitiveKernel,
-        paged_store: Optional[PagedConceptStore] = None,
+        paged_store: PagedConceptStore | None = None,
     ) -> None:
         self.kernel = kernel
         self.paged_store = paged_store or getattr(kernel, "paged_store", None)
 
     @staticmethod
-    def _split_into_sentences(text: str) -> List[str]:
+    def _split_into_sentences(text: str) -> list[str]:
         """Split text chunk into sentence units cleanly without breaking abbreviations."""
         raw = text.strip()
         if not raw:
@@ -82,7 +83,7 @@ class ContinuousStreamLearner:
         return [p.strip() for p in parts if p.strip()]
 
     def ingest_chunk(
-        self, text_chunk: str, source_id: str = "stream"
+        self, text_chunk: str, source_id: str = "stream", *, source_type: SourceType = SourceType.DOCUMENT
     ) -> ChunkIngestResult:
         """Ingest a single chunk of natural English text into the knowledge base."""
         t0 = time.perf_counter()
@@ -100,8 +101,8 @@ class ContinuousStreamLearner:
             )
 
         sentences = self._split_into_sentences(clean)
-        all_concepts_created: List[str] = []
-        all_relations_created: List[str] = []
+        all_concepts_created: list[str] = []
+        all_relations_created: list[str] = []
         contradictions_blocked = 0
         learned_any = False
 
@@ -121,7 +122,7 @@ class ContinuousStreamLearner:
             # If declarative statement or action
             if frame.intent in {"statement", "action"} and frame.claims:
                 learn_res = self.kernel.learner.commit_frame(
-                    frame, source_type=SourceType.USER
+                    frame, source_type=source_type, source_reference=source_id
                 )
                 if learn_res.concepts_created or learn_res.relations_created:
                     learned_any = True
@@ -140,7 +141,10 @@ class ContinuousStreamLearner:
                     if hasattr(self.kernel, "wiki") and self.kernel.wiki:
                         for cid in learn_res.concepts_created:
                             try:
-                                self.kernel.wiki.generate_article_for_concept(cid)
+                                if hasattr(self.kernel.wiki, "sync_concept"):
+                                    self.kernel.wiki.sync_concept(cid)
+                                elif hasattr(self.kernel.wiki, "generate_article_for_concept"):
+                                    self.kernel.wiki.generate_article_for_concept(cid)
                             except Exception:
                                 pass
                 else:
@@ -184,7 +188,10 @@ class ContinuousStreamLearner:
         # Trigger latent induction if new concepts were created
         if summary.concepts_count > 0 and hasattr(self.kernel, "latent_inducer"):
             try:
-                self.kernel.latent_inducer.induce_from_memory()
+                if hasattr(self.kernel.latent_inducer, "induce_latent_knots"):
+                    self.kernel.latent_inducer.induce_latent_knots()
+                elif hasattr(self.kernel.latent_inducer, "induce_from_memory"):
+                    self.kernel.latent_inducer.induce_from_memory()
             except Exception:
                 pass
 

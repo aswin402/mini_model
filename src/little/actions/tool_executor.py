@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import datetime
+import shlex
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from little.actions.models import ToolCall, ToolExecutionResult
 from little.actions.pre_dispatch_verifier import PreDispatchVerifier
 from little.actions.tool_policy import ActionPolicy, ToolDefinitionsPolicy
 from little.procedural.math_cas import SymbolicCAS
+from little.procedural.restricted_execution import run as restricted_run
 
 
 class ToolExecutor:
@@ -28,7 +30,7 @@ class ToolExecutor:
         self.action_policy = action_policy or ActionPolicy.default(workspace_root=workspace_root)
         self.verifier = PreDispatchVerifier(self.tool_policy, self.action_policy)
 
-    def execute(self, call: ToolCall) -> ToolExecutionResult:
+    def execute(self, call: ToolCall, *, timeout_seconds: float | None = None) -> ToolExecutionResult:
         """Verify, dispatch, and execute a tool call."""
         start_time = time.perf_counter()
 
@@ -63,9 +65,12 @@ class ToolExecutor:
             )
 
         try:
-            out, err, stdout, stderr = handler(call.arguments)
+            if call.tool_name in ('python_repl', 'bash_executor'):
+                out, err, stdout, stderr = handler(call.arguments, timeout_seconds=timeout_seconds)
+            else:
+                out, err, stdout, stderr = handler(call.arguments)
             success = err is None
-        except (ArithmeticError, ValueError, TypeError, OSError, RuntimeError) as ex:
+        except (ArithmeticError, ValueError, TypeError, OSError, RuntimeError, ZoneInfoNotFoundError) as ex:
             out, err, stdout, stderr = None, f"Execution failed: {type(ex).__name__}: {ex}", None, None
             success = False
 
@@ -107,20 +112,16 @@ class ToolExecutor:
         except (ArithmeticError, ValueError, TypeError) as ex:
             return None, f"Calculator error: {ex}", None, None
 
-    def _exec_python_repl(self, args: dict[str, Any]) -> tuple[Any, str | None, str | None, str | None]:
+    def _exec_python_repl(self, args: dict[str, Any], *, timeout_seconds: float | None = None) -> tuple[Any, str | None, str | None, str | None]:
         """Execute Python code in an isolated subprocess with execution timeout."""
         code_str = str(args["code"]).strip()
         timeout = self.tool_policy.tools.get("python_repl").timeout_seconds if "python_repl" in self.tool_policy.tools else 5.0
 
+        timeout = min(timeout, self.action_policy.max_execution_timeout_sec)
+        if timeout_seconds is not None:
+            timeout = min(timeout, timeout_seconds)
         try:
-            proc = subprocess.run(
-                [sys.executable, "-c", code_str],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-                cwd=str(self.action_policy.workspace_root),
-            )
+            proc = restricted_run(code_str, timeout=timeout)
             stdout = proc.stdout
             stderr = proc.stderr
             if proc.returncode != 0:
@@ -134,12 +135,12 @@ class ToolExecutor:
 
     def _exec_system_time(self, args: dict[str, Any]) -> tuple[Any, str | None, str | None, str | None]:
         """Return current system date, time, and timestamp."""
-        tz_name = str(args.get("timezone", "UTC")).upper()
-        now = datetime.datetime.now(datetime.UTC)
+        tz_name = str(args.get("timezone", "UTC"))
+        now = datetime.datetime.now(ZoneInfo(tz_name))
         payload = {
             "iso": now.isoformat(),
             "date": now.strftime("%Y-%m-%d"),
-            "time": now.strftime("%H:%M:%S UTC"),
+            "time": now.strftime("%H:%M:%S %Z"),
             "timestamp": now.timestamp(),
             "timezone": tz_name,
         }
@@ -161,6 +162,7 @@ class ToolExecutor:
     ) -> list[dict[str, Any]]:
         """Search local Living Wiki vault and world corpora for factual snippets matching query."""
         import re
+
         from little.core.runtime_paths import RuntimePaths
 
         clean_q = query.strip()
@@ -306,7 +308,8 @@ class ToolExecutor:
             return None, f"Path is not a regular file: '{rel_path}'", None, None
 
         try:
-            content = target_path.read_text(encoding="utf-8")[:max_bytes]
+            with target_path.open("rb") as stream:
+                content = stream.read(max_bytes).decode("utf-8", errors="replace")
             return content, None, f"{len(content)} bytes read", None
         except OSError as ex:
             return None, f"Failed to read file: {ex}", None, None
@@ -333,18 +336,20 @@ class ToolExecutor:
         except OSError as ex:
             return None, f"Failed to write file: {ex}", None, None
 
-    def _exec_bash_executor(self, args: dict[str, Any]) -> tuple[Any, str | None, str | None, str | None]:
+    def _exec_bash_executor(self, args: dict[str, Any], *, timeout_seconds: float | None = None) -> tuple[Any, str | None, str | None, str | None]:
         """Execute whitelisted non-destructive bash command in sandbox."""
         cmd_str = str(args["command"]).strip()
         timeout = self.tool_policy.tools.get("bash_executor").timeout_seconds if "bash_executor" in self.tool_policy.tools else 5.0
 
+        if timeout_seconds is not None:
+            timeout = min(timeout, timeout_seconds)
         try:
             proc = subprocess.run(
-                cmd_str,
-                shell=True,
+                shlex.split(cmd_str),
+                shell=False,
                 capture_output=True,
                 text=True,
-                timeout=timeout,
+                timeout=min(timeout, self.action_policy.max_execution_timeout_sec),
                 check=False,
                 cwd=str(self.action_policy.workspace_root),
             )

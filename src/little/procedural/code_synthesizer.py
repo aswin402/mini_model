@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
-from typing import Any
 
 from little.procedural.code_policy import CodeSynthesizerPolicy, PrimitiveSpec
-from little.procedural.code_sandbox import CodeSandbox, SandboxExecutionResult
+from little.procedural.code_sandbox import CodeSandbox
 
 
 @dataclass
@@ -38,28 +37,119 @@ class ASTCodeSynthesizer:
     def match_primitive(self, text: str) -> str | None:
         """Match natural language request to an available algorithmic primitive."""
         import re
+
         low = text.lower()
-        if re.search(r"\b(prime|is_prime)\b", low):
-            return "is_prime"
-        if re.search(r"\b(fibonacci|fib)\b", low):
-            return "fibonacci"
-        if re.search(r"\b(factorial)\b", low):
-            return "factorial"
-        if re.search(r"\b(palindrome|is_palindrome)\b", low):
-            return "is_palindrome"
-        if re.search(r"\b(reverse|reverse_string|reversed)\b", low):
-            return "reverse_string"
-        if re.search(r"\b(gcd|greatest\s+common\s+divisor)\b", low):
-            return "gcd"
-        if re.search(r"\b(binary[-_ ]search)\b", low):
-            return "binary_search"
-        if re.search(r"\b(sum|sum_list)\b", low):
-            return "sum_list"
-        if re.search(r"\b(max|maximum|max_element)\b", low):
-            return "max_element"
-        if re.search(r"\b(flatten)\b", low):
-            return "flatten"
-        return None
+        # The catalog provides canonical Python primitives, not general program synthesis.
+        # Refuse unknown modifiers rather than silently verifying a simpler request.
+        request_words = {
+            "write",
+            "create",
+            "generate",
+            "synthesize",
+            "implement",
+            "build",
+            "make",
+            "give",
+            "me",
+            "please",
+            "can",
+            "could",
+            "you",
+            "a",
+            "an",
+            "the",
+            "python",
+            "code",
+            "function",
+            "program",
+            "algorithm",
+            "to",
+            "for",
+            "of",
+            "in",
+            "that",
+            "which",
+            "check",
+            "determine",
+            "test",
+            "if",
+            "whether",
+            "is",
+            "computes",
+            "compute",
+            "calculates",
+            "calculate",
+            "returns",
+            "return",
+            "number",
+            "numbers",
+            "integer",
+            "integers",
+            "non",
+            "negative",
+            "string",
+            "strings",
+            "list",
+            "lists",
+            "array",
+            "arrays",
+            "nested",
+            "two",
+            "dimensional",
+            "2d",
+            "prime",
+            "is_prime",
+            "fibonacci",
+            "fib",
+            "factorial",
+            "palindrome",
+            "is_palindrome",
+            "reverse",
+            "reverse_string",
+            "reversed",
+            "gcd",
+            "greatest",
+            "common",
+            "divisor",
+            "binary",
+            "search",
+            "binary_search",
+            "sum",
+            "sum_list",
+            "max",
+            "maximum",
+            "max_element",
+            "element",
+            "elements",
+            "flatten",
+            "n",
+            "s",
+            "arr",
+            "target",
+        }
+        if (
+            any(token not in request_words for token in re.findall(r"[a-z0-9_]+", low))
+            or "%" in low
+        ):
+            return None
+        patterns = {
+            "is_prime": r"\b(prime|is_prime)\b",
+            "fibonacci": r"\b(fibonacci|fib)\b",
+            "factorial": r"\bfactorial\b",
+            "is_palindrome": r"\b(palindrome|is_palindrome)\b",
+            "reverse_string": r"\b(reverse|reverse_string|reversed)\b",
+            "gcd": r"\b(gcd|greatest\s+common\s+divisor)\b",
+            "binary_search": r"\bbinary[-_ ]search\b",
+            "sum_list": r"\b(sum|sum_list)\b",
+            "max_element": r"\b(max|maximum|max_element)\b",
+            "flatten": r"\bflatten\b",
+        }
+        matches = [
+            primitive
+            for primitive, pattern in patterns.items()
+            if re.search(pattern, low)
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     def synthesize_from_request(
         self, text: str, verify: bool = True
@@ -70,7 +160,9 @@ class ASTCodeSynthesizer:
             return None
         return self.synthesize(prim, verify=verify)
 
-    def synthesize(self, primitive_name: str, verify: bool = True) -> SynthesizedProgram:
+    def synthesize(
+        self, primitive_name: str, verify: bool = True
+    ) -> SynthesizedProgram:
         """Synthesize an algorithmic primitive by name and optionally verify via sandbox."""
         prim_clean = primitive_name.strip().lower()
         if prim_clean not in self.policy.primitives:
@@ -79,7 +171,9 @@ class ASTCodeSynthesizer:
         spec = self.policy.primitives[prim_clean]
         builder = getattr(self, f"_build_{spec.name}", None)
         if builder is None:
-            raise NotImplementedError(f"No AST generator implemented for primitive '{spec.name}'")
+            raise NotImplementedError(
+                f"No AST generator implemented for primitive '{spec.name}'"
+            )
 
         tree = builder(spec)
         code = ast.unparse(tree)
@@ -118,6 +212,7 @@ class ASTCodeSynthesizer:
 
         prog.proof_trace.append(f"Verification failed: {res.error}")
         from little.procedural.code_repair import SocraticCodeRepair
+
         repairer = SocraticCodeRepair(sandbox=self.sandbox, policy=self.policy)
         repaired = repairer.repair(prog, res)
         return repaired

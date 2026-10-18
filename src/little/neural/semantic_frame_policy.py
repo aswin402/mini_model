@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,18 @@ class SemanticFramePolicy:
     negation_tokens: tuple[str, ...]
     stop_determiners: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        value = self.min_extraction_confidence
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not 0 <= value <= 1
+        ):
+            raise ValueError(
+                "Minimum extraction confidence must be a finite probability"
+            )
+
     @classmethod
     def load(cls, directory: str | Path) -> SemanticFramePolicy:
         path = Path(directory) / "semantic_frame_policy.json"
@@ -31,18 +44,29 @@ class SemanticFramePolicy:
         if payload.get("format") != "little.semantic_frame_policy.v1":
             raise ValueError(f"{path} has an unsupported semantic-frame format")
 
-        min_conf = float(payload.get("min_extraction_confidence", 0.5))
-        fillers = tuple(str(p).lower().strip() for p in payload.get("filler_prefixes", []))
+        min_conf = payload.get("min_extraction_confidence", 0.5)
+        fillers = tuple(
+            str(p).lower().strip() for p in payload.get("filler_prefixes", [])
+        )
 
         rel_inds: dict[str, tuple[str, ...]] = {}
         for rel, phrase_list in payload.get("relational_indicators", {}).items():
             # Sort phrases by descending length so longer multi-word phrases match first
-            sorted_phrases = sorted((str(p).lower().strip() for p in phrase_list), key=len, reverse=True)
+            sorted_phrases = sorted(
+                (str(p).lower().strip() for p in phrase_list), key=len, reverse=True
+            )
             rel_inds[rel] = tuple(sorted_phrases)
 
-        passives = {str(k).lower(): str(v).lower() for k, v in payload.get("passive_patterns", {}).items()}
-        negations = tuple(str(n).lower().strip() for n in payload.get("negation_tokens", []))
-        determiners = tuple(str(d).lower().strip() for d in payload.get("stop_determiners", []))
+        passives = {
+            str(k).lower(): str(v).lower()
+            for k, v in payload.get("passive_patterns", {}).items()
+        }
+        negations = tuple(
+            str(n).lower().strip() for n in payload.get("negation_tokens", [])
+        )
+        determiners = tuple(
+            str(d).lower().strip() for d in payload.get("stop_determiners", [])
+        )
 
         return cls(
             min_extraction_confidence=min_conf,
@@ -66,7 +90,7 @@ class SemanticFramePolicy:
         sorted_fillers = sorted(self.filler_prefixes, key=len, reverse=True)
         for prefix in sorted_fillers:
             if lower.startswith(prefix):
-                cleaned = cleaned[len(prefix):].strip()
+                cleaned = cleaned[len(prefix) :].strip()
                 # Remove any leftover punctuation like comma
                 cleaned = re.sub(r"^[,:\-\s]+", "", cleaned)
                 lower = cleaned.lower()

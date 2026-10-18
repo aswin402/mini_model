@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
+from typing import TYPE_CHECKING
 
 from little.core.concept_knot import ConceptKnot
 from little.knowledge.registry import SchemaRegistry
@@ -36,7 +36,7 @@ class PagedStoreTelemetry:
     evictions: int
     total_requests: int
     hit_rate: float
-    resident_concepts: List[str]
+    resident_concepts: list[str]
 
 
 class PagedConceptStore:
@@ -49,6 +49,7 @@ class PagedConceptStore:
         registry: SchemaRegistry | None = None,
     ) -> None:
         self.memory = memory
+        self._revision = getattr(memory, "semantic_revision", memory.revision)
         loaded_policy = policy or MemoryPolicy.default()
         self.paged_config: PagedMemoryConfig = getattr(
             loaded_policy, "paged_memory", PagedMemoryConfig()
@@ -63,10 +64,10 @@ class PagedConceptStore:
         self._lru_cache: OrderedDict[str, ConceptKnot] = OrderedDict()
 
         # Tier 3: Resident Working Set (The Text Chooses)
-        self._resident_knots: Dict[str, ConceptKnot] = {}
+        self._resident_knots: dict[str, ConceptKnot] = {}
 
         # Spreading Activation Scores (concept_canonical_name -> activation_level)
-        self._activation_scores: Dict[str, float] = {}
+        self._activation_scores: dict[str, float] = {}
 
         # Telemetry metrics
         self._resident_hits: int = 0
@@ -79,8 +80,9 @@ class PagedConceptStore:
     def _canonical(name_or_id: str) -> str:
         return name_or_id.strip().upper().replace(" ", "_")
 
-    def get_knot(self, concept_id_or_name: str) -> Optional[ConceptKnot]:
+    def get_knot(self, concept_id_or_name: str) -> ConceptKnot | None:
         """Retrieve a 360° Concept Knot traversing Tier 3 -> Tier 2 -> Tier 1."""
+        self._refresh_if_changed()
         self._total_requests += 1
         key = self._canonical(concept_id_or_name)
 
@@ -134,14 +136,15 @@ class PagedConceptStore:
         self._lru_cache[key] = knot
 
     def vote_from_tokens(
-        self, tokens: list[str] | tuple[str, ...] | Set[str]
-    ) -> List[str]:
+        self, tokens: list[str] | tuple[str, ...] | set[str]
+    ) -> list[str]:
         """Cast context-driven activation votes over the semantic graph.
 
         The incoming dialogue stream or document chunks vote for concepts.
         Activation spreads along 1-hop hypernym and mereology edges, then
         the top-ranked concepts are admitted into the Tier 3 Resident Set.
         """
+        self._refresh_if_changed()
         # 1. Decay previous activations exponentially
         decay = self.paged_config.activation_decay
         for k in list(self._activation_scores.keys()):
@@ -190,7 +193,7 @@ class PagedConceptStore:
         threshold = self.paged_config.activation_threshold
         cap = self.paged_config.resident_capacity
 
-        new_residents: Dict[str, ConceptKnot] = {}
+        new_residents: dict[str, ConceptKnot] = {}
         for c_key, score in sorted_concepts[:cap]:
             if score >= threshold:
                 knot = self.get_knot(c_key)
@@ -207,6 +210,12 @@ class PagedConceptStore:
         self._lru_cache.pop(key, None)
         self._activation_scores.pop(key, None)
 
+    def _refresh_if_changed(self) -> None:
+        current_rev = getattr(self.memory, "semantic_revision", self.memory.revision)
+        if current_rev != self._revision:
+            self.clear()
+            self._revision = current_rev
+
     def clear(self) -> None:
         """Clear memory cache tiers."""
         self._resident_knots.clear()
@@ -214,7 +223,7 @@ class PagedConceptStore:
         self._activation_scores.clear()
 
     @property
-    def resident_concepts(self) -> List[str]:
+    def resident_concepts(self) -> list[str]:
         return list(self._resident_knots.keys())
 
     def get_telemetry(self) -> PagedStoreTelemetry:

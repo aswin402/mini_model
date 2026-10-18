@@ -163,6 +163,7 @@ class EvidenceRecord:
     positive: bool = True
     status: EvidenceStatus = EvidenceStatus.CANDIDATE
     derivation_proof_id: str | None = None
+    source_experience_id: str | None = None
     observed_at: str = field(default_factory=current_iso_timestamp)
     created_at: str = field(default_factory=current_iso_timestamp)
 

@@ -1,7 +1,6 @@
 {
   "format": "little.neural_router_policy.v1",
   "input_dim": 512,
-  "hidden_dim": 256,
   "pathways": [
     "chat",
     "math",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from typing import Any
 
 from little.neural.encoder import GENERIC_WORDS, NeuralStateEncoder
@@ -11,7 +12,7 @@ from little.neural.router_policy import NeuralRouterPolicy
 
 
 class NeuralRouter:
-    """Evaluates continuous latent states S in R^512 and dispatches to specialized cognitive pathways."""
+    """Linear softmax classifier over deterministic hashed encoder features; feedback is explicit."""
 
     def __init__(
         self,
@@ -19,8 +20,17 @@ class NeuralRouter:
         encoder: NeuralStateEncoder | None = None,
         temperature: float = 8.0,
     ) -> None:
+        if (
+            isinstance(temperature, bool)
+            or not isinstance(temperature, (float, int))
+            or not math.isfinite(temperature)
+            or temperature <= 0
+        ):
+            raise ValueError("Temperature must be a finite positive scale")
         self.policy = policy or NeuralRouterPolicy.default()
         self.encoder = encoder or NeuralStateEncoder(policy=self.policy)
+        if self.encoder.dim != self.policy.input_dim:
+            raise ValueError("Encoder dimension must match router policy")
         self.pathways = self.policy.pathways
         self.temperature = temperature
 
@@ -44,6 +54,12 @@ class NeuralRouter:
         else:
             state = text_or_state
 
+        if len(state.embedding) != self.policy.input_dim or any(
+            not math.isfinite(value) for value in state.embedding
+        ):
+            raise ValueError(
+                "State embedding must match dimensions and contain finite values"
+            )
         S = state.embedding
         in_dim = len(S)
 
@@ -93,9 +109,16 @@ class NeuralRouter:
         target_pathway: Pathway,
         learning_rate: float = 0.05,
     ) -> None:
-        """Online parameter adaptation for lifelong learning without catastrophic forgetting."""
+        """Explicit supervised feedback using a softmax cross-entropy gradient."""
         if target_pathway not in self.pathways:
-            return
+            raise ValueError("Unknown target pathway")
+        if (
+            isinstance(learning_rate, bool)
+            or not isinstance(learning_rate, (float, int))
+            or not math.isfinite(learning_rate)
+            or learning_rate <= 0
+        ):
+            raise ValueError("Learning rate must be finite and positive")
 
         target_idx = self.pathways.index(target_pathway)
         decision = self.route(state)
@@ -109,6 +132,93 @@ class NeuralRouter:
             for i in range(len(state.embedding)):
                 self._w[k][i] += grad_scale * state.embedding[i]
             self._b[k] += grad_scale
+
+    def checkpoint(self) -> dict[str, Any]:
+        """Return JSON serializable parameters and encoder policy, without writing state."""
+        return {
+            "format": "little.neural_router_checkpoint.v1",
+            "temperature": self.temperature,
+            "policy": {
+                "input_dim": self.policy.input_dim,
+                "pathways": [pathway.value for pathway in self.pathways],
+                "entropy_threshold": self.policy.entropy_threshold,
+                "uncertainty_margin": self.policy.uncertainty_margin,
+                "semantic_clusters": {
+                    pathway.value: list(words)
+                    for pathway, words in self.policy.semantic_clusters.items()
+                },
+            },
+            "encoder_semantic_clusters": {
+                pathway.value: list(words)
+                for pathway, words in self.encoder.policy.semantic_clusters.items()
+            },
+            "weights": [row[:] for row in self._w],
+            "biases": self._b[:],
+        }
+
+    @classmethod
+    def from_checkpoint(cls, payload: dict[str, Any]) -> NeuralRouter:
+        """Restore validated linear parameters; never learn or open runtime storage."""
+        try:
+            if (
+                not isinstance(payload, dict)
+                or payload.get("format") != "little.neural_router_checkpoint.v1"
+            ):
+                raise ValueError("Unsupported router checkpoint format")
+            data = payload["policy"]
+            policy = NeuralRouterPolicy(
+                input_dim=data["input_dim"],
+                hidden_dim=0,
+                pathways=tuple(Pathway(value) for value in data["pathways"]),
+                entropy_threshold=data["entropy_threshold"],
+                uncertainty_margin=data["uncertainty_margin"],
+                semantic_clusters={
+                    Pathway(key): tuple(words)
+                    for key, words in data["semantic_clusters"].items()
+                },
+            )
+            weights, biases = payload["weights"], payload["biases"]
+            if (
+                not isinstance(weights, list)
+                or len(weights) != len(policy.pathways)
+                or not isinstance(biases, list)
+                or len(biases) != len(policy.pathways)
+            ):
+                raise ValueError(
+                    "Checkpoint parameter dimensions do not match pathways"
+                )
+            if any(
+                not isinstance(row, list) or len(row) != policy.input_dim
+                for row in weights
+            ):
+                raise ValueError("Checkpoint weight dimensions do not match encoder")
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, (float, int))
+                or not math.isfinite(value)
+                for row in weights + [biases]
+                for value in row
+            ):
+                raise ValueError("Checkpoint parameters must be finite numbers")
+            encoder_clusters = payload.get(
+                "encoder_semantic_clusters", data["semantic_clusters"]
+            )
+            encoder_policy = replace(
+                policy,
+                semantic_clusters={
+                    Pathway(key): tuple(words)
+                    for key, words in encoder_clusters.items()
+                },
+            )
+            router = cls(
+                policy=policy,
+                encoder=NeuralStateEncoder(policy=encoder_policy),
+                temperature=payload["temperature"],
+            )
+            router._w, router._b = [row[:] for row in weights], biases[:]
+            return router
+        except (KeyError, TypeError) as exc:
+            raise ValueError("Malformed router checkpoint") from exc
 
     def _initialize_weights(self) -> tuple[list[list[float]], list[float]]:
         """Initialize continuous projection weights aligned with semantic cluster centroids."""

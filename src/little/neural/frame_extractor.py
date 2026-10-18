@@ -1,9 +1,8 @@
-"""Neural Semantic Frame & Slot Extractor for robust, zero-regex knowledge extraction."""
+"""Deterministic policy and regex based semantic frame extraction."""
 
 from __future__ import annotations
 
 import re
-from typing import Any
 
 from little.core.contracts import CandidateClaim
 from little.neural.encoder import NeuralStateEncoder
@@ -18,7 +17,7 @@ ADVERB_PATTERN = re.compile(
 
 
 class NeuralFrameExtractor:
-    """Extracts typed FrameNet-style semantic frames from natural, conversational, or Wikipedia text."""
+    """Extracts candidate semantic frames with policy phrase rules and bounded regex patterns."""
 
     def __init__(
         self,
@@ -26,7 +25,8 @@ class NeuralFrameExtractor:
         encoder: NeuralStateEncoder | None = None,
     ) -> None:
         self.policy = policy or SemanticFramePolicy.default()
-        self.encoder = encoder or NeuralStateEncoder()
+        # Kept for constructor compatibility; extraction does not use embeddings.
+        self.encoder = encoder
 
     def extract_frames(self, text: str) -> list[ExtractedSemanticFrame]:
         """Extract structured semantic frames from unstructured text."""
@@ -69,9 +69,11 @@ class NeuralFrameExtractor:
     def to_candidate_claims(
         self, frames: list[ExtractedSemanticFrame]
     ) -> list[CandidateClaim]:
-        """Convert extracted semantic frames into verified CandidateClaim contracts."""
+        """Convert deterministic extraction candidates into claims; verification is external."""
         claims: list[CandidateClaim] = []
         for f in frames:
+            if f.confidence < self.policy.min_extraction_confidence:
+                continue
             claims.append(
                 CandidateClaim(
                     subject=f.subject,
@@ -123,8 +125,7 @@ class NeuralFrameExtractor:
         if main_part:
             main_text = f"{subj} {main_part}"
             sub_frames = self.extract_frames(main_text)
-            for sf in sub_frames:
-                frames.append(sf)
+            frames.extend(sub_frames)
 
         return frames if frames else None
 
@@ -162,9 +163,7 @@ class NeuralFrameExtractor:
         for rel_name, phrases in self.policy.relational_indicators.items():
             for phrase in phrases:
                 pattern = (
-                    r"^(?P<subj>.+?)\s+\b"
-                    + re.escape(phrase)
-                    + r"\b\s+(?P<obj>.+)$"
+                    r"^(?P<subj>.+?)\s+\b" + re.escape(phrase) + r"\b\s+(?P<obj>.+)$"
                 )
                 m = re.match(pattern, text, re.IGNORECASE)
                 if m:
@@ -176,8 +175,8 @@ class NeuralFrameExtractor:
                     objs = self._split_conjunction(obj_raw)
 
                     frames: list[ExtractedSemanticFrame] = []
-                    is_prop = (rel_name == "has_property")
-                    phrase_is_neg = self._is_negative(phrase) or self._is_negative(text)
+                    is_prop = rel_name == "has_property"
+                    phrase_is_neg = self._is_negative(phrase)
 
                     for o in objs:
                         norm_o = self._normalize_entity(o)
@@ -215,7 +214,20 @@ class NeuralFrameExtractor:
         obj = self._normalize_entity(m.group("obj"))
 
         # Skip common auxiliary/negation words already covered by relational indicators
-        if verb in ("is", "are", "was", "were", "has", "have", "had", "can", "will", "did", "do", "not"):
+        if verb in (
+            "is",
+            "are",
+            "was",
+            "were",
+            "has",
+            "have",
+            "had",
+            "can",
+            "will",
+            "did",
+            "do",
+            "not",
+        ):
             return None
 
         if subj and obj and subj != obj:
@@ -237,11 +249,28 @@ class NeuralFrameExtractor:
         stripped = re.sub(r"^[,:\-\.\s]+|[,:\-\.\s]+$", "", stripped)
         # If all lowercase or mixed, strip plural trailing 's' if standard regular plural
         lower = stripped.lower()
-        if lower.endswith("s") and len(lower) > 3 and not lower.endswith(("ss", "us", "is", "as")):
-            # Common plurals: cheetahs -> cheetah, felines -> feline
-            # But don't strip if proper noun or collective
-            if lower not in ("gas", "lens", "series", "species", "mars", "paris", "atlantis"):
-                lower = lower[:-1]
+        # Preserve known nonplural names while supporting legacy regular plurals.
+        if (
+            lower.endswith("s")
+            and len(lower) > 3
+            and not lower.endswith(("ss", "us", "is", "as"))
+            and lower
+            not in (
+                "gas",
+                "lens",
+                "series",
+                "species",
+                "mars",
+                "paris",
+                "atlantis",
+                "physics",
+                "mathematics",
+                "economics",
+                "politics",
+                "news",
+            )
+        ):
+            lower = lower[:-1]
         return lower
 
     def _split_conjunction(self, obj_phrase: str) -> list[str]:

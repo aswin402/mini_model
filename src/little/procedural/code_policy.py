@@ -14,6 +14,7 @@ from little.knowledge.registry import SchemaRegistry
 class SandboxPolicy:
     timeout_seconds: float = 3.0
     max_memory_mb: int = 64
+    max_output_bytes: int = 65536
     max_repair_attempts: int = 3
     allowed_builtin_names: tuple[str, ...] = (
         "abs", "all", "any", "bool", "dict", "enumerate", "filter", "float",
@@ -48,6 +49,7 @@ class CodeSynthesizerPolicy:
         sandbox = SandboxPolicy(
             timeout_seconds=float(sb_data.get("timeout_seconds", 3.0)),
             max_memory_mb=int(sb_data.get("max_memory_mb", 64)),
+            max_output_bytes=int(sb_data.get("max_output_bytes", 65536)),
             max_repair_attempts=int(sb_data.get("max_repair_attempts", 3)),
             allowed_builtin_names=tuple(sb_data.get("allowed_builtin_names", ())),
             forbidden_ast_nodes=tuple(sb_data.get("forbidden_ast_nodes", ())),

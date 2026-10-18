@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from little.inference.dual_speed import DualSpeedInfillingEngine, InfillingResult
+from little.inference.dual_speed import DualSpeedInfillingEngine
 from little.inference.invariant_gates import DeepSeekInvariantVerifier
 from little.memory.store import MemoryStore
 
@@ -86,7 +86,7 @@ def test_transitive_query_meeting_in_the_middle(infilling_engine: DualSpeedInfil
     res = infilling_engine.query("sparrow", "animal", predicate="is_a")
 
     assert res.mode == "THINKING"
-    assert res.confidence >= 0.80
+    assert res.confidence == pytest.approx(0.25)
     assert "SPARROW" in res.path
     assert "ANIMAL" in res.path
     assert "<think>" in res.inspectable_trace

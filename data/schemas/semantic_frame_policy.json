@@ -78,17 +78,10 @@
       "had"
     ],
     "part_of": [
-      "is not composed of",
       "is not part of",
       "are not part of",
-      "is composed of",
-      "is made of",
       "is part of",
-      "are part of",
-      "consists of",
-      "consist of",
-      "contains",
-      "contain"
+      "are part of"
     ],
     "capable_of": [
       "cannot",
@@ -133,6 +126,15 @@
       "cause",
       "triggers",
       "trigger"
+    ],
+    "has_part": [
+      "is not composed of",
+      "is composed of",
+      "is made of",
+      "consists of",
+      "consist of",
+      "contains",
+      "contain"
     ]
   },
   "passive_patterns": {

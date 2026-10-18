@@ -2435,6 +2435,44 @@
       "is_negative": false,
       "is_property": false,
       "confidence": 1
+    },
+    {
+      "name": "cxn_does_not_have",
+      "pattern_tokens": [
+        "{x}",
+        "does",
+        "not",
+        "have",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "has",
+      "construction_type": "statement",
+      "is_negative": true,
+      "is_property": false,
+      "confidence": 1
+    },
+    {
+      "name": "cxn_do_not_have",
+      "pattern_tokens": [
+        "{x}",
+        "do",
+        "not",
+        "have",
+        "{y}"
+      ],
+      "slot_roles": {
+        "X": "subject",
+        "Y": "object"
+      },
+      "predicate_template": "has",
+      "construction_type": "statement",
+      "is_negative": true,
+      "is_property": false,
+      "confidence": 1
     }
   ]
 }

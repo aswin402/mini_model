@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,17 @@ class TurboQuantPolicy:
     top_k_default: int
     coarse_filter_multiplier: int
     similarity_threshold: float
+
+    def __post_init__(self) -> None:
+        # The shared Python/native encoding is fixed at eight 64-bit words.
+        if type(self.dimension) is not int or self.dimension != 512:
+            raise ValueError("TurboQuant supports dimension 512 only")
+        if self.bins_4bit != 16 or len(self.quantization_modes) != 2 or set(self.quantization_modes) != {'1bit', '4bit'}:
+            raise ValueError("TurboQuant requires 1bit and 4bit modes with 16 bins")
+        if type(self.top_k_default) is not int or type(self.coarse_filter_multiplier) is not int or self.top_k_default < 1 or self.coarse_filter_multiplier < 1:
+            raise ValueError("TurboQuant search limits must be positive")
+        if not math.isfinite(self.similarity_threshold) or not -1 <= self.similarity_threshold <= 1:
+            raise ValueError("TurboQuant similarity threshold must be finite and between -1 and 1")
 
     @classmethod
     def load(cls, directory: str | Path) -> TurboQuantPolicy:

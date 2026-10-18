@@ -39,7 +39,8 @@ class ComparativeOrderReasoner:
             pred = f"{dim}_greater"
             relations = self.memory.get_relations(predicate=pred)
             for r in relations:
-                adj[r.subject_id.lower()].add(r.object_id.lower())
+                if r.weight_positive > r.weight_negative:
+                    adj[r.subject_id.lower()].add(r.object_id.lower())
         # Union with local graph
         for u, neighbors in self._local_graphs[dim].items():
             adj[u].update(neighbors)
@@ -126,6 +127,9 @@ class ComparativeOrderReasoner:
         pos_comp = dim_spec.positive_comparatives[0]
         neg_comp = dim_spec.negative_comparatives[0]
         used_comp = pos_comp if polarity > 0 else neg_comp
+
+        if a == b:
+            return f"No. {a.capitalize()} cannot be {used_comp} than itself."
 
         adj = self._get_adj(dim)
 

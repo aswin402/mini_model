@@ -10,10 +10,7 @@ use std::os::raw::c_char;
 // ---------------------------------------------------------------------------
 
 /// Compute all transitive ancestors reachable from start_node via outgoing edges.
-pub fn find_ancestors(
-    adjacency: &HashMap<String, Vec<String>>,
-    start_node: &str,
-) -> Vec<String> {
+pub fn find_ancestors(adjacency: &HashMap<String, Vec<String>>, start_node: &str) -> Vec<String> {
     let mut visited: HashSet<String> = HashSet::new();
     let mut stack: Vec<String> = Vec::new();
 
@@ -394,11 +391,16 @@ pub extern "C" fn little_core_turbo_index_create(
     signs_ptr: *const f32,
     signs_len: usize,
 ) -> *mut TurboIndexRust {
-    if signs_ptr.is_null() || signs_len != dimension {
+    if signs_ptr.is_null() || dimension != 512 || signs_len != 512 {
         return std::ptr::null_mut();
     }
+    // SAFETY: The caller supplies signs_len readable floats; null and supported
+    // dimensions have been checked before constructing the slice.
     let signs = unsafe { std::slice::from_raw_parts(signs_ptr, signs_len) };
-    let index = Box::new(TurboIndexRust::new(dimension, signs));
+    let index = match TurboIndexRust::new(dimension, signs) {
+        Ok(index) => Box::new(index),
+        Err(_) => return std::ptr::null_mut(),
+    };
     Box::into_raw(index)
 }
 
@@ -437,6 +439,9 @@ pub extern "C" fn little_core_turbo_index_add(
     }
     let vector = unsafe { std::slice::from_raw_parts(vector_ptr, vector_len) };
 
+    if vector.iter().any(|value| !value.is_finite()) {
+        return 0;
+    }
     index.add(id_str, vector, meta_str);
     1
 }
@@ -489,6 +494,13 @@ pub extern "C" fn little_core_turbo_index_search(
         return to_c_string(&empty);
     }
     let query = unsafe { std::slice::from_raw_parts(query_ptr, query_len) };
+    if query.iter().any(|value| !value.is_finite())
+        || !threshold.is_finite()
+        || !(-1.0..=1.0).contains(&threshold)
+        || coarse_multiplier == 0
+    {
+        return to_c_string(&Vec::<turbo::SearchResultRust>::new());
+    }
     let results = index.search(query, top_k, threshold, coarse_multiplier);
     to_c_string(&results)
 }
@@ -509,6 +521,9 @@ pub extern "C" fn little_core_turbo_rotate(
     }
     let vector = unsafe { std::slice::from_raw_parts(vector_ptr, vector_len) };
     let out = unsafe { std::slice::from_raw_parts_mut(out_ptr, vector_len) };
+    if vector.iter().any(|value| !value.is_finite()) {
+        return 0;
+    }
     index.rotate(vector, out);
     1
 }
@@ -557,7 +572,7 @@ mod tests {
     #[test]
     fn test_turbo_index_search() {
         let signs = vec![1.0; 512];
-        let mut index = TurboIndexRust::new(512, &signs);
+        let mut index = TurboIndexRust::new(512, &signs).expect("valid signs");
         let mut v1 = vec![0.0f32; 512];
         v1[0] = 1.0;
         index.add("v1", &v1, "{}");
@@ -570,5 +585,15 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "v1");
         assert!(results[0].score > 0.9);
+    }
+    #[test]
+    fn turbo_rejects_invalid_dimension_without_panicking() {
+        let signs = [1.0f32; 512];
+        for dimension in [0, 32, 513, 1024] {
+            assert!(little_core_turbo_index_create(dimension, signs.as_ptr(), dimension).is_null());
+        }
+        let bad_signs = [0.0f32; 512];
+        assert!(little_core_turbo_index_create(512, bad_signs.as_ptr(), 512).is_null());
+        assert!(TurboIndexRust::new(32, &[1.0; 32]).is_err());
     }
 }
