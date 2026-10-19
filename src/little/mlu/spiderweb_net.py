@@ -811,11 +811,13 @@ class SpiderWebMLM:
         for spoke_name in SPOKE_NAMES:
             all_preds.extend(focal_unit.predict_spoke_targets(spoke_name, candidate_vecs, top_k=4))
 
-        # Phase 1: Fuse native Rust 360° Multi-Hop Beam Traversal predictions
+        # Phase 1 & 7: Fuse native Rust 360° Multi-Hop Beam Traversal predictions
+        self._last_rust_beam: dict[str, Any] = {}
         if self.rust_arena.is_native:
             beam_dto = self.rust_arena.query_360_beam(
                 focal_unit.concept_id, max_hops=max_hops, top_k=12
             )
+            self._last_rust_beam = beam_dto
             for cell_name in beam_dto.get("activated_cells", []):
                 if cell_name in self.nodes and cell_name not in activated:
                     activated.append(str(cell_name))
@@ -1070,11 +1072,12 @@ class SpiderWebMLM:
             tgt_text = p.target_concept.lower().replace("_", " ")
             spoke_clauses.append(f"{rel_text} {tgt_text} [{p.spoke}:{p.combined_confidence:.2f}]")
 
-        rust_cont = (
-            self.rust_arena.generate(focal_cid.lower().replace("_", " "), max_tokens=8)
-            if self.rust_arena.is_native
-            else ""
-        )
+        beam_cache = getattr(self, "_last_rust_beam", {}) or {}
+        rust_cont = str(beam_cache.get("generated_continuation", "")).strip()
+        if not rust_cont and self.rust_arena.is_native:
+            rust_cont = self.rust_arena.generate(
+                focal_cid.lower().replace("_", " "), max_tokens=8
+            )
         if rust_cont:
             continuation_text = rust_cont
         else:
@@ -1095,7 +1098,10 @@ class SpiderWebMLM:
             + "; ".join(spoke_clauses)
             + fluency_suffix
         )
-        fluent_eng = self._synthesize_fluent_english(focal_cid, preds, continuation_text)
+        rust_fluent = str(beam_cache.get("fluent_synthesis", "")).strip()
+        fluent_eng = rust_fluent or self._synthesize_fluent_english(
+            focal_cid, preds, continuation_text
+        )
         trace = (
             f"[MLU-360] Activated {len(activated)} units ({' -> '.join(activated)}) | "
             f"top_conf={top_conf:.2f} | entropy={avg_entropy:.2f}"

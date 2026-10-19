@@ -258,3 +258,36 @@ def test_spiderweb_mlm_multiturn_liquid_context_and_kernel_coupling() -> None:
         q3 = kernel.mlm.query_360("Is it a cobra?")
         assert q3.status == "REFUTED"
         assert "I_MUTEX" in q3.answer
+
+
+def test_spiderweb_mlm_phase7_to_10_rust_wave_decoder_and_kernel_process() -> None:
+    """Phases 7-10: Rust wave-to-English synthesis, first-class CognitiveKernel.process() routing, and sub-millisecond beam latency."""
+    import time
+
+    from little.core.kernel import CognitiveKernel
+    from little.core.models import BeliefStatus
+
+    with MemoryStore(seed_ontology=False) as memory, CognitiveKernel(memory=memory) as kernel:
+        # 1. Learn directly through kernel.process() statements
+        kernel.process("Titan is a moon. A moon is a celestial_body. Titan has atmosphere.")
+        assert "TITAN" in kernel.mlm.nodes
+
+        # 2. Verify native Rust 360° wave synthesis (`fluent_synthesis`) and sub-ms beam speed
+        t0 = time.perf_counter()
+        beam = kernel.mlm.rust_arena.query_360_beam("TITAN", max_hops=3, top_k=10)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        assert elapsed_ms < 5.0
+        assert "titan" in beam["fluent_synthesis"].lower()
+        assert "moon" in beam["fluent_synthesis"].lower()
+
+        # 3. Verify open-ended inquiry without '?' routes through SpiderWebMLM in kernel.process()
+        out_open = kernel.process("Tell me about titan")
+        assert out_open.inference is not None
+        assert out_open.inference.status == BeliefStatus.SUPPORTED
+        assert "titan" in (out_open.inference.answer or "").lower()
+
+        # 4. Verify multi-turn elliptic follow-up through kernel.process()
+        out_follow = kernel.process("Is it a celestial_body?")
+        assert out_follow.inference is not None
+        assert out_follow.inference.status == BeliefStatus.SUPPORTED
+

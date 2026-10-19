@@ -981,6 +981,7 @@ pub extern "C" fn little_core_mlu_arena_query_360_beam(
         activated_cells: vec!["CORE_ROOT".to_string()],
         predictions: Vec::new(),
         generated_continuation: String::new(),
+        fluent_synthesis: String::new(),
     };
     if arena_ptr.is_null() || concept_ptr.is_null() {
         return to_c_string(&empty);

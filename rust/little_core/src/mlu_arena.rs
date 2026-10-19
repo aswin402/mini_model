@@ -795,6 +795,7 @@ impl SpiderWebArena {
                 activated_cells: vec!["CORE_ROOT".to_string()],
                 predictions: Vec::new(),
                 generated_continuation: String::new(),
+                fluent_synthesis: String::new(),
             };
         };
 
@@ -829,7 +830,7 @@ impl SpiderWebArena {
         // Multi-hop confidence-guided beam expansion across the 360° Spider-Web
         let mut frontier: Vec<String> = all_preds
             .iter()
-            .filter(|p| p.verified && p.nars_confidence >= 0.45)
+            .filter(|p| p.verified && p.predicate != "disjoint_with" && p.nars_confidence >= 0.45)
             .map(|p| p.target_concept.clone())
             .collect();
 
@@ -858,7 +859,10 @@ impl SpiderWebArena {
                     }
                     let parent_preds = self.predict_spoke_targets(&parent_cid, s_idx, 3);
                     for pp in parent_preds {
-                        if pp.target_concept == clean || !pp.verified {
+                        if pp.target_concept == clean
+                            || !pp.verified
+                            || pp.predicate == "disjoint_with"
+                        {
                             continue;
                         }
                         if pp.nars_confidence >= 0.45 {
@@ -869,10 +873,13 @@ impl SpiderWebArena {
                             spoke: pp.spoke,
                             predicate: pp.predicate,
                             target_concept: pp.target_concept,
-                            neural_score: pp.neural_score * factor,
-                            nars_confidence: pp.nars_confidence * factor,
+                            neural_score: (pp.neural_score * factor * 10000.0).round() / 10000.0,
+                            nars_confidence: (pp.nars_confidence * factor * 10000.0).round()
+                                / 10000.0,
                             epistemic_entropy: pp.epistemic_entropy,
-                            combined_confidence: pp.combined_confidence * factor,
+                            combined_confidence: (pp.combined_confidence * factor * 10000.0)
+                                .round()
+                                / 10000.0,
                             verified: pp.verified,
                         });
                     }
@@ -909,6 +916,8 @@ impl SpiderWebArena {
 
         let prompt = clean.to_lowercase().replace('_', " ");
         let generated_continuation = self.generate_from_prompt(&prompt, 8);
+        let fluent_synthesis =
+            self.synthesize_360_wave(&clean, &sorted, &generated_continuation);
 
         Query360BeamDto {
             focal_concept: clean,
@@ -917,7 +926,71 @@ impl SpiderWebArena {
             activated_cells,
             predictions: sorted,
             generated_continuation,
+            fluent_synthesis,
         }
+    }
+
+    /// Phase 8: Native Rust 360° Wave-to-Token Sequence Decoder (`synthesize_360_wave`).
+    ///
+    /// Decodes active 360° spoke predictions and local liquid token transitions into a
+    /// coherent natural-language realization without hardcoded templates.
+    pub fn synthesize_360_wave(
+        &self,
+        focal_concept: &str,
+        predictions: &[SpokePredictionDto],
+        continuation: &str,
+    ) -> String {
+        let subj = focal_concept.to_lowercase().replace('_', " ");
+        let mut clauses: Vec<String> = Vec::new();
+        let mut seen_pred_groups: Vec<(String, Vec<String>)> = Vec::new();
+
+        for pred in predictions.iter().take(6) {
+            if !pred.verified || pred.predicate == "co_occurs_with" {
+                continue;
+            }
+            let verb = pred.predicate.replace('_', " ");
+            let obj = pred.target_concept.to_lowercase().replace('_', " ");
+            if let Some((_, targets)) = seen_pred_groups.iter_mut().find(|(v, _)| v == &verb) {
+                if !targets.contains(&obj) {
+                    targets.push(obj);
+                }
+            } else {
+                seen_pred_groups.push((verb, vec![obj]));
+            }
+        }
+
+        for (verb, objs) in seen_pred_groups {
+            let joined = match objs.len() {
+                0 => continue,
+                1 => objs[0].clone(),
+                2 => format!("{} and {}", objs[0], objs[1]),
+                _ => {
+                    let head = objs[..objs.len() - 1].join(", ");
+                    format!("{}, and {}", head, objs[objs.len() - 1])
+                }
+            };
+            clauses.push(format!("{} {}", verb, joined));
+        }
+
+        if clauses.is_empty() {
+            if !continuation.trim().is_empty() {
+                let mut text = format!("{} {}", subj, continuation.trim());
+                if let Some(first) = text.get_mut(0..1) {
+                    first.make_ascii_uppercase();
+                }
+                if !text.ends_with('.') {
+                    text.push('.');
+                }
+                return text;
+            }
+            return String::new();
+        }
+
+        let mut head_subj = subj;
+        if let Some(first) = head_subj.get_mut(0..1) {
+            first.make_ascii_uppercase();
+        }
+        format!("{} {}.", head_subj, clauses.join("; "))
     }
 
     /// Phase 2: Native Rust Sleep-Cycle Consolidation (`consolidate_arena`).
@@ -1007,6 +1080,7 @@ pub struct Query360BeamDto {
     pub activated_cells: Vec<String>,
     pub predictions: Vec<SpokePredictionDto>,
     pub generated_continuation: String,
+    pub fluent_synthesis: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -578,16 +578,22 @@ class CognitiveKernel:
                 question_parts=frame.question_parts,
             )
             if (
+                thinking.inference.status in (BeliefStatus.SUPPORTED, BeliefStatus.REFUTED)
+                and frame.parsed_query is not None
+                and getattr(frame.parsed_query, "subject", None)
+            ):
+                subj_cid = str(frame.parsed_query.subject).strip().upper().replace(" ", "_")
+                if subj_cid in self.mlm.nodes:
+                    self.mlm._update_conversation_context(subj_cid)
+            if (
                 thinking.inference.status == BeliefStatus.UNKNOWN
                 and hasattr(self, "mlm")
                 and self.mlm is not None
-                and frame.parsed_query is None
-                and not frame.parsed_queries
             ):
                 mlm_res = self.mlm.query_360(text)
                 if mlm_res.status in ("VERIFIED", "REFUTED"):
                     mapped_status = (
-                        BeliefStatus.VERIFIED
+                        BeliefStatus.SUPPORTED
                         if mlm_res.status == "VERIFIED"
                         else BeliefStatus.REFUTED
                     )
@@ -618,22 +624,39 @@ class CognitiveKernel:
             if learning and learning.concepts_created and hasattr(self, "paged_store"):
                 for cid in learning.concepts_created:
                     self.paged_store.invalidate(cid)
-            if learning and (
-                learning.relations_added > 0
-                or learning.concepts_created
-                or learning.attributes_updated > 0
-            ):
-                self.mlm.sync_from_symbolic_memory()
-                if self.mlm.rust_arena.is_native and text.strip():
-                    self.mlm.rust_arena.train_stream(
-                        text, learning_rate=0.15 * self.plasticity.plasticity_multiplier
-                    )
+            if text.strip():
+                self.mlm.train_on_text(text)
+            self.mlm.sync_from_symbolic_memory()
             return KernelOutcome(
                 frame=frame,
                 mode=CognitiveMode.STUDY,
                 learning=learning,
                 routing_decision=routing,
             )
+        if hasattr(self, "mlm") and self.mlm is not None and text.strip():
+            mlm_res = self.mlm.query_360(text)
+            if mlm_res.status in ("VERIFIED", "REFUTED"):
+                mapped_status = (
+                    BeliefStatus.SUPPORTED
+                    if mlm_res.status == "VERIFIED"
+                    else BeliefStatus.REFUTED
+                )
+                return KernelOutcome(
+                    frame=frame,
+                    mode=CognitiveMode.SLOW,
+                    inference=InferenceResult(
+                        query=text,
+                        status=mapped_status,
+                        answer=mlm_res.fluent_english or mlm_res.answer,
+                        confidence=mlm_res.confidence,
+                        evidence=[
+                            f"{p.source_concept} {p.predicate} {p.target_concept}"
+                            for p in mlm_res.spoke_predictions[:3]
+                        ],
+                        trace=[mlm_res.inspectable_trace],
+                    ),
+                    routing_decision=routing,
+                )
         return KernelOutcome(
             frame=frame,
             mode=CognitiveMode.UNKNOWN,
