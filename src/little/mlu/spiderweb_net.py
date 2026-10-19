@@ -228,6 +228,12 @@ class SpiderWebMLM:
         self.subcore_children: dict[str, set[str]] = {}
         self.total_mitosis_events: int = 0
         self.total_pruned_nodes: int = 0
+        from little.rust.engine import RustMluArena
+
+        self.rust_arena = RustMluArena(
+            mitosis_min_activations=self.mitosis_min_activations,
+            mitosis_min_verified_spokes=self.mitosis_min_verified_spokes,
+        )
 
         self._ensure_persistence_table()
         self._init_core_topology()
@@ -505,6 +511,10 @@ class SpiderWebMLM:
         touched_nodes: set[str] = {"CORE_ROOT"}
 
         core_unit = self.nodes["CORE_ROOT"]
+        if self.rust_arena.is_native and text.strip():
+            self.rust_arena.train_stream(
+                text, learning_rate=0.15 * self.plasticity.plasticity_multiplier
+            )
 
         for sent in raw_sentences:
             self.cycle_step += 1
@@ -552,6 +562,14 @@ class SpiderWebMLM:
 
                 if gate_res.passed:
                     relations_verified += 1
+                    if self.rust_arena.is_native:
+                        self.rust_arena.learn_spoke(
+                            subj_unit.concept_id,
+                            pred,
+                            obj_unit.concept_id,
+                            learning_rate=lr,
+                            verified=True,
+                        )
                     surprise = subj_unit.learn_spoke_relation(
                         predicate=pred,
                         target_concept=obj_unit.concept_id,
@@ -571,6 +589,14 @@ class SpiderWebMLM:
                         self.memory.add_relation(c_sub.id, pred, c_obj.id)
                 else:
                     relations_refuted += 1
+                    if self.rust_arena.is_native:
+                        self.rust_arena.learn_spoke(
+                            subj_unit.concept_id,
+                            pred,
+                            obj_unit.concept_id,
+                            learning_rate=lr,
+                            verified=False,
+                        )
                     surprise = subj_unit.learn_spoke_relation(
                         predicate=pred,
                         target_concept=obj_unit.concept_id,
@@ -804,12 +830,21 @@ class SpiderWebMLM:
             tgt_text = p.target_concept.lower().replace("_", " ")
             spoke_clauses.append(f"{rel_text} {tgt_text} [{p.spoke}:{p.combined_confidence:.2f}]")
 
-        continuation = focal_unit.generate_token_continuation(
-            [focal_cid.lower().replace("_", " ")], max_tokens=8
+        rust_cont = (
+            self.rust_arena.generate(focal_cid.lower().replace("_", " "), max_tokens=8)
+            if self.rust_arena.is_native
+            else ""
         )
+        if rust_cont:
+            continuation_text = rust_cont
+        else:
+            continuation = focal_unit.generate_token_continuation(
+                [focal_cid.lower().replace("_", " ")], max_tokens=8
+            )
+            continuation_text = " ".join(continuation)
         fluency_suffix = (
-            f" | Neural stream: \"{focal_cid.lower().replace('_', ' ')} {' '.join(continuation)}\""
-            if continuation
+            f" | Neural stream: \"{focal_cid.lower().replace('_', ' ')} {continuation_text}\""
+            if continuation_text
             else ""
         )
 
@@ -856,4 +891,6 @@ class SpiderWebMLM:
             "mitosis_promotions": self.total_mitosis_events,
             "pruned_nodes": self.total_pruned_nodes,
             "cycle_step": self.cycle_step,
+            "rust_arena_native": self.rust_arena.is_native,
+            "rust_arena_nodes": self.rust_arena.node_count,
         }

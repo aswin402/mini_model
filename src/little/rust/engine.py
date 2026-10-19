@@ -175,6 +175,68 @@ class RustAccelerationCore:
             ]
             lib.little_core_graph_bidirectional_search.restype = ctypes.c_void_p
 
+        # 360° Spider-Web MLU Arena bindings
+        if hasattr(lib, "little_core_mlu_arena_create"):
+            lib.little_core_mlu_arena_create.argtypes = [ctypes.c_size_t, ctypes.c_size_t]
+            lib.little_core_mlu_arena_create.restype = ctypes.c_void_p
+
+            lib.little_core_mlu_arena_destroy.argtypes = [ctypes.c_void_p]
+            lib.little_core_mlu_arena_destroy.restype = None
+
+            lib.little_core_mlu_arena_node_count.argtypes = [ctypes.c_void_p]
+            lib.little_core_mlu_arena_node_count.restype = ctypes.c_size_t
+
+            lib.little_core_mlu_arena_mitosis_count.argtypes = [ctypes.c_void_p]
+            lib.little_core_mlu_arena_mitosis_count.restype = ctypes.c_size_t
+
+            lib.little_core_mlu_arena_learn_spoke.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                ctypes.c_float,
+                ctypes.c_int32,
+            ]
+            lib.little_core_mlu_arena_learn_spoke.restype = ctypes.c_float
+
+            lib.little_core_mlu_arena_predict_spoke.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_char_p,
+                ctypes.c_size_t,
+                ctypes.c_size_t,
+            ]
+            lib.little_core_mlu_arena_predict_spoke.restype = ctypes.c_void_p
+
+            if hasattr(lib, "little_core_mlu_arena_train_stream"):
+                lib.little_core_mlu_arena_train_stream.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_float,
+                ]
+                lib.little_core_mlu_arena_train_stream.restype = ctypes.c_void_p
+
+            if hasattr(lib, "little_core_mlu_arena_generate"):
+                lib.little_core_mlu_arena_generate.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_size_t,
+                ]
+                lib.little_core_mlu_arena_generate.restype = ctypes.c_void_p
+
+            if hasattr(lib, "little_core_mlu_arena_save_snapshot"):
+                lib.little_core_mlu_arena_save_snapshot.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                ]
+                lib.little_core_mlu_arena_save_snapshot.restype = ctypes.c_int32
+
+            if hasattr(lib, "little_core_mlu_arena_load_snapshot"):
+                lib.little_core_mlu_arena_load_snapshot.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                ]
+                lib.little_core_mlu_arena_load_snapshot.restype = ctypes.c_int32
+
     # -------------------------------------------------------------------------
     # Public Accelerated Graph API
     # -------------------------------------------------------------------------
@@ -621,5 +683,165 @@ class RustGraphIndex:
         )
 
 
+class RustMluArena:
+    """Native Rust 360° Spider-Web MLU Arena handle (`SpiderWebArena` in `rust/little_core`)."""
+
+    def __init__(
+        self,
+        mitosis_min_activations: int = 3,
+        mitosis_min_verified_spokes: int = 2,
+        core: RustAccelerationCore | None = None,
+    ) -> None:
+        self.core = core or RustAccelerationCore.get()
+        self._lib = self.core._lib
+        self._handle: Any = None
+        if self._lib is not None and hasattr(self._lib, "little_core_mlu_arena_create"):
+            self._handle = self._lib.little_core_mlu_arena_create(
+                int(mitosis_min_activations),
+                int(mitosis_min_verified_spokes),
+            )
+
+    @property
+    def is_native(self) -> bool:
+        return self._handle is not None
+
+    @property
+    def node_count(self) -> int:
+        if self._lib is not None and self._handle:
+            return int(self._lib.little_core_mlu_arena_node_count(self._handle))
+        return 0
+
+    @property
+    def mitosis_count(self) -> int:
+        if self._lib is not None and self._handle:
+            return int(self._lib.little_core_mlu_arena_mitosis_count(self._handle))
+        return 0
+
+    def learn_spoke(
+        self,
+        subject: str,
+        predicate: str,
+        object_node: str,
+        learning_rate: float = 0.2,
+        verified: bool = True,
+    ) -> float:
+        if self._lib is None or not self._handle:
+            return 0.0
+        res = self._lib.little_core_mlu_arena_learn_spoke(
+            self._handle,
+            subject.encode("utf-8"),
+            predicate.encode("utf-8"),
+            object_node.encode("utf-8"),
+            float(learning_rate),
+            1 if verified else 0,
+        )
+        return float(res)
+
+    def predict_spoke(
+        self, concept: str, spoke_idx: int, top_k: int = 5
+    ) -> list[dict[str, Any]]:
+        if self._lib is None or not self._handle:
+            return []
+        ptr = self._lib.little_core_mlu_arena_predict_spoke(
+            self._handle,
+            concept.encode("utf-8"),
+            int(spoke_idx),
+            int(top_k),
+        )
+        if not ptr:
+            return []
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return list(json.loads(res_str))
+
+    def train_stream(self, text: str, learning_rate: float = 0.2) -> dict[str, Any]:
+        """Train the Rust 360° Spider-Web Arena directly on a raw UTF-8 text stream."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_train_stream")
+        ):
+            return {
+                "sentences_processed": 0,
+                "tokens_processed": 0,
+                "spoke_updates": 0,
+                "average_surprise": 0.0,
+                "total_cells": 0,
+                "mitosis_promotions": 0,
+            }
+        ptr = self._lib.little_core_mlu_arena_train_stream(
+            self._handle,
+            text.encode("utf-8"),
+            float(learning_rate),
+        )
+        if not ptr:
+            return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def generate(self, prompt: str, max_tokens: int = 8) -> str:
+        """Generate a multi-token continuation from the Rust 360° Spider-Web Arena."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_generate")
+        ):
+            return ""
+        ptr = self._lib.little_core_mlu_arena_generate(
+            self._handle,
+            prompt.encode("utf-8"),
+            int(max_tokens),
+        )
+        if not ptr:
+            return ""
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return str(json.loads(res_str))
+
+    def save_snapshot(self, path: str) -> bool:
+        """Persist the Rust 360° Spider-Web Arena state to disk."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_save_snapshot")
+        ):
+            return False
+        res = self._lib.little_core_mlu_arena_save_snapshot(
+            self._handle,
+            str(path).encode("utf-8"),
+        )
+        return bool(res == 1)
+
+    def load_snapshot(self, path: str) -> bool:
+        """Restore the Rust 360° Spider-Web Arena state from disk."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_load_snapshot")
+        ):
+            return False
+        res = self._lib.little_core_mlu_arena_load_snapshot(
+            self._handle,
+            str(path).encode("utf-8"),
+        )
+        return bool(res == 1)
+
+    def close(self) -> None:
+        if self._lib is not None and self._handle is not None:
+            self._lib.little_core_mlu_arena_destroy(self._handle)
+            self._handle = None
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        self.close()
+
+
 RustCoreEngine = RustAccelerationCore
+
 

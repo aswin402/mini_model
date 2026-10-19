@@ -128,4 +128,59 @@ def test_cognitive_kernel_mlm_integration() -> None:
         snap = kernel.get_telemetry_snapshot()
         assert "mlm_spiderweb" in snap
         assert snap["mlm_spiderweb"]["total_mlu_nodes"] >= 10
+        assert snap["mlm_spiderweb"]["rust_arena_native"] is True
+
+
+def test_rust_mlu_arena_native_acceleration(tmp_path: object) -> None:
+    """RustMluArena executes Wave 1 (LFM Liquid), Wave 2 (360° Spoke Prediction), Wave 3 (Local Predictive-Coding + Mitosis), and snapshot persistence in native Rust."""
+    from pathlib import Path
+
+    from little.rust import RustMluArena
+
+    snap_file = str(Path(str(tmp_path)) / "arena_snapshot.json")
+    with RustMluArena(mitosis_min_activations=3, mitosis_min_verified_spokes=2) as arena:
+        assert arena.is_native is True
+        # Initial arena has CORE_ROOT + 6 Sub-Core Hubs = 7 nodes
+        assert arena.node_count == 7
+
+        s1 = arena.learn_spoke("DOLPHIN", "is_a", "CETACEAN", learning_rate=0.25, verified=True)
+        s2 = arena.learn_spoke("DOLPHIN", "has_part", "BLOWHOLE", learning_rate=0.25, verified=True)
+        s3 = arena.learn_spoke("DOLPHIN", "can", "ECHOLOCATE", learning_rate=0.25, verified=True)
+        assert s1 > 0.0 and s2 > 0.0 and s3 > 0.0
+        assert arena.node_count == 11
+        assert arena.mitosis_count == 1
+
+        tax_preds = arena.predict_spoke("DOLPHIN", spoke_idx=0, top_k=5)
+        assert len(tax_preds) == 1
+        assert tax_preds[0]["target_concept"] == "CETACEAN"
+        assert tax_preds[0]["combined_confidence"] > 0.5
+
+        stats_ep1 = arena.train_stream(
+            "Dolphins are marine cetaceans that communicate with clicks and whistles. "
+            "Dolphins swim rapidly through ocean currents.",
+            learning_rate=0.25,
+        )
+        stats_ep2 = arena.train_stream(
+            "Dolphins are marine cetaceans that communicate with clicks and whistles. "
+            "Dolphins swim rapidly through ocean currents.",
+            learning_rate=0.25,
+        )
+        assert stats_ep1["tokens_processed"] >= 16
+        assert stats_ep1["spoke_updates"] > 0
+        assert stats_ep2["average_surprise"] < stats_ep1["average_surprise"]
+
+        generated = arena.generate("dolphins are", max_tokens=6)
+        assert "marine" in generated or "cetaceans" in generated
+
+        saved_nodes = arena.node_count
+        assert arena.save_snapshot(snap_file) is True
+
+    with RustMluArena() as restored_arena:
+        assert restored_arena.load_snapshot(snap_file) is True
+        assert restored_arena.node_count == saved_nodes
+        assert restored_arena.mitosis_count >= 1
+        restored_preds = restored_arena.predict_spoke("DOLPHIN", spoke_idx=0, top_k=5)
+        assert len(restored_preds) == 1
+        assert restored_preds[0]["target_concept"] == "CETACEAN"
+
 

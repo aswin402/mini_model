@@ -5,6 +5,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
+pub mod mlu_arena;
+use mlu_arena::SpiderWebArena;
+
 // ---------------------------------------------------------------------------
 // Pure Rust Graph Algorithms
 // ---------------------------------------------------------------------------
@@ -764,6 +767,175 @@ pub extern "C" fn little_core_graph_bidirectional_search(
     }
 }
 
+// ---------------------------------------------------------------------------
+// C-ABI Exports for 360° Spider-Web MLU Arena (`SpiderWebArena`)
+// ---------------------------------------------------------------------------
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_create(
+    mitosis_min_activations: usize,
+    mitosis_min_verified_spokes: usize,
+) -> *mut SpiderWebArena {
+    let arena = SpiderWebArena::new(
+        mitosis_min_activations as u64,
+        mitosis_min_verified_spokes,
+    );
+    Box::into_raw(Box::new(arena))
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_destroy(arena_ptr: *mut SpiderWebArena) {
+    if !arena_ptr.is_null() {
+        unsafe {
+            let _ = Box::from_raw(arena_ptr);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_node_count(arena_ptr: *const SpiderWebArena) -> usize {
+    if arena_ptr.is_null() {
+        return 0;
+    }
+    let arena = unsafe { &*arena_ptr };
+    arena.cells.len()
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_mitosis_count(arena_ptr: *const SpiderWebArena) -> usize {
+    if arena_ptr.is_null() {
+        return 0;
+    }
+    let arena = unsafe { &*arena_ptr };
+    arena.total_mitosis_events as usize
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_learn_spoke(
+    arena_ptr: *mut SpiderWebArena,
+    subject_ptr: *const c_char,
+    predicate_ptr: *const c_char,
+    object_ptr: *const c_char,
+    learning_rate: f32,
+    verified: i32,
+) -> f32 {
+    if arena_ptr.is_null()
+        || subject_ptr.is_null()
+        || predicate_ptr.is_null()
+        || object_ptr.is_null()
+    {
+        return 0.0;
+    }
+    let (Ok(subj), Ok(pred), Ok(obj)) = (
+        unsafe { CStr::from_ptr(subject_ptr) }.to_str(),
+        unsafe { CStr::from_ptr(predicate_ptr) }.to_str(),
+        unsafe { CStr::from_ptr(object_ptr) }.to_str(),
+    ) else {
+        return 0.0;
+    };
+    let arena = unsafe { &mut *arena_ptr };
+    arena.learn_spoke_relation(subj, pred, obj, learning_rate, verified != 0)
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_predict_spoke(
+    arena_ptr: *const SpiderWebArena,
+    concept_ptr: *const c_char,
+    spoke_idx: usize,
+    top_k: usize,
+) -> *mut c_char {
+    if arena_ptr.is_null() || concept_ptr.is_null() {
+        return to_c_string(&Vec::<mlu_arena::SpokePredictionDto>::new());
+    }
+    let Ok(concept) = (unsafe { CStr::from_ptr(concept_ptr) }).to_str() else {
+        return to_c_string(&Vec::<mlu_arena::SpokePredictionDto>::new());
+    };
+    let arena = unsafe { &*arena_ptr };
+    let preds = arena.predict_spoke_targets(concept, spoke_idx, top_k);
+    to_c_string(&preds)
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_train_stream(
+    arena_ptr: *mut SpiderWebArena,
+    text_ptr: *const c_char,
+    learning_rate: f32,
+) -> *mut c_char {
+    let empty = mlu_arena::StreamTrainStatsDto {
+        sentences_processed: 0,
+        tokens_processed: 0,
+        spoke_updates: 0,
+        average_surprise: 0.0,
+        total_cells: 0,
+        mitosis_promotions: 0,
+    };
+    if arena_ptr.is_null() || text_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let Ok(text) = (unsafe { CStr::from_ptr(text_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let arena = unsafe { &mut *arena_ptr };
+    let stats = arena.train_raw_stream(text, learning_rate);
+    to_c_string(&stats)
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_generate(
+    arena_ptr: *const SpiderWebArena,
+    prompt_ptr: *const c_char,
+    max_tokens: usize,
+) -> *mut c_char {
+    if arena_ptr.is_null() || prompt_ptr.is_null() {
+        return to_c_string(&"");
+    }
+    let Ok(prompt) = (unsafe { CStr::from_ptr(prompt_ptr) }).to_str() else {
+        return to_c_string(&"");
+    };
+    let arena = unsafe { &*arena_ptr };
+    let out = arena.generate_from_prompt(prompt, max_tokens);
+    to_c_string(&out)
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_save_snapshot(
+    arena_ptr: *const SpiderWebArena,
+    path_ptr: *const c_char,
+) -> i32 {
+    if arena_ptr.is_null() || path_ptr.is_null() {
+        return 0;
+    }
+    let Ok(path) = (unsafe { CStr::from_ptr(path_ptr) }).to_str() else {
+        return 0;
+    };
+    let arena = unsafe { &*arena_ptr };
+    if arena.save_snapshot_file(path) {
+        1
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_load_snapshot(
+    arena_ptr: *mut SpiderWebArena,
+    path_ptr: *const c_char,
+) -> i32 {
+    if arena_ptr.is_null() || path_ptr.is_null() {
+        return 0;
+    }
+    let Ok(path) = (unsafe { CStr::from_ptr(path_ptr) }).to_str() else {
+        return 0;
+    };
+    let arena = unsafe { &mut *arena_ptr };
+    if arena.load_snapshot_file(path) {
+        1
+    } else {
+        0
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -850,5 +1022,39 @@ mod tests {
             .expect("path");
         assert_eq!(path, vec!["WHALE", "MAMMAL", "ANIMAL", "LIVING_THING"]);
     }
+
+    #[test]
+    fn test_spiderweb_arena_rust_liquid_and_mitosis() {
+        let mut arena = SpiderWebArena::new(3, 2);
+        let s1 = arena.learn_spoke_relation("ORCA", "is_a", "CETACEAN", 0.25, true);
+        let s2 = arena.learn_spoke_relation("ORCA", "has_part", "DORSAL_FIN", 0.25, true);
+        let s3 = arena.learn_spoke_relation("ORCA", "can", "ECHOLOCATE", 0.25, true);
+        assert!(s1 >= 0.0 && s2 >= 0.0 && s3 >= 0.0);
+        assert_eq!(arena.total_mitosis_events, 1);
+        let orca_id = arena.name_to_id["ORCA"] as usize;
+        assert_eq!(arena.cells[orca_id].role, "subcore");
+
+        let preds = arena.predict_spoke_targets("ORCA", 0, 5);
+        assert_eq!(preds.len(), 1);
+        assert_eq!(preds[0].target_concept, "CETACEAN");
+        assert!(preds[0].combined_confidence > 0.5);
+
+        let stream_stats1 = arena.train_raw_stream(
+            "An orca is a marine cetacean that hunts in coordinated pods. \
+             Orcas use echolocation clicks to navigate deep ocean waters.",
+            0.25,
+        );
+        let stream_stats2 = arena.train_raw_stream(
+            "An orca is a marine cetacean that hunts in coordinated pods. \
+             Orcas use echolocation clicks to navigate deep ocean waters.",
+            0.25,
+        );
+        assert!(stream_stats1.tokens_processed >= 16);
+        assert!(stream_stats2.average_surprise < stream_stats1.average_surprise);
+
+        let gen = arena.generate_from_prompt("an orca", 6);
+        assert!(gen.contains("marine") || gen.contains("cetacean"));
+    }
 }
+
 
