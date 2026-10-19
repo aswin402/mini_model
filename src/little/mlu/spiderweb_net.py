@@ -938,16 +938,17 @@ class SpiderWebMLM:
                 elif single_cid != focal_cid and target_cid is None:
                     target_cid = single_cid
 
+        op_tuples = {ptoks for ptoks, _, _ in self._operator_codebook}
+        has_leading_operator = focal_pos > 0 and any(
+            tuple(tokens[idx : idx + k]) in op_tuples
+            for idx in range(focal_pos)
+            for k in (1, 2, 3)
+            if idx + k <= focal_pos
+        )
+
         # Multi-Turn Liquid Context Resonance for elliptic / follow-up inquiries
         if self.recent_focal_stack:
             top_ctx_cid = self.recent_focal_stack[0][0]
-            op_tuples = {ptoks for ptoks, _, _ in self._operator_codebook}
-            has_leading_operator = focal_pos > 0 and any(
-                tuple(tokens[idx : idx + k]) in op_tuples
-                for idx in range(focal_pos)
-                for k in (1, 2, 3)
-                if idx + k <= focal_pos
-            )
             if (
                 focal_cid is not None
                 and target_cid is None
@@ -1007,63 +1008,92 @@ class SpiderWebMLM:
                 fluent_english=f"I recognize '{focal_cid.lower().replace('_', ' ')}', but I do not yet have verified 360° spoke facts for it.",
             )
 
-        # Case A: Targeted relational verification question (e.g., "Is an orca a mammal?" or "Can a penguin fly?")
+        # Case A: Targeted relational verification or 360° Comparative Wave Intersection
         if target_cid is not None:
-            matching = [p for p in preds if p.target_concept == target_cid]
-            if matching:
-                best = matching[0]
-                verb = best.predicate.replace("_", " ")
-                ans = (
-                    f"Yes — {focal_cid.lower().replace('_', ' ')} {verb} "
-                    f"{target_cid.lower().replace('_', ' ')} "
-                    f"(spoke={best.spoke}, confidence={best.combined_confidence:.2f}, "
-                    f"subcore={active_subcore})."
-                )
-                fluent = (
-                    f"Yes, {focal_cid.lower().replace('_', ' ')} {verb} "
-                    f"{target_cid.lower().replace('_', ' ')}."
-                )
-                trace = (
-                    f"[MLU-360] Core -> {active_subcore} -> {' -> '.join(activated[2:])} | "
-                    f"spoke={best.spoke}({best.predicate}) -> {target_cid} "
-                    f"[neural={best.neural_score:.2f}, nars={best.nars_confidence:.2f}, "
-                    f"H={best.epistemic_entropy:.2f}]"
-                )
-                return MLMQueryResult(
-                    query=clean_q,
-                    focal_concept=focal_cid,
-                    status="VERIFIED" if best.verified else "NEURAL_GROUNDED",
-                    answer=ans,
-                    confidence=best.combined_confidence,
-                    epistemic_entropy=best.epistemic_entropy,
-                    active_subcore=active_subcore,
-                    activated_mlus=activated,
-                    spoke_predictions=preds[:6],
-                    inspectable_trace=trace,
-                    fluent_english=fluent,
-                )
+            if has_leading_operator:
+                matching = [p for p in preds if p.target_concept == target_cid]
+                if matching:
+                    best = matching[0]
+                    verb = best.predicate.replace("_", " ")
+                    ans = (
+                        f"Yes — {focal_cid.lower().replace('_', ' ')} {verb} "
+                        f"{target_cid.lower().replace('_', ' ')} "
+                        f"(spoke={best.spoke}, confidence={best.combined_confidence:.2f}, "
+                        f"subcore={active_subcore})."
+                    )
+                    fluent = (
+                        f"Yes, {focal_cid.lower().replace('_', ' ')} {verb} "
+                        f"{target_cid.lower().replace('_', ' ')}."
+                    )
+                    trace = (
+                        f"[MLU-360] Core -> {active_subcore} -> {' -> '.join(activated[2:])} | "
+                        f"spoke={best.spoke}({best.predicate}) -> {target_cid} "
+                        f"[neural={best.neural_score:.2f}, nars={best.nars_confidence:.2f}, "
+                        f"H={best.epistemic_entropy:.2f}]"
+                    )
+                    return MLMQueryResult(
+                        query=clean_q,
+                        focal_concept=focal_cid,
+                        status="VERIFIED" if best.verified else "NEURAL_GROUNDED",
+                        answer=ans,
+                        confidence=best.combined_confidence,
+                        epistemic_entropy=best.epistemic_entropy,
+                        active_subcore=active_subcore,
+                        activated_mlus=activated,
+                        spoke_predictions=preds[:6],
+                        inspectable_trace=trace,
+                        fluent_english=fluent,
+                    )
 
-            # Check if DeepSeekInvariantVerifier refutes the link via I_MUTEX / disjointness
-            gate_check = self.verifier.verify_relation(focal_cid, "is_a", target_cid)
-            if not gate_check.passed:
-                ans_ref = (
-                    f"No — {focal_cid.lower().replace('_', ' ')} cannot be "
-                    f"{target_cid.lower().replace('_', ' ')} "
-                    f"(Refuted by {gate_check.violated_gate}: {gate_check.error_message})."
-                )
-                return MLMQueryResult(
-                    query=clean_q,
-                    focal_concept=focal_cid,
-                    status="REFUTED",
-                    answer=ans_ref,
-                    confidence=0.95,
-                    epistemic_entropy=0.0,
-                    active_subcore=active_subcore,
-                    activated_mlus=activated,
-                    spoke_predictions=preds[:6],
-                    inspectable_trace=f"[MLU-360] Refuted by {gate_check.violated_gate}: {gate_check.error_message}",
-                    fluent_english=ans_ref,
-                )
+                # Check if DeepSeekInvariantVerifier refutes the link via I_MUTEX / disjointness
+                gate_check = self.verifier.verify_relation(focal_cid, "is_a", target_cid)
+                if not gate_check.passed:
+                    ans_ref = (
+                        f"No — {focal_cid.lower().replace('_', ' ')} cannot be "
+                        f"{target_cid.lower().replace('_', ' ')} "
+                        f"(Refuted by {gate_check.violated_gate}: {gate_check.error_message})."
+                    )
+                    return MLMQueryResult(
+                        query=clean_q,
+                        focal_concept=focal_cid,
+                        status="REFUTED",
+                        answer=ans_ref,
+                        confidence=0.95,
+                        epistemic_entropy=0.0,
+                        active_subcore=active_subcore,
+                        activated_mlus=activated,
+                        spoke_predictions=preds[:6],
+                        inspectable_trace=f"[MLU-360] Refuted by {gate_check.violated_gate}: {gate_check.error_message}",
+                        fluent_english=ans_ref,
+                    )
+
+            # Phase 14 & 16: 360° Bidirectional Comparative Wave Intersection between focal_cid and target_cid
+            if target_cid in self.nodes:
+                cmp_dto = self.compare_360(focal_cid, target_cid, max_hops=3)
+                comp_synth = str(cmp_dto.get("comparative_synthesis", "")).strip()
+                if comp_synth:
+                    shared_list = cmp_dto.get("shared_attractors", [])
+                    conf = (
+                        float(shared_list[0]["combined_confidence"])
+                        if shared_list
+                        else preds[0].combined_confidence
+                    )
+                    return MLMQueryResult(
+                        query=clean_q,
+                        focal_concept=focal_cid,
+                        status="VERIFIED",
+                        answer=comp_synth,
+                        confidence=conf,
+                        epistemic_entropy=0.1,
+                        active_subcore=active_subcore,
+                        activated_mlus=activated + [target_cid],
+                        spoke_predictions=preds[:6],
+                        inspectable_trace=(
+                            f"[MLU-360-COMPARE] {focal_cid} <-> {target_cid} | "
+                            f"shared={len(shared_list)} | mutex={cmp_dto.get('mutually_exclusive', False)}"
+                        ),
+                        fluent_english=comp_synth,
+                    )
 
         # Case B: Open 360° synthesis across all 6 radial spokes + learned neural sequence continuation
         spoke_clauses: list[str] = []
@@ -1120,10 +1150,24 @@ class SpiderWebMLM:
             fluent_english=fluent_eng,
         )
 
+    def compare_360(
+        self, concept_a: str, concept_b: str, max_hops: int = 3
+    ) -> dict[str, Any]:
+        """Phase 14: Run 360° bidirectional wave intersection between two concepts."""
+        if self.rust_arena.is_native:
+            return self.rust_arena.compare_360(concept_a, concept_b, max_hops=max_hops)
+        return {}
+
+    def discover_curiosity(self, max_items: int = 10) -> dict[str, Any]:
+        """Phase 15: Discover invariant-safe analogical spoke hypotheses & epistemic curiosity gaps."""
+        if self.rust_arena.is_native:
+            return self.rust_arena.discover_curiosity(max_items=max_items)
+        return {"analogical_hypotheses": [], "curiosity_gaps": []}
+
     def consolidate(
         self, min_transition_weight: float = 0.05, replay_lr: float = 0.15
     ) -> dict[str, Any]:
-        """Phase 2: Run Sleep-Cycle Consolidation (spoke replay + transition pruning + mitosis)."""
+        """Phase 2 & 15: Run Sleep-Cycle Consolidation (spoke replay + transition pruning + mitosis + curiosity)."""
         rust_report = (
             self.rust_arena.consolidate(
                 min_transition_weight=min_transition_weight, replay_lr=replay_lr
@@ -1137,10 +1181,12 @@ class SpiderWebMLM:
                 "total_cells": len(self.nodes),
             }
         )
+        curiosity = self.discover_curiosity(max_items=15)
         promoted, pruned = self.run_structural_plasticity_cycle()
         self.save_nodes(promoted if promoted else None)
         return {
             "rust_consolidation": rust_report,
+            "curiosity": curiosity,
             "python_mitosis_promotions": promoted,
             "python_pruned_nodes": pruned,
             "total_mlu_nodes": len(self.nodes),

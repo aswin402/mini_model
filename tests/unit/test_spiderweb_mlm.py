@@ -303,3 +303,42 @@ def test_spiderweb_mlm_phase11_to_13_native_rust_invariants_and_benchmark_suite(
     assert bench["rust_beam_avg_latency_us"] < 2000.0
 
 
+def test_spiderweb_mlm_phase14_to_16_comparative_wave_and_curiosity() -> None:
+    """Phases 14-16: Native Rust 360° comparative wave intersection and analogical curiosity discovery."""
+    with MemoryStore(seed_ontology=False) as memory:
+        mlm = SpiderWebMLM(memory=memory, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+        mlm.train_on_text(
+            "An orca is a cetacean. A cetacean is a mammal. A mammal is an animal. "
+            "An orca lives in the ocean. An orca can echolocate. "
+            "An albatross is a seabird. A seabird is a bird. A bird is an animal. "
+            "An albatross lives in the ocean. An albatross can glide. "
+            "A mammal is not a bird. "
+            "A dolphin is a cetacean.",
+            persist=False,
+        )
+        cons = mlm.consolidate()
+        assert "curiosity" in cons
+        cur = cons["curiosity"]
+        assert len(cur["curiosity_gaps"]) > 0
+        # Dolphin shares CETACEAN with Orca, so analogical induction proposes dolphin -> ocean / echolocate
+        assert len(cur["analogical_hypotheses"]) > 0
+        assert any(
+            h["subject_concept"] == "DOLPHIN" and h["analog_source"] == "ORCA"
+            for h in cur["analogical_hypotheses"]
+        )
+
+        # Native 360° wave intersection between ORCA and ALBATROSS
+        cmp_dto = mlm.compare_360("ORCA", "ALBATROSS")
+        assert cmp_dto["mutually_exclusive"] is True
+        shared_targets = {s["target_concept"] for s in cmp_dto["shared_attractors"]}
+        assert "ANIMAL" in shared_targets or "OCEAN" in shared_targets
+        assert "both orca and albatross" in cmp_dto["comparative_synthesis"].lower()
+
+        # Natural-language comparative query through query_360
+        q_cmp = mlm.query_360("Compare orca and albatross")
+        assert q_cmp.status == "VERIFIED"
+        assert "both orca and albatross" in q_cmp.fluent_english.lower()
+        mlm.close()
+
+
+

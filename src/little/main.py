@@ -901,6 +901,12 @@ def cmd_mlu(args: argparse.Namespace) -> None:
                 f"replay_surprise={rc.get('average_replay_surprise', 0.0):.4f} | "
                 f"rust_nodes={cons_dict['rust_arena_nodes']}"
             )
+        elif action == "compare":
+            cmp_dict = kernel.mlm.compare_360(args.concept_a, args.concept_b)
+            print(json.dumps(cmp_dict, indent=2))
+        elif action == "curiosity":
+            cur_dict = kernel.mlm.discover_curiosity()
+            print(json.dumps(cur_dict, indent=2))
         else:
             tel = kernel.mlm.get_telemetry()
             print(json.dumps(tel, indent=2))
@@ -1191,6 +1197,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run the isolated 5-axis 360° Spider-Web MLM & Rust Arena benchmark suite",
     )
     p_mlu_benchmark.set_defaults(func=cmd_mlu)
+    p_mlu_compare = p_mlu_subs.add_parser(
+        "compare",
+        parents=[db_parent],
+        help="Run native Rust 360° bidirectional wave intersection between two concepts",
+    )
+    p_mlu_compare.add_argument("concept_a", help="First concept")
+    p_mlu_compare.add_argument("concept_b", help="Second concept")
+    p_mlu_compare.set_defaults(func=cmd_mlu)
+    p_mlu_curiosity = p_mlu_subs.add_parser(
+        "curiosity",
+        parents=[db_parent],
+        help="Discover invariant-safe analogical hypotheses and epistemic curiosity gaps",
+    )
+    p_mlu_curiosity.set_defaults(func=cmd_mlu)
 
     return parser
 

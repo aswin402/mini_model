@@ -603,7 +603,7 @@ impl SpiderWebArena {
         results
     }
 
-    /// Phase 11: Collect all reachable positive ancestors of `start_concept` across 360° spokes.
+    /// Phase 11: Collect all reachable positive taxonomic ancestors (`is_a`) of `start_concept`.
     pub fn collect_positive_ancestors(&self, start_concept: &str) -> std::collections::HashSet<String> {
         let clean = start_concept.trim().to_uppercase().replace(' ', "_");
         let mut visited = std::collections::HashSet::new();
@@ -621,7 +621,7 @@ impl SpiderWebArena {
             for edges in &cell.spoke_synapses {
                 for syn in edges {
                     if syn.pos_evidence > syn.neg_evidence
-                        && syn.predicate != "disjoint_with"
+                        && syn.predicate == "is_a"
                         && visited.insert(syn.target_name.clone())
                     {
                         queue.push_back(syn.target_name.clone());
@@ -736,17 +736,27 @@ impl SpiderWebArena {
                 surprise_count += 1;
             }
 
-            // 2. Slide 3-tap LFM-2.5 liquid window over high-salience concept anchors (Shannon H(w) * ln(1+|w|) >= 1.85)
-            let content_tokens: Vec<String> = tokens
+            // 2. Slide 3-tap LFM-2.5 liquid window over high-salience concept anchors (Shannon H(w) * ln(1+|w|) >= 2.25)
+            let anchor_indices: Vec<usize> = tokens
                 .iter()
-                .filter(|w| token_information_salience(w) >= 1.85)
-                .cloned()
+                .enumerate()
+                .filter(|(_, w)| token_information_salience(w) >= 2.25)
+                .map(|(i, _)| i)
                 .collect();
 
-            for idx in 0..content_tokens.len() {
-                let curr_tok = &content_tokens[idx];
-                let prev1 = if idx >= 1 { &content_tokens[idx - 1] } else { curr_tok };
-                let prev2 = if idx >= 2 { &content_tokens[idx - 2] } else { prev1 };
+            for idx in 0..anchor_indices.len() {
+                let tok_idx = anchor_indices[idx];
+                let curr_tok = &tokens[tok_idx];
+                let prev1 = if idx >= 1 {
+                    &tokens[anchor_indices[idx - 1]]
+                } else {
+                    curr_tok
+                };
+                let prev2 = if idx >= 2 {
+                    &tokens[anchor_indices[idx - 2]]
+                } else {
+                    prev1
+                };
 
                 let cid = self.ensure_cell(curr_tok, "leaf", None);
                 let v1 = deterministic_seed_vec(curr_tok);
@@ -758,14 +768,20 @@ impl SpiderWebArena {
                     cell.learn_token_sequence(&tokens, learning_rate * 0.8);
                 }
 
-                if idx + 1 < content_tokens.len() {
-                    let next_tok = &content_tokens[idx + 1];
+                if idx + 1 < anchor_indices.len() {
+                    let next_tok_idx = anchor_indices[idx + 1];
+                    let next_tok = &tokens[next_tok_idx];
                     if next_tok != curr_tok {
+                        let intervening_pred = if next_tok_idx > tok_idx + 1 {
+                            tokens[tok_idx + 1..next_tok_idx].join("_")
+                        } else {
+                            "co_occurs_with".to_string()
+                        };
                         let (passed, _gate) =
-                            self.verify_spoke_invariants(curr_tok, prev1, next_tok);
+                            self.verify_spoke_invariants(curr_tok, &intervening_pred, next_tok);
                         let s = self.learn_spoke_relation(
                             curr_tok,
-                            prev1,
+                            &intervening_pred,
                             next_tok,
                             learning_rate * 0.5,
                             passed,
@@ -1189,6 +1205,339 @@ impl SpiderWebArena {
             total_cells: self.cells.len(),
         }
     }
+
+    /// Phase 14: Native Rust 360° Bidirectional Wave Intersection (`compare_concepts_360`).
+    ///
+    /// Launches simultaneous 360° multi-hop waves from `concept_a` and `concept_b`, finding
+    /// shared 360° attractors (convergence), distinct phase spokes (divergence), `I_MUTEX`
+    /// mutual exclusion boundaries, and synthesizing a grounded comparative explanation.
+    pub fn compare_concepts_360(
+        &mut self,
+        concept_a: &str,
+        concept_b: &str,
+        max_hops: usize,
+    ) -> Compare360Dto {
+        let beam_a = self.query_360_beam(concept_a, max_hops, 16);
+        let beam_b = self.query_360_beam(concept_b, max_hops, 16);
+        let clean_a = beam_a.focal_concept.clone();
+        let clean_b = beam_b.focal_concept.clone();
+
+        let vec_a = self
+            .name_to_id
+            .get(&clean_a)
+            .map(|&id| self.get_anchor_array(id))
+            .unwrap_or_else(|| deterministic_seed_vec(&clean_a));
+        let vec_b = self
+            .name_to_id
+            .get(&clean_b)
+            .map(|&id| self.get_anchor_array(id))
+            .unwrap_or_else(|| deterministic_seed_vec(&clean_b));
+        let anchor_similarity = ((dot_product(&vec_a, &vec_b) * 10000.0).round()) / 10000.0;
+
+        let (passed_ab, gate_ab) = self.verify_spoke_invariants(&clean_a, "is_a", &clean_b);
+        let (passed_ba, gate_ba) = self.verify_spoke_invariants(&clean_b, "is_a", &clean_a);
+        let mutually_exclusive =
+            (!passed_ab && gate_ab == "I_MUTEX") || (!passed_ba && gate_ba == "I_MUTEX");
+
+        let mut shared_attractors: Vec<SharedAttractorDto> = Vec::new();
+        let mut shared_targets_set = std::collections::HashSet::new();
+
+        for pa in &beam_a.predictions {
+            if !pa.verified || pa.predicate == "co_occurs_with" || pa.predicate == "disjoint_with" {
+                continue;
+            }
+            if let Some(pb) = beam_b.predictions.iter().find(|pb| {
+                pb.verified
+                    && pb.target_concept == pa.target_concept
+                    && pb.predicate != "co_occurs_with"
+                    && pb.predicate != "disjoint_with"
+            }) {
+                if shared_targets_set.insert(pa.target_concept.clone()) {
+                    shared_attractors.push(SharedAttractorDto {
+                        predicate: pa.predicate.clone(),
+                        target_concept: pa.target_concept.clone(),
+                        spoke: pa.spoke.clone(),
+                        combined_confidence: ((0.5
+                            * (pa.combined_confidence + pb.combined_confidence)
+                            * 10000.0)
+                            .round())
+                            / 10000.0,
+                    });
+                }
+            }
+        }
+
+        let distinct_a: Vec<SpokePredictionDto> = beam_a
+            .predictions
+            .into_iter()
+            .filter(|p| {
+                p.verified
+                    && p.predicate != "co_occurs_with"
+                    && p.predicate != "disjoint_with"
+                    && !shared_targets_set.contains(&p.target_concept)
+            })
+            .take(5)
+            .collect();
+
+        let distinct_b: Vec<SpokePredictionDto> = beam_b
+            .predictions
+            .into_iter()
+            .filter(|p| {
+                p.verified
+                    && p.predicate != "co_occurs_with"
+                    && p.predicate != "disjoint_with"
+                    && !shared_targets_set.contains(&p.target_concept)
+            })
+            .take(5)
+            .collect();
+
+        let name_a = clean_a.to_lowercase().replace('_', " ");
+        let name_b = clean_b.to_lowercase().replace('_', " ");
+
+        let shared_clause = if shared_attractors.is_empty() {
+            format!(
+                "{} and {} have no verified shared 360° attractors yet",
+                name_a, name_b
+            )
+        } else {
+            let parts: Vec<String> = shared_attractors
+                .iter()
+                .take(3)
+                .map(|s| {
+                    format!(
+                        "{} {}",
+                        s.predicate.replace('_', " "),
+                        s.target_concept.to_lowercase().replace('_', " ")
+                    )
+                })
+                .collect();
+            format!("Both {} and {} {}", name_a, name_b, parts.join(" and "))
+        };
+
+        let diff_a: Vec<String> = distinct_a
+            .iter()
+            .take(2)
+            .map(|p| {
+                format!(
+                    "{} {}",
+                    p.predicate.replace('_', " "),
+                    p.target_concept.to_lowercase().replace('_', " ")
+                )
+            })
+            .collect();
+        let diff_b: Vec<String> = distinct_b
+            .iter()
+            .take(2)
+            .map(|p| {
+                format!(
+                    "{} {}",
+                    p.predicate.replace('_', " "),
+                    p.target_concept.to_lowercase().replace('_', " ")
+                )
+            })
+            .collect();
+
+        let mut synthesis = shared_clause;
+        if !diff_a.is_empty() || !diff_b.is_empty() {
+            let a_str = if diff_a.is_empty() {
+                String::new()
+            } else {
+                format!("{} {}", name_a, diff_a.join(" and "))
+            };
+            let b_str = if diff_b.is_empty() {
+                String::new()
+            } else {
+                format!("{} {}", name_b, diff_b.join(" and "))
+            };
+            if !a_str.is_empty() && !b_str.is_empty() {
+                synthesis.push_str(&format!("; however, {}, whereas {}", a_str, b_str));
+            } else if !a_str.is_empty() {
+                synthesis.push_str(&format!("; specifically, {}", a_str));
+            } else if !b_str.is_empty() {
+                synthesis.push_str(&format!("; specifically, {}", b_str));
+            }
+        }
+        if mutually_exclusive {
+            synthesis.push_str(" (mutually exclusive via I_MUTEX)");
+        }
+        synthesis.push('.');
+        if let Some(first) = synthesis.get_mut(0..1) {
+            first.make_ascii_uppercase();
+        }
+
+        Compare360Dto {
+            concept_a: clean_a,
+            concept_b: clean_b,
+            anchor_similarity,
+            mutually_exclusive,
+            shared_attractors,
+            distinct_a,
+            distinct_b,
+            comparative_synthesis: synthesis,
+        }
+    }
+
+    /// Phase 15: Native Rust Analogical Hypothesis Induction & Epistemic Curiosity (`discover_epistemic_hypotheses`).
+    ///
+    /// 1. Discovers invariant-safe (`I_DAG` & `I_MUTEX` verified) analogical spoke hypotheses
+    ///    between concepts that share taxonomic/functional attractors.
+    /// 2. Ranks active concepts with high 360° radial spoke sparsity as Epistemic Curiosity Gaps.
+    pub fn discover_epistemic_hypotheses(&self, max_items: usize) -> CuriosityReportDto {
+        let limit = max_items.max(1);
+        let mut curiosity_gaps: Vec<CuriosityGapDto> = Vec::new();
+
+        // Collect concept cells (including promoted domain subcores) and their positive spoke edges
+        let mut concept_edges: Vec<(usize, String, Vec<(String, String, usize)>)> = Vec::new();
+        let mut target_in_degree: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+
+        for (idx, cell) in self.cells.iter().enumerate() {
+            if cell.concept_id == "CORE_ROOT" || cell.concept_id.starts_with("SUBCORE_") {
+                continue;
+            }
+            let mut pos_edges: Vec<(String, String, usize)> = Vec::new();
+            let mut populated_spokes: usize = 0;
+            for (s_idx, edges) in cell.spoke_synapses.iter().enumerate() {
+                let mut spoke_has_pos = false;
+                for syn in edges {
+                    if syn.pos_evidence > syn.neg_evidence
+                        && syn.predicate != "co_occurs_with"
+                        && syn.predicate != "disjoint_with"
+                        && (!self.name_to_id.contains_key(&syn.predicate.to_uppercase())
+                            || syn.predicate.contains('_'))
+                    {
+                        *target_in_degree.entry(syn.target_name.clone()).or_insert(0) += 1;
+                        pos_edges.push((syn.predicate.clone(), syn.target_name.clone(), s_idx));
+                        spoke_has_pos = true;
+                    }
+                }
+                if spoke_has_pos {
+                    populated_spokes += 1;
+                }
+            }
+
+            let spoke_sparsity =
+                (((NUM_SPOKES.saturating_sub(populated_spokes)) as f32) / (NUM_SPOKES as f32)
+                    * 10000.0)
+                    .round()
+                    / 10000.0;
+            if spoke_sparsity > 0.30 {
+                let missing_spokes: Vec<String> = (0..NUM_SPOKES)
+                    .filter(|&s_idx| {
+                        !cell.spoke_synapses[s_idx]
+                            .iter()
+                            .any(|syn| syn.pos_evidence > syn.neg_evidence)
+                    })
+                    .map(|s_idx| SPOKE_NAMES[s_idx].to_string())
+                    .collect();
+                curiosity_gaps.push(CuriosityGapDto {
+                    concept_id: cell.concept_id.clone(),
+                    populated_spokes,
+                    spoke_sparsity,
+                    missing_spokes,
+                });
+            }
+
+            if !pos_edges.is_empty() {
+                concept_edges.push((idx, cell.concept_id.clone(), pos_edges));
+            }
+        }
+
+        curiosity_gaps.sort_by(|a, b| {
+            b.spoke_sparsity
+                .partial_cmp(&a.spoke_sparsity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        curiosity_gaps.truncate(limit);
+
+        // Induce invariant-safe analogical hypotheses across pairs sharing an attractor
+        let mut hypotheses: Vec<AnalogicalHypothesisDto> = Vec::new();
+        let mut seen_hyp: std::collections::HashSet<(String, String, String)> =
+            std::collections::HashSet::new();
+
+        for i in 0..concept_edges.len() {
+            for j in 0..concept_edges.len() {
+                if i == j {
+                    continue;
+                }
+                let (idx_a, ref cid_a, ref edges_a) = concept_edges[i];
+                let (idx_b, ref cid_b, ref edges_b) = concept_edges[j];
+
+                // Check if cid_a and cid_b are mutually exclusive first
+                let (compat_ab, gate_ab) = self.verify_spoke_invariants(cid_a, "is_a", cid_b);
+                if !compat_ab && gate_ab == "I_MUTEX" {
+                    continue;
+                }
+
+                // Find the most specific shared positive target between A and B (lowest in-degree)
+                let targets_b: std::collections::HashMap<&str, &str> = edges_b
+                    .iter()
+                    .map(|(p, t, _)| (t.as_str(), p.as_str()))
+                    .collect();
+                let Some((pred_shared_a, shared_target, _)) = edges_a
+                    .iter()
+                    .filter(|(_, t, _)| targets_b.contains_key(t.as_str()))
+                    .min_by_key(|(_, t, _)| *target_in_degree.get(t).unwrap_or(&999))
+                else {
+                    continue;
+                };
+
+                let vec_a = self.get_anchor_array(idx_a as u32);
+                let vec_b = self.get_anchor_array(idx_b as u32);
+                let sim = dot_product(&vec_a, &vec_b).clamp(-1.0, 1.0);
+                let in_deg = (*target_in_degree.get(shared_target).unwrap_or(&2)).max(1) as f32;
+                let specificity_bonus = (1.0 / in_deg).clamp(0.05, 0.50);
+                let same_pred_bonus = if targets_b.get(shared_target.as_str()) == Some(&pred_shared_a.as_str()) {
+                    0.15
+                } else {
+                    0.0
+                };
+
+                // Propose non-taxonomic properties/capabilities of A for B if invariant-safe
+                for (pred_a, target_a, s_idx) in edges_a {
+                    if pred_a == "is_a"
+                        || target_a == cid_b
+                        || targets_b.contains_key(target_a.as_str())
+                    {
+                        continue;
+                    }
+                    let (passed, _gate) = self.verify_spoke_invariants(cid_b, pred_a, target_a);
+                    if !passed {
+                        continue;
+                    }
+                    let key = (cid_b.clone(), pred_a.clone(), target_a.clone());
+                    if seen_hyp.insert(key) {
+                        let conf = ((0.45 + 0.25 * sim.max(0.0) + specificity_bonus + same_pred_bonus)
+                            .clamp(0.1, 0.99)
+                            * 10000.0)
+                            .round()
+                            / 10000.0;
+                        hypotheses.push(AnalogicalHypothesisDto {
+                            subject_concept: cid_b.clone(),
+                            predicate: pred_a.clone(),
+                            target_concept: target_a.clone(),
+                            spoke: SPOKE_NAMES[*s_idx].to_string(),
+                            analog_source: cid_a.clone(),
+                            shared_attractor: shared_target.clone(),
+                            confidence: conf,
+                        });
+                    }
+                }
+            }
+        }
+
+        hypotheses.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        hypotheses.truncate(limit);
+
+        CuriosityReportDto {
+            analogical_hypotheses: hypotheses,
+            curiosity_gaps,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1220,3 +1569,49 @@ pub struct ConsolidationReportDto {
     pub mitosis_promotions: usize,
     pub total_cells: usize,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SharedAttractorDto {
+    pub predicate: String,
+    pub target_concept: String,
+    pub spoke: String,
+    pub combined_confidence: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Compare360Dto {
+    pub concept_a: String,
+    pub concept_b: String,
+    pub anchor_similarity: f32,
+    pub mutually_exclusive: bool,
+    pub shared_attractors: Vec<SharedAttractorDto>,
+    pub distinct_a: Vec<SpokePredictionDto>,
+    pub distinct_b: Vec<SpokePredictionDto>,
+    pub comparative_synthesis: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AnalogicalHypothesisDto {
+    pub subject_concept: String,
+    pub predicate: String,
+    pub target_concept: String,
+    pub spoke: String,
+    pub analog_source: String,
+    pub shared_attractor: String,
+    pub confidence: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CuriosityGapDto {
+    pub concept_id: String,
+    pub populated_spokes: usize,
+    pub spoke_sparsity: f32,
+    pub missing_spokes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CuriosityReportDto {
+    pub analogical_hypotheses: Vec<AnalogicalHypothesisDto>,
+    pub curiosity_gaps: Vec<CuriosityGapDto>,
+}
+

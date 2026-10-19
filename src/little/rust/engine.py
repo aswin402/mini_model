@@ -274,6 +274,22 @@ class RustAccelerationCore:
                 ]
                 lib.little_core_mlu_arena_verify_invariants.restype = ctypes.c_void_p
 
+            if hasattr(lib, "little_core_mlu_arena_compare_360"):
+                lib.little_core_mlu_arena_compare_360.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_size_t,
+                ]
+                lib.little_core_mlu_arena_compare_360.restype = ctypes.c_void_p
+
+            if hasattr(lib, "little_core_mlu_arena_discover_curiosity"):
+                lib.little_core_mlu_arena_discover_curiosity.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_size_t,
+                ]
+                lib.little_core_mlu_arena_discover_curiosity.restype = ctypes.c_void_p
+
     # -------------------------------------------------------------------------
     # Public Accelerated Graph API
     # -------------------------------------------------------------------------
@@ -960,6 +976,46 @@ class RustMluArena:
         )
         if not ptr:
             return {"passed": True, "gate": "PASSED"}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def compare_360(
+        self, concept_a: str, concept_b: str, max_hops: int = 3
+    ) -> dict[str, Any]:
+        """Run native Rust 360° bidirectional wave intersection between two concepts."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_compare_360")
+        ):
+            return {}
+        ptr = self._lib.little_core_mlu_arena_compare_360(
+            self._handle,
+            concept_a.encode("utf-8"),
+            concept_b.encode("utf-8"),
+            max(1, int(max_hops)),
+        )
+        if not ptr:
+            return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def discover_curiosity(self, max_items: int = 10) -> dict[str, Any]:
+        """Run native Rust analogical hypothesis induction & epistemic curiosity gap discovery."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_discover_curiosity")
+        ):
+            return {"analogical_hypotheses": [], "curiosity_gaps": []}
+        ptr = self._lib.little_core_mlu_arena_discover_curiosity(
+            self._handle,
+            max(1, int(max_items)),
+        )
+        if not ptr:
+            return {"analogical_hypotheses": [], "curiosity_gaps": []}
         res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
         self._lib.little_core_free_string(ptr)
         return dict(json.loads(res_str))

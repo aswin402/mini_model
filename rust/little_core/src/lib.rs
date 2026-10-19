@@ -1052,6 +1052,54 @@ pub extern "C" fn little_core_mlu_arena_verify_invariants(
     })
 }
 
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_compare_360(
+    arena_ptr: *mut SpiderWebArena,
+    concept_a_ptr: *const c_char,
+    concept_b_ptr: *const c_char,
+    max_hops: usize,
+) -> *mut c_char {
+    let empty = mlu_arena::Compare360Dto {
+        concept_a: String::new(),
+        concept_b: String::new(),
+        anchor_similarity: 0.0,
+        mutually_exclusive: false,
+        shared_attractors: Vec::new(),
+        distinct_a: Vec::new(),
+        distinct_b: Vec::new(),
+        comparative_synthesis: String::new(),
+    };
+    if arena_ptr.is_null() || concept_a_ptr.is_null() || concept_b_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let Ok(concept_a) = (unsafe { CStr::from_ptr(concept_a_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let Ok(concept_b) = (unsafe { CStr::from_ptr(concept_b_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let arena = unsafe { &mut *arena_ptr };
+    let res = arena.compare_concepts_360(concept_a, concept_b, max_hops);
+    to_c_string(&res)
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_discover_curiosity(
+    arena_ptr: *mut SpiderWebArena,
+    max_items: usize,
+) -> *mut c_char {
+    let empty = mlu_arena::CuriosityReportDto {
+        analogical_hypotheses: Vec::new(),
+        curiosity_gaps: Vec::new(),
+    };
+    if arena_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let arena = unsafe { &*arena_ptr };
+    let res = arena.discover_epistemic_hypotheses(max_items);
+    to_c_string(&res)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
