@@ -915,6 +915,23 @@ def cmd_mlu(args: argparse.Namespace) -> None:
         elif action == "self-study":
             step_dict = kernel.mlm.autonomous_curiosity_step()
             print(json.dumps(step_dict, indent=2))
+        elif action == "counterfactual":
+            cf_dict = kernel.mlm.intervene_counterfactual_360(
+                args.root_concept,
+                args.suppressed_concept,
+                max_hops=int(getattr(args, "hops", 3)),
+            )
+            print(json.dumps(cf_dict, indent=2))
+        elif action == "bridge":
+            br_dict = kernel.mlm.find_bridge_360(
+                args.concept_a,
+                args.concept_b,
+                max_hops=int(getattr(args, "hops", 4)),
+            )
+            print(json.dumps(br_dict, indent=2))
+        elif action == "graph":
+            gr_dict = kernel.mlm.export_topology_graph()
+            print(json.dumps(gr_dict, indent=2))
         else:
             tel = kernel.mlm.get_telemetry()
             print(json.dumps(tel, indent=2))
@@ -1235,6 +1252,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run active curiosity-driven autonomous hypothesis verification & promotion",
     )
     p_mlu_self_study.set_defaults(func=cmd_mlu)
+    p_mlu_cf = p_mlu_subs.add_parser(
+        "counterfactual",
+        parents=[db_parent],
+        help="Run native Rust 360° counterfactual intervention wave",
+    )
+    p_mlu_cf.add_argument("root_concept", help="Root concept to propagate wave from")
+    p_mlu_cf.add_argument("suppressed_concept", help="Concept to suppress in virtual wave")
+    p_mlu_cf.add_argument(
+        "--hops", type=int, default=3, help="Maximum wave hops (default: 3)"
+    )
+    p_mlu_cf.set_defaults(func=cmd_mlu)
+    p_mlu_bridge = p_mlu_subs.add_parser(
+        "bridge",
+        parents=[db_parent],
+        help="Find the shortest 360° relational path bridge between two concepts",
+    )
+    p_mlu_bridge.add_argument("concept_a", help="Starting concept")
+    p_mlu_bridge.add_argument("concept_b", help="Target concept")
+    p_mlu_bridge.add_argument(
+        "--hops", type=int, default=4, help="Maximum bridge hops (default: 4)"
+    )
+    p_mlu_bridge.set_defaults(func=cmd_mlu)
+    p_mlu_graph = p_mlu_subs.add_parser(
+        "graph",
+        parents=[db_parent],
+        help="Export live 360° Spider-Web Arena topology and Mermaid diagram",
+    )
+    p_mlu_graph.set_defaults(func=cmd_mlu)
 
     return parser
 

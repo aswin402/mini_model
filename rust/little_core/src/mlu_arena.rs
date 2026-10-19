@@ -1779,6 +1779,315 @@ impl SpiderWebArena {
             bytes_written: n_bytes,
         }
     }
+
+    /// Phase 20: Native Rust Counterfactual Intervention Wave (`intervene_counterfactual_360`).
+    ///
+    /// Evaluates the causal/procedural wave from `root_concept` with `suppressed_concept`
+    /// virtually clamped out, comparing the baseline wave against the intervened wave to
+    /// identify `invalidated_conclusions` (downstream states that collapse when `suppressed_concept`
+    /// is removed) and `preserved_conclusions` (downstream states reachable via alternate paths).
+    pub fn intervene_counterfactual_360(
+        &mut self,
+        root_concept: &str,
+        suppressed_concept: &str,
+        max_hops: usize,
+    ) -> CounterfactualInterventionDto {
+        let clean_root = root_concept.trim().to_uppercase().replace(' ', "_");
+        let clean_supp = suppressed_concept.trim().to_uppercase().replace(' ', "_");
+        let hops = max_hops.clamp(1, 5);
+
+        let baseline = self.simulate_causal_wave_360(&clean_root, hops);
+        if baseline.affected_concepts.is_empty() || clean_root == clean_supp {
+            let invalidated = if clean_root == clean_supp {
+                baseline.affected_concepts.clone()
+            } else {
+                Vec::new()
+            };
+            return CounterfactualInterventionDto {
+                root_concept: clean_root.clone(),
+                suppressed_concept: clean_supp.clone(),
+                baseline_affected: baseline.affected_concepts,
+                invalidated_conclusions: invalidated,
+                preserved_conclusions: Vec::new(),
+                counterfactual_synthesis: format!(
+                    "If {} is suppressed, the wave from {} is blocked at the source.",
+                    clean_supp.to_lowercase().replace('_', " "),
+                    clean_root.to_lowercase().replace('_', " ")
+                ),
+            };
+        }
+
+        // Propagate virtual intervened wave skipping suppressed_concept
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        visited.insert(clean_root.clone());
+        visited.insert(clean_supp.clone());
+        let mut preserved_set: Vec<String> = Vec::new();
+
+        if let Some(&start_id) = self.name_to_id.get(&clean_root) {
+            let mut frontier: Vec<u32> = vec![start_id];
+            for _hop in 1..=hops {
+                let mut next_frontier: Vec<u32> = Vec::new();
+                for cid in &frontier {
+                    let Some(cell) = self.cells.get(*cid as usize) else {
+                        continue;
+                    };
+                    for edges in &cell.spoke_synapses {
+                        for syn in edges {
+                            if syn.pos_evidence <= syn.neg_evidence
+                                || syn.predicate == "co_occurs_with"
+                                || syn.predicate == "disjoint_with"
+                                || syn.target_name == clean_supp
+                            {
+                                continue;
+                            }
+                            if !preserved_set.contains(&syn.target_name)
+                                && syn.target_name != clean_root
+                            {
+                                preserved_set.push(syn.target_name.clone());
+                            }
+                            if visited.insert(syn.target_name.clone()) {
+                                if let Some(&tid) = self.name_to_id.get(&syn.target_name) {
+                                    next_frontier.push(tid);
+                                }
+                            }
+                        }
+                    }
+                }
+                if next_frontier.is_empty() {
+                    break;
+                }
+                frontier = next_frontier;
+            }
+        }
+
+        let mut invalidated: Vec<String> = Vec::new();
+        for c in &baseline.affected_concepts {
+            if !preserved_set.contains(c) {
+                invalidated.push(c.clone());
+            }
+        }
+
+        let root_low = clean_root.to_lowercase().replace('_', " ");
+        let supp_low = clean_supp.to_lowercase().replace('_', " ");
+        let synthesis = if invalidated.is_empty() {
+            format!(
+                "Counterfactual intervention: suppressing {} leaves all downstream effects of {} intact.",
+                supp_low, root_low
+            )
+        } else {
+            let inv_list: Vec<String> = invalidated
+                .iter()
+                .map(|s| s.to_lowercase().replace('_', " "))
+                .collect();
+            format!(
+                "Counterfactual intervention: if {} is prevented following {}, downstream conclusions [{}] are invalidated.",
+                supp_low,
+                root_low,
+                inv_list.join(", ")
+            )
+        };
+
+        CounterfactualInterventionDto {
+            root_concept: clean_root,
+            suppressed_concept: clean_supp,
+            baseline_affected: baseline.affected_concepts,
+            invalidated_conclusions: invalidated,
+            preserved_conclusions: preserved_set,
+            counterfactual_synthesis: synthesis,
+        }
+    }
+
+    /// Phase 21: Native Rust Shortest 360° Relational Path Bridge (`find_relational_bridge_360`).
+    ///
+    /// Performs a breadth-first relational wave search across all 8 harmonic spokes (traversing
+    /// both forward and inverse verified synapses) to discover the shortest high-confidence
+    /// multi-hop connecting chain between `concept_a` and `concept_b`.
+    pub fn find_relational_bridge_360(
+        &self,
+        concept_a: &str,
+        concept_b: &str,
+        max_hops: usize,
+    ) -> RelationalBridgeDto {
+        let clean_a = concept_a.trim().to_uppercase().replace(' ', "_");
+        let clean_b = concept_b.trim().to_uppercase().replace(' ', "_");
+        let hops = max_hops.clamp(1, 6);
+
+        if !self.name_to_id.contains_key(&clean_a) || !self.name_to_id.contains_key(&clean_b) {
+            return RelationalBridgeDto {
+                concept_a: clean_a,
+                concept_b: clean_b,
+                connected: false,
+                hop_count: 0,
+                bridge_steps: Vec::new(),
+                bridge_synthesis: String::new(),
+            };
+        }
+        if clean_a == clean_b {
+            return RelationalBridgeDto {
+                concept_a: clean_a.clone(),
+                concept_b: clean_b,
+                connected: true,
+                hop_count: 0,
+                bridge_steps: Vec::new(),
+                bridge_synthesis: format!(
+                    "{} is identical to itself.",
+                    clean_a.to_lowercase().replace('_', " ")
+                ),
+            };
+        }
+
+        // Build bidirectional adjacency of verified non-co-occurrence edges: node -> Vec<(neighbor, predicate, spoke, direction, conf)>
+        let mut adj: std::collections::HashMap<
+            String,
+            Vec<(String, String, String, String, f32)>,
+        > = std::collections::HashMap::new();
+        for cell in &self.cells {
+            if cell.concept_id == "CORE_ROOT" || cell.concept_id.starts_with("SUBCORE_") {
+                continue;
+            }
+            for (s_idx, edges) in cell.spoke_synapses.iter().enumerate() {
+                for syn in edges {
+                    if syn.pos_evidence <= syn.neg_evidence
+                        || syn.predicate == "co_occurs_with"
+                        || syn.predicate == "disjoint_with"
+                    {
+                        continue;
+                    }
+                    let total_ev = syn.pos_evidence + syn.neg_evidence;
+                    let conf = ((total_ev / (total_ev + 1.0)) * 10000.0).round() / 10000.0;
+                    let spoke_name = SPOKE_NAMES[s_idx].to_string();
+                    adj.entry(cell.concept_id.clone()).or_default().push((
+                        syn.target_name.clone(),
+                        syn.predicate.clone(),
+                        spoke_name.clone(),
+                        "->".to_string(),
+                        conf,
+                    ));
+                    adj.entry(syn.target_name.clone()).or_default().push((
+                        cell.concept_id.clone(),
+                        syn.predicate.clone(),
+                        spoke_name,
+                        "<-".to_string(),
+                        conf,
+                    ));
+                }
+            }
+        }
+
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        visited.insert(clean_a.clone());
+        let mut queue: std::collections::VecDeque<(String, Vec<BridgeStepDto>)> =
+            std::collections::VecDeque::new();
+        queue.push_back((clean_a.clone(), Vec::new()));
+
+        while let Some((curr, path)) = queue.pop_front() {
+            if path.len() >= hops {
+                continue;
+            }
+            let Some(neighbors) = adj.get(&curr) else {
+                continue;
+            };
+            for (next_node, pred, spoke, dir, conf) in neighbors {
+                let mut next_path = path.clone();
+                next_path.push(BridgeStepDto {
+                    from_concept: curr.clone(),
+                    predicate: pred.clone(),
+                    to_concept: next_node.clone(),
+                    spoke: spoke.clone(),
+                    direction: dir.clone(),
+                    confidence: *conf,
+                });
+                if next_node == &clean_b {
+                    let clauses: Vec<String> = next_path
+                        .iter()
+                        .map(|st| {
+                            let f_low = st.from_concept.to_lowercase().replace('_', " ");
+                            let p_low = st.predicate.replace('_', " ");
+                            let t_low = st.to_concept.to_lowercase().replace('_', " ");
+                            if st.direction == "->" {
+                                format!("{} {} {}", f_low, p_low, t_low)
+                            } else {
+                                format!("{} {} {}", t_low, p_low, f_low)
+                            }
+                        })
+                        .collect();
+                    let synthesis = format!(
+                        "Relational bridge ({} hops): {}.",
+                        next_path.len(),
+                        clauses.join(" ; ")
+                    );
+                    return RelationalBridgeDto {
+                        concept_a: clean_a,
+                        concept_b: clean_b,
+                        connected: true,
+                        hop_count: next_path.len(),
+                        bridge_steps: next_path,
+                        bridge_synthesis: synthesis,
+                    };
+                }
+                if visited.insert(next_node.clone()) {
+                    queue.push_back((next_node.clone(), next_path));
+                }
+            }
+        }
+
+        RelationalBridgeDto {
+            concept_a: clean_a,
+            concept_b: clean_b,
+            connected: false,
+            hop_count: 0,
+            bridge_steps: Vec::new(),
+            bridge_synthesis: String::new(),
+        }
+    }
+
+    /// Phase 22: Native Rust 360° Spider-Web Topology & Mermaid Exporter (`export_topology_graph`).
+    pub fn export_topology_graph(&self, max_edges: usize) -> TopologyGraphDto {
+        let limit = max_edges.max(1);
+        let mut nodes: Vec<String> = Vec::new();
+        let mut edges: Vec<BridgeStepDto> = Vec::new();
+        let mut mermaid_lines: Vec<String> = vec!["flowchart TD".to_string()];
+
+        for cell in &self.cells {
+            nodes.push(cell.concept_id.clone());
+            for (s_idx, spoke_edges) in cell.spoke_synapses.iter().enumerate() {
+                for syn in spoke_edges {
+                    if syn.pos_evidence <= syn.neg_evidence || syn.predicate == "co_occurs_with" {
+                        continue;
+                    }
+                    if edges.len() >= limit {
+                        break;
+                    }
+                    let total_ev = syn.pos_evidence + syn.neg_evidence;
+                    let conf = ((total_ev / (total_ev + 1.0)) * 10000.0).round() / 10000.0;
+                    edges.push(BridgeStepDto {
+                        from_concept: cell.concept_id.clone(),
+                        predicate: syn.predicate.clone(),
+                        to_concept: syn.target_name.clone(),
+                        spoke: SPOKE_NAMES[s_idx].to_string(),
+                        direction: "->".to_string(),
+                        confidence: conf,
+                    });
+                    mermaid_lines.push(format!(
+                        "    {}[\"{}\"] -->|\"{}\"| {}[\"{}\"]",
+                        cell.concept_id,
+                        cell.concept_id,
+                        syn.predicate,
+                        syn.target_name,
+                        syn.target_name
+                    ));
+                }
+            }
+        }
+
+        TopologyGraphDto {
+            total_cells: self.cells.len(),
+            total_verified_edges: edges.len(),
+            nodes,
+            edges,
+            mermaid_diagram: mermaid_lines.join("\n"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1888,5 +2197,44 @@ pub struct SnapshotStatusDto {
     pub path: String,
     pub total_cells: usize,
     pub bytes_written: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CounterfactualInterventionDto {
+    pub root_concept: String,
+    pub suppressed_concept: String,
+    pub baseline_affected: Vec<String>,
+    pub invalidated_conclusions: Vec<String>,
+    pub preserved_conclusions: Vec<String>,
+    pub counterfactual_synthesis: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BridgeStepDto {
+    pub from_concept: String,
+    pub predicate: String,
+    pub to_concept: String,
+    pub spoke: String,
+    pub direction: String,
+    pub confidence: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RelationalBridgeDto {
+    pub concept_a: String,
+    pub concept_b: String,
+    pub connected: bool,
+    pub hop_count: usize,
+    pub bridge_steps: Vec<BridgeStepDto>,
+    pub bridge_synthesis: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TopologyGraphDto {
+    pub total_cells: usize,
+    pub total_verified_edges: usize,
+    pub nodes: Vec<String>,
+    pub edges: Vec<BridgeStepDto>,
+    pub mermaid_diagram: String,
 }
 

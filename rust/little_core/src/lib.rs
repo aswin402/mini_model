@@ -1143,6 +1143,84 @@ pub extern "C" fn little_core_mlu_arena_autonomous_curiosity(
     to_c_string(&res)
 }
 
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_intervene_counterfactual(
+    arena_ptr: *mut SpiderWebArena,
+    root_concept_ptr: *const c_char,
+    suppressed_concept_ptr: *const c_char,
+    max_hops: usize,
+) -> *mut c_char {
+    let empty = mlu_arena::CounterfactualInterventionDto {
+        root_concept: String::new(),
+        suppressed_concept: String::new(),
+        baseline_affected: Vec::new(),
+        invalidated_conclusions: Vec::new(),
+        preserved_conclusions: Vec::new(),
+        counterfactual_synthesis: String::new(),
+    };
+    if arena_ptr.is_null() || root_concept_ptr.is_null() || suppressed_concept_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let Ok(root_concept) = (unsafe { CStr::from_ptr(root_concept_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let Ok(suppressed_concept) = (unsafe { CStr::from_ptr(suppressed_concept_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let arena = unsafe { &mut *arena_ptr };
+    let res = arena.intervene_counterfactual_360(root_concept, suppressed_concept, max_hops);
+    to_c_string(&res)
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_find_bridge(
+    arena_ptr: *mut SpiderWebArena,
+    concept_a_ptr: *const c_char,
+    concept_b_ptr: *const c_char,
+    max_hops: usize,
+) -> *mut c_char {
+    let empty = mlu_arena::RelationalBridgeDto {
+        concept_a: String::new(),
+        concept_b: String::new(),
+        connected: false,
+        hop_count: 0,
+        bridge_steps: Vec::new(),
+        bridge_synthesis: String::new(),
+    };
+    if arena_ptr.is_null() || concept_a_ptr.is_null() || concept_b_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let Ok(concept_a) = (unsafe { CStr::from_ptr(concept_a_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let Ok(concept_b) = (unsafe { CStr::from_ptr(concept_b_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let arena = unsafe { &*arena_ptr };
+    let res = arena.find_relational_bridge_360(concept_a, concept_b, max_hops);
+    to_c_string(&res)
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_export_topology(
+    arena_ptr: *mut SpiderWebArena,
+    max_edges: usize,
+) -> *mut c_char {
+    let empty = mlu_arena::TopologyGraphDto {
+        total_cells: 0,
+        total_verified_edges: 0,
+        nodes: Vec::new(),
+        edges: Vec::new(),
+        mermaid_diagram: String::new(),
+    };
+    if arena_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let arena = unsafe { &*arena_ptr };
+    let res = arena.export_topology_graph(max_edges);
+    to_c_string(&res)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

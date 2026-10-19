@@ -386,5 +386,39 @@ def test_spiderweb_mlm_phase17_to_19_causal_wave_autonomous_curiosity_and_snapsh
         mlm2.close()
 
 
+def test_spiderweb_mlm_phase20_to_22_counterfactual_bridge_and_topology() -> None:
+    """Phases 20-22: Native Rust counterfactual intervention, shortest relational bridge, and Mermaid topology export."""
+    with MemoryStore(seed_ontology=False) as memory:
+        mlm = SpiderWebMLM(memory=memory, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+        mlm.train_on_text(
+            "Drought causes crop_failure. Crop_failure causes famine. "
+            "An orca is a cetacean. A dolphin is a cetacean.",
+            persist=False,
+        )
+
+        # Phase 20: Counterfactual intervention suppressing CROP_FAILURE blocks FAMINE
+        cf_dto = mlm.intervene_counterfactual_360("DROUGHT", "CROP_FAILURE", max_hops=3)
+        assert cf_dto["root_concept"] == "DROUGHT"
+        assert cf_dto["suppressed_concept"] == "CROP_FAILURE"
+        assert "FAMINE" in cf_dto["invalidated_conclusions"]
+        assert "invalidated" in cf_dto["counterfactual_synthesis"].lower()
+
+        # Phase 21: Shortest bidirectional relational bridge between ORCA and DOLPHIN via CETACEAN
+        bridge_dto = mlm.find_bridge_360("ORCA", "DOLPHIN", max_hops=4)
+        assert bridge_dto["connected"] is True
+        assert bridge_dto["hop_count"] == 2
+        assert any(s["to_concept"] == "CETACEAN" for s in bridge_dto["bridge_steps"])
+        assert "relational bridge" in bridge_dto["bridge_synthesis"].lower()
+
+        # Phase 22: Export live 360° Spider-Web Arena topology and Mermaid graph
+        topo_dto = mlm.export_topology_graph(max_edges=50)
+        assert topo_dto["total_cells"] >= 9
+        assert topo_dto["total_verified_edges"] >= 4
+        assert "flowchart TD" in topo_dto["mermaid_diagram"]
+        assert "CETACEAN" in topo_dto["mermaid_diagram"]
+        mlm.close()
+
+
+
 
 

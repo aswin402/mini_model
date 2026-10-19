@@ -1219,6 +1219,50 @@ class SpiderWebMLM:
             return self.rust_arena.load_snapshot(path)
         return False
 
+    def intervene_counterfactual_360(
+        self, root_concept: str, suppressed_concept: str, max_hops: int = 3
+    ) -> dict[str, Any]:
+        """Phase 20: Run native Rust 360° counterfactual intervention wave."""
+        if self.rust_arena.is_native:
+            return self.rust_arena.intervene_counterfactual(
+                root_concept, suppressed_concept, max_hops=max_hops
+            )
+        return {
+            "root_concept": root_concept,
+            "suppressed_concept": suppressed_concept,
+            "baseline_affected": [],
+            "invalidated_conclusions": [],
+            "preserved_conclusions": [],
+            "counterfactual_synthesis": "",
+        }
+
+    def find_bridge_360(
+        self, concept_a: str, concept_b: str, max_hops: int = 4
+    ) -> dict[str, Any]:
+        """Phase 21: Discover the shortest 360° relational path bridge between two concepts."""
+        if self.rust_arena.is_native:
+            return self.rust_arena.find_bridge(concept_a, concept_b, max_hops=max_hops)
+        return {
+            "concept_a": concept_a,
+            "concept_b": concept_b,
+            "connected": False,
+            "hop_count": 0,
+            "bridge_steps": [],
+            "bridge_synthesis": "",
+        }
+
+    def export_topology_graph(self, max_edges: int = 100) -> dict[str, Any]:
+        """Phase 22: Export the live 360° Spider-Web Arena topology and Mermaid graph."""
+        if self.rust_arena.is_native:
+            return self.rust_arena.export_topology(max_edges=max_edges)
+        return {
+            "total_cells": len(self.nodes),
+            "total_verified_edges": 0,
+            "nodes": list(self.nodes.keys()),
+            "edges": [],
+            "mermaid_diagram": "",
+        }
+
     def consolidate(
         self, min_transition_weight: float = 0.05, replay_lr: float = 0.15
     ) -> dict[str, Any]:

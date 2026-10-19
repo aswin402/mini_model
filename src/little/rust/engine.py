@@ -306,6 +306,31 @@ class RustAccelerationCore:
                 ]
                 lib.little_core_mlu_arena_autonomous_curiosity.restype = ctypes.c_void_p
 
+            if hasattr(lib, "little_core_mlu_arena_intervene_counterfactual"):
+                lib.little_core_mlu_arena_intervene_counterfactual.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_size_t,
+                ]
+                lib.little_core_mlu_arena_intervene_counterfactual.restype = ctypes.c_void_p
+
+            if hasattr(lib, "little_core_mlu_arena_find_bridge"):
+                lib.little_core_mlu_arena_find_bridge.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_size_t,
+                ]
+                lib.little_core_mlu_arena_find_bridge.restype = ctypes.c_void_p
+
+            if hasattr(lib, "little_core_mlu_arena_export_topology"):
+                lib.little_core_mlu_arena_export_topology.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_size_t,
+                ]
+                lib.little_core_mlu_arena_export_topology.restype = ctypes.c_void_p
+
     # -------------------------------------------------------------------------
     # Public Accelerated Graph API
     # -------------------------------------------------------------------------
@@ -1079,6 +1104,88 @@ class RustMluArena:
             self._handle,
             float(min_confidence),
             max(1, int(max_promotions)),
+        )
+        if not ptr:
+            return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def intervene_counterfactual(
+        self, root_concept: str, suppressed_concept: str, max_hops: int = 3
+    ) -> dict[str, Any]:
+        """Run native Rust 360° counterfactual intervention wave."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_intervene_counterfactual")
+        ):
+            return {
+                "root_concept": root_concept,
+                "suppressed_concept": suppressed_concept,
+                "baseline_affected": [],
+                "invalidated_conclusions": [],
+                "preserved_conclusions": [],
+                "counterfactual_synthesis": "",
+            }
+        ptr = self._lib.little_core_mlu_arena_intervene_counterfactual(
+            self._handle,
+            root_concept.encode("utf-8"),
+            suppressed_concept.encode("utf-8"),
+            max(1, int(max_hops)),
+        )
+        if not ptr:
+            return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def find_bridge(
+        self, concept_a: str, concept_b: str, max_hops: int = 4
+    ) -> dict[str, Any]:
+        """Run native Rust shortest 360° relational path bridge search between two concepts."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_find_bridge")
+        ):
+            return {
+                "concept_a": concept_a,
+                "concept_b": concept_b,
+                "connected": False,
+                "hop_count": 0,
+                "bridge_steps": [],
+                "bridge_synthesis": "",
+            }
+        ptr = self._lib.little_core_mlu_arena_find_bridge(
+            self._handle,
+            concept_a.encode("utf-8"),
+            concept_b.encode("utf-8"),
+            max(1, int(max_hops)),
+        )
+        if not ptr:
+            return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def export_topology(self, max_edges: int = 100) -> dict[str, Any]:
+        """Export the live 360° Spider-Web Arena topology and Mermaid graph."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_export_topology")
+        ):
+            return {
+                "total_cells": 0,
+                "total_verified_edges": 0,
+                "nodes": [],
+                "edges": [],
+                "mermaid_diagram": "",
+            }
+        ptr = self._lib.little_core_mlu_arena_export_topology(
+            self._handle,
+            max(1, int(max_edges)),
         )
         if not ptr:
             return {}
