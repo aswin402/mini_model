@@ -120,6 +120,7 @@ class MLMQueryResult:
     activated_mlus: list[str]
     spoke_predictions: list[MLUSpokePrediction]
     inspectable_trace: str
+    fluent_english: str = ""
 
 
 class SpiderWebMLM:
@@ -156,6 +157,8 @@ class SpiderWebMLM:
         self.subcore_children: dict[str, set[str]] = {}
         self.total_mitosis_events: int = 0
         self.total_pruned_nodes: int = 0
+        self.conversation_liquid_state: list[float] = [0.0] * dim
+        self.recent_focal_stack: list[tuple[str, float]] = []
         self._operator_codebook: list[tuple[tuple[str, ...], str, list[float]]] = []
         self._operator_token_mass: dict[str, float] = {}
         self._build_operator_codebook()
@@ -169,8 +172,16 @@ class SpiderWebMLM:
 
         self._ensure_persistence_table()
         self._init_core_topology()
+        self.conversation_liquid_state = list(self.nodes["CORE_ROOT"].hidden_state)
         self._load_persisted_nodes()
         self.sync_from_symbolic_memory()
+
+    def close(self) -> None:
+        """Release native Rust arena and graph handles owned by this MLM."""
+        if hasattr(self, "rust_arena") and self.rust_arena is not None:
+            self.rust_arena.close()
+        if hasattr(self.verifier, "_rust_graph") and self.verifier._rust_graph is not None:
+            self.verifier._rust_graph.close()
 
     # ------------------------------------------------------------------
     # Initialization & Persistence
@@ -287,6 +298,8 @@ class SpiderWebMLM:
         relations = self.memory.get_relations()
         synced = 0
         for rel in relations:
+            if rel.weight_positive <= rel.weight_negative:
+                continue
             sub_name = concepts.get(rel.subject_id)
             obj_name = concepts.get(rel.object_id)
             if not sub_name or not obj_name:
@@ -687,6 +700,7 @@ class SpiderWebMLM:
                         c_sub = self.memory.create_concept(subj.upper().replace(" ", "_"))
                         c_obj = self.memory.create_concept(obj.upper().replace(" ", "_"))
                         self.memory.add_relation(c_sub.id, pred, c_obj.id)
+                        self._update_conversation_context(subj_unit.concept_id)
                 else:
                     relations_refuted += 1
                     if self.rust_arena.is_native:
@@ -735,6 +749,52 @@ class SpiderWebMLM:
     # ------------------------------------------------------------------
     # 360° Spider-Web Inference & Grounded Neural Generation
     # ------------------------------------------------------------------
+
+    def _update_conversation_context(self, focal_cid: str) -> None:
+        """Update the continuous multi-turn liquid state and active focal stack."""
+        unit = self.nodes.get(focal_cid)
+        if unit is None or focal_cid == "CORE_ROOT" or focal_cid in DEFAULT_SUBCORES:
+            return
+        raw = [
+            0.65 * c + 0.35 * h
+            for c, h in zip(self.conversation_liquid_state, unit.hidden_state, strict=False)
+        ]
+        norm = math.sqrt(sum(v * v for v in raw))
+        if norm > 1e-12:
+            self.conversation_liquid_state = [v / norm for v in raw]
+
+        decayed: list[tuple[str, float]] = [(focal_cid, 1.0)]
+        for cid, energy in self.recent_focal_stack:
+            if cid != focal_cid and cid in self.nodes and energy * 0.82 >= 0.15:
+                decayed.append((cid, round(energy * 0.82, 4)))
+        self.recent_focal_stack = decayed[:6]
+
+    @staticmethod
+    def _synthesize_fluent_english(
+        focal_cid: str,
+        preds: list[MLUSpokePrediction],
+        continuation_text: str,
+    ) -> str:
+        """Synthesize natural, articulate English from verified 360° spoke edges and liquid stream."""
+        subj = focal_cid.lower().replace("_", " ")
+        clauses: list[str] = []
+        seen_clauses: set[str] = set()
+        for p in preds[:4]:
+            verb = p.predicate.replace("_", " ")
+            obj = p.target_concept.lower().replace("_", " ")
+            clause = f"{verb} {obj}"
+            if clause not in seen_clauses:
+                seen_clauses.add(clause)
+                clauses.append(clause)
+        if not clauses:
+            return f"No verified 360° spoke facts are currently recorded for {subj}."
+        if len(clauses) == 1:
+            base = f"{subj.capitalize()} {clauses[0]}."
+        else:
+            base = f"{subj.capitalize()} {', '.join(clauses[:-1])}, and {clauses[-1]}."
+        if continuation_text:
+            return f'{base} (Liquid stream: "{subj} {continuation_text}".)'
+        return base
 
     def _collect_360_predictions(
         self, focal_unit: MiniLearningUnit, max_hops: int = 3
@@ -847,6 +907,7 @@ class SpiderWebMLM:
 
         # Identify focal concept (and optional target concept for yes/no relational queries)
         focal_cid: str | None = None
+        focal_pos: int = -1
         target_cid: str | None = None
 
         # Check multi-word and single-word matches in self.nodes
@@ -860,6 +921,7 @@ class SpiderWebMLM:
                 ):
                     if focal_cid is None:
                         focal_cid = bigram_cid
+                        focal_pos = i
                     elif bigram_cid != focal_cid:
                         target_cid = bigram_cid
             single_cid = tokens[i].upper()
@@ -870,8 +932,37 @@ class SpiderWebMLM:
             ):
                 if focal_cid is None:
                     focal_cid = single_cid
+                    focal_pos = i
                 elif single_cid != focal_cid and target_cid is None:
                     target_cid = single_cid
+
+        # Multi-Turn Liquid Context Resonance for elliptic / follow-up inquiries
+        if self.recent_focal_stack:
+            top_ctx_cid = self.recent_focal_stack[0][0]
+            op_tuples = {ptoks for ptoks, _, _ in self._operator_codebook}
+            has_leading_operator = focal_pos > 0 and any(
+                tuple(tokens[idx : idx + k]) in op_tuples
+                for idx in range(focal_pos)
+                for k in (1, 2, 3)
+                if idx + k <= focal_pos
+            )
+            if (
+                focal_cid is not None
+                and target_cid is None
+                and focal_cid != top_ctx_cid
+                and has_leading_operator
+                and top_ctx_cid in self.nodes
+            ):
+                ctx_preds, _ = self._collect_360_predictions(self.nodes[top_ctx_cid])
+                if any(p.target_concept == focal_cid for p in ctx_preds) or (
+                    not self.verifier.verify_relation(top_ctx_cid, "is_a", focal_cid).passed
+                ):
+                    target_cid = focal_cid
+                    focal_cid = top_ctx_cid
+            elif focal_cid is None and tokens:
+                max_sal = max(self._token_salience(t) for t in tokens)
+                if max_sal < 2.8 and top_ctx_cid in self.nodes:
+                    focal_cid = top_ctx_cid
 
         if focal_cid is None and tokens:
             # Select the token with the highest Shannon character-entropy & morphological salience
@@ -890,10 +981,12 @@ class SpiderWebMLM:
                 activated_mlus=["CORE_ROOT"],
                 spoke_predictions=[],
                 inspectable_trace="[MLU-360] Focal concept not present in Spider-Web -> Abstaining (UNKNOWN).",
+                fluent_english=f"I do not yet have verified 360° MLU knowledge about '{focal_cid or clean_q}'.",
             )
 
         focal_unit = self.nodes[focal_cid]
         focal_unit.forward_liquid_step([self.nodes["CORE_ROOT"].hidden_state])
+        self._update_conversation_context(focal_cid)
         preds, activated = self._collect_360_predictions(focal_unit)
         active_subcore = focal_unit.parent_hub or "CORE_ROOT"
 
@@ -909,6 +1002,7 @@ class SpiderWebMLM:
                 activated_mlus=activated,
                 spoke_predictions=[],
                 inspectable_trace=f"[MLU-360] Activated {activated} -> 0 verified spoke links -> UNKNOWN.",
+                fluent_english=f"I recognize '{focal_cid.lower().replace('_', ' ')}', but I do not yet have verified 360° spoke facts for it.",
             )
 
         # Case A: Targeted relational verification question (e.g., "Is an orca a mammal?" or "Can a penguin fly?")
@@ -922,6 +1016,10 @@ class SpiderWebMLM:
                     f"{target_cid.lower().replace('_', ' ')} "
                     f"(spoke={best.spoke}, confidence={best.combined_confidence:.2f}, "
                     f"subcore={active_subcore})."
+                )
+                fluent = (
+                    f"Yes, {focal_cid.lower().replace('_', ' ')} {verb} "
+                    f"{target_cid.lower().replace('_', ' ')}."
                 )
                 trace = (
                     f"[MLU-360] Core -> {active_subcore} -> {' -> '.join(activated[2:])} | "
@@ -940,26 +1038,29 @@ class SpiderWebMLM:
                     activated_mlus=activated,
                     spoke_predictions=preds[:6],
                     inspectable_trace=trace,
+                    fluent_english=fluent,
                 )
 
             # Check if DeepSeekInvariantVerifier refutes the link via I_MUTEX / disjointness
             gate_check = self.verifier.verify_relation(focal_cid, "is_a", target_cid)
             if not gate_check.passed:
+                ans_ref = (
+                    f"No — {focal_cid.lower().replace('_', ' ')} cannot be "
+                    f"{target_cid.lower().replace('_', ' ')} "
+                    f"(Refuted by {gate_check.violated_gate}: {gate_check.error_message})."
+                )
                 return MLMQueryResult(
                     query=clean_q,
                     focal_concept=focal_cid,
                     status="REFUTED",
-                    answer=(
-                        f"No — {focal_cid.lower().replace('_', ' ')} cannot be "
-                        f"{target_cid.lower().replace('_', ' ')} "
-                        f"(Refuted by {gate_check.violated_gate}: {gate_check.error_message})."
-                    ),
+                    answer=ans_ref,
                     confidence=0.95,
                     epistemic_entropy=0.0,
                     active_subcore=active_subcore,
                     activated_mlus=activated,
                     spoke_predictions=preds[:6],
                     inspectable_trace=f"[MLU-360] Refuted by {gate_check.violated_gate}: {gate_check.error_message}",
+                    fluent_english=ans_ref,
                 )
 
         # Case B: Open 360° synthesis across all 6 radial spokes + learned neural sequence continuation
@@ -994,6 +1095,7 @@ class SpiderWebMLM:
             + "; ".join(spoke_clauses)
             + fluency_suffix
         )
+        fluent_eng = self._synthesize_fluent_english(focal_cid, preds, continuation_text)
         trace = (
             f"[MLU-360] Activated {len(activated)} units ({' -> '.join(activated)}) | "
             f"top_conf={top_conf:.2f} | entropy={avg_entropy:.2f}"
@@ -1009,6 +1111,7 @@ class SpiderWebMLM:
             activated_mlus=activated,
             spoke_predictions=preds[:6],
             inspectable_trace=trace,
+            fluent_english=fluent_eng,
         )
 
     def consolidate(

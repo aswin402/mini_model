@@ -228,3 +228,33 @@ def test_spiderweb_mlm_corpus_ingestion_and_consolidation(tmp_path: object) -> N
         beam_dto = mlm_reloaded.rust_arena.query_360_beam("ALBATROSS", max_hops=3, top_k=20)
         assert beam_dto["focal_concept"] == "ALBATROSS"
         assert any(p["target_concept"] == "ANIMAL" for p in beam_dto["predictions"])
+
+
+def test_spiderweb_mlm_multiturn_liquid_context_and_kernel_coupling() -> None:
+    """Phase 4-5: Multi-turn liquid context resolves elliptic follow-ups and CognitiveKernel couples teach/sleep/process with SpiderWebMLM."""
+    from little.core.kernel import CognitiveKernel
+
+    with MemoryStore(seed_ontology=False) as memory, CognitiveKernel(memory=memory) as kernel:
+        kernel.teach(
+            "An orca is a cetacean. A cetacean is a mammal. "
+            "An orca can echolocate. A mammal is not a reptile. A cobra is a reptile."
+        )
+        assert "ORCA" in kernel.mlm.nodes
+        assert kernel.mlm.rust_arena.node_count > 7
+
+        # Turn 1: Open inquiry sets ORCA at the top of the liquid focal stack
+        q1 = kernel.mlm.query_360("Tell me about orca")
+        assert q1.status == "VERIFIED"
+        assert q1.focal_concept == "ORCA"
+        assert "orca" in q1.fluent_english.lower()
+
+        # Turn 2: Elliptic follow-up ("Can it echolocate?") resolves 'it' -> ORCA via liquid context stack
+        q2 = kernel.mlm.query_360("Can it echolocate?")
+        assert q2.status == "VERIFIED"
+        assert q2.focal_concept == "ORCA"
+        assert "echolocate" in q2.fluent_english.lower()
+
+        # Turn 3: Elliptic refutation ("Is it a cobra?") resolves 'it' -> ORCA and refutes via I_MUTEX
+        q3 = kernel.mlm.query_360("Is it a cobra?")
+        assert q3.status == "REFUTED"
+        assert "I_MUTEX" in q3.answer

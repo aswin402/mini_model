@@ -169,6 +169,8 @@ class CognitiveKernel:
 
     def close(self) -> None:
         """Release resources owned by the kernel; caller-owned memory stays open."""
+        if hasattr(self, "mlm") and self.mlm is not None:
+            self.mlm.close()
         if self._owns_wiki:
             self.wiki.vector_index.close()
             self.wiki.compressor.close()
@@ -348,20 +350,30 @@ class CognitiveKernel:
 
     def teach(self, text: str) -> ChunkIngestResult:
         """Continuously ingest and verify new knowledge from natural language text."""
-        return self.stream_learner.ingest_chunk(text, source_type=SourceType.USER)
+        result = self.stream_learner.ingest_chunk(text, source_type=SourceType.USER)
+        if text.strip():
+            self.mlm.train_on_text(text)
+        self.mlm.sync_from_symbolic_memory()
+        return result
 
     def sleep(self, max_dream_steps: int = 3) -> SleepConsolidationReport:
         """Run an offline sleep consolidation cycle (dreaming, invariant mining, cluster induction, and episodic compaction)."""
-        return self.self_study.consolidate_sleep_cycle(
+        report = self.self_study.consolidate_sleep_cycle(
             headroom=self.headroom,
             paged_store=self.paged_store,
             latent_inducer=self.latent_inducer,
             max_dream_steps=max_dream_steps,
         )
+        self.mlm.sync_from_symbolic_memory()
+        self.mlm.consolidate()
+        return report
 
     def learn_world_corpus(self) -> StreamLearningSummary:
         """Ingest the foundational encyclopedic world corpus into long-term memory."""
-        return self.stream_learner.ingest_world_corpus()
+        summary = self.stream_learner.ingest_world_corpus()
+        self.mlm.sync_from_symbolic_memory()
+        self.mlm.consolidate()
+        return summary
 
     def plan(self, goal: str) -> AgenticPlanExecutionResult:
         """Decompose a compound goal into a verified plan DAG and execute with invariant gates."""
@@ -565,6 +577,36 @@ class CognitiveKernel:
                 parsed_queries=frame.parsed_queries,
                 question_parts=frame.question_parts,
             )
+            if (
+                thinking.inference.status == BeliefStatus.UNKNOWN
+                and hasattr(self, "mlm")
+                and self.mlm is not None
+                and frame.parsed_query is None
+                and not frame.parsed_queries
+            ):
+                mlm_res = self.mlm.query_360(text)
+                if mlm_res.status in ("VERIFIED", "REFUTED"):
+                    mapped_status = (
+                        BeliefStatus.VERIFIED
+                        if mlm_res.status == "VERIFIED"
+                        else BeliefStatus.REFUTED
+                    )
+                    return KernelOutcome(
+                        frame=frame,
+                        mode=CognitiveMode.SLOW,
+                        inference=InferenceResult(
+                            query=text,
+                            status=mapped_status,
+                            answer=mlm_res.fluent_english or mlm_res.answer,
+                            confidence=mlm_res.confidence,
+                            evidence=[
+                                f"{p.source_concept} {p.predicate} {p.target_concept}"
+                                for p in mlm_res.spoke_predictions[:3]
+                            ],
+                            trace=[mlm_res.inspectable_trace],
+                        ),
+                        routing_decision=routing,
+                    )
             return KernelOutcome(
                 frame=frame,
                 mode=thinking.mode,
@@ -576,6 +618,16 @@ class CognitiveKernel:
             if learning and learning.concepts_created and hasattr(self, "paged_store"):
                 for cid in learning.concepts_created:
                     self.paged_store.invalidate(cid)
+            if learning and (
+                learning.relations_added > 0
+                or learning.concepts_created
+                or learning.attributes_updated > 0
+            ):
+                self.mlm.sync_from_symbolic_memory()
+                if self.mlm.rust_arena.is_native and text.strip():
+                    self.mlm.rust_arena.train_stream(
+                        text, learning_rate=0.15 * self.plasticity.plasticity_multiplier
+                    )
             return KernelOutcome(
                 frame=frame,
                 mode=CognitiveMode.STUDY,
