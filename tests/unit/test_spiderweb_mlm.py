@@ -419,6 +419,45 @@ def test_spiderweb_mlm_phase20_to_22_counterfactual_bridge_and_topology() -> Non
         mlm.close()
 
 
+def test_spiderweb_mlm_phase23_to_25_latent_clusters_belief_revision_and_8_axis_benchmark() -> None:
+    """Phases 23-25: Emergent latent cluster abstraction, non-monotonic belief revision, and 8-axis benchmark."""
+    with MemoryStore(seed_ontology=False) as memory:
+        mlm = SpiderWebMLM(memory=memory, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+        mlm.train_on_text(
+            "An orca is a cetacean. A dolphin is a cetacean. A whale is a cetacean. "
+            "An albatross can glide.",
+            persist=False,
+        )
+
+        # Phase 23: Discover emergent latent clusters sharing CETACEAN
+        clusters = mlm.discover_clusters_360(min_members=2)
+        assert len(clusters) > 0
+        cetacean_cluster = next(
+            (c for c in clusters if c["shared_attractor"] == "CETACEAN"), None
+        )
+        assert cetacean_cluster is not None
+        assert cetacean_cluster["member_count"] >= 3
+        assert cetacean_cluster["centroid_coherence"] > 0.0
+
+        # Phase 24: Non-monotonic belief revision flipping ALBATROSS can GLIDE
+        rev = mlm.revise_belief_360(
+            "ALBATROSS", "can", "GLIDE", verified=False, evidence_weight=5.0
+        )
+        assert rev["subject_concept"] == "ALBATROSS"
+        assert rev["old_polarity"] == 1
+        assert rev["new_polarity"] == -1
+        assert rev["polarity_flipped"] is True
+        mlm.close()
+
+    # Phase 25: Full 8-axis benchmark suite
+    bench = SpiderWebMLM.run_benchmark_suite()
+    assert bench["all_passed"] is True
+    assert bench["comparative_360_passed"] is True
+    assert bench["causal_counterfactual_passed"] is True
+    assert bench["bridge_cluster_revision_passed"] is True
+
+
+
 
 
 

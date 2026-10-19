@@ -932,6 +932,18 @@ def cmd_mlu(args: argparse.Namespace) -> None:
         elif action == "graph":
             gr_dict = kernel.mlm.export_topology_graph()
             print(json.dumps(gr_dict, indent=2))
+        elif action == "clusters":
+            cl_list = kernel.mlm.discover_clusters_360()
+            print(json.dumps(cl_list, indent=2))
+        elif action == "revise":
+            rev_dict = kernel.mlm.revise_belief_360(
+                args.subject,
+                args.predicate,
+                args.object_node,
+                verified=not bool(getattr(args, "refute", False)),
+                evidence_weight=float(getattr(args, "weight", 3.0)),
+            )
+            print(json.dumps(rev_dict, indent=2))
         else:
             tel = kernel.mlm.get_telemetry()
             print(json.dumps(tel, indent=2))
@@ -1280,6 +1292,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Export live 360° Spider-Web Arena topology and Mermaid diagram",
     )
     p_mlu_graph.set_defaults(func=cmd_mlu)
+    p_mlu_clusters = p_mlu_subs.add_parser(
+        "clusters",
+        parents=[db_parent],
+        help="Discover emergent 64-D concept clusters sharing spoke attractors",
+    )
+    p_mlu_clusters.set_defaults(func=cmd_mlu)
+    p_mlu_revise = p_mlu_subs.add_parser(
+        "revise",
+        parents=[db_parent],
+        help="Apply explicit non-monotonic belief revision to a spoke synapse",
+    )
+    p_mlu_revise.add_argument("subject", help="Subject concept")
+    p_mlu_revise.add_argument("predicate", help="Relational predicate")
+    p_mlu_revise.add_argument("object_node", help="Target concept")
+    p_mlu_revise.add_argument(
+        "--refute", action="store_true", help="Apply refuting (negative) evidence"
+    )
+    p_mlu_revise.add_argument(
+        "--weight", type=float, default=3.0, help="Evidence weight (default: 3.0)"
+    )
+    p_mlu_revise.set_defaults(func=cmd_mlu)
 
     return parser
 

@@ -2088,6 +2088,192 @@ impl SpiderWebArena {
             mermaid_diagram: mermaid_lines.join("\n"),
         }
     }
+
+    /// Phase 23: Native Rust Emergent Concept Abstraction & Centroid Clustering (`discover_latent_clusters_360`).
+    ///
+    /// Groups active concept cells that share high-confidence positive attractors (`target_name`)
+    /// into emergent latent clusters, computing 64-D centroid coherence (`mean pairwise cosine similarity`)
+    /// and identifying candidate domain subcore abstractions.
+    pub fn discover_latent_clusters_360(&self, min_members: usize) -> Vec<LatentClusterDto> {
+        let req_members = min_members.max(2);
+        let mut hub_to_members: std::collections::HashMap<
+            (String, String, String),
+            Vec<(usize, String)>,
+        > = std::collections::HashMap::new();
+
+        for (idx, cell) in self.cells.iter().enumerate() {
+            if cell.concept_id == "CORE_ROOT" || cell.concept_id.starts_with("SUBCORE_") {
+                continue;
+            }
+            for (s_idx, spoke_edges) in cell.spoke_synapses.iter().enumerate() {
+                for syn in spoke_edges {
+                    if syn.pos_evidence <= syn.neg_evidence
+                        || syn.predicate == "co_occurs_with"
+                        || syn.predicate == "disjoint_with"
+                    {
+                        continue;
+                    }
+                    let key = (
+                        syn.target_name.clone(),
+                        syn.predicate.clone(),
+                        SPOKE_NAMES[s_idx].to_string(),
+                    );
+                    let entry = hub_to_members.entry(key).or_default();
+                    if !entry.iter().any(|(_, cid)| cid == &cell.concept_id) {
+                        entry.push((idx, cell.concept_id.clone()));
+                    }
+                }
+            }
+        }
+
+        let mut clusters: Vec<LatentClusterDto> = Vec::new();
+        for ((attractor, predicate, spoke), members) in hub_to_members {
+            if members.len() < req_members {
+                continue;
+            }
+            // Compute centroid in 64-D space and mean cosine coherence
+            let mut centroid = [0.0f32; MLU_DIM];
+            for (c_idx, _) in &members {
+                let anchor = self.get_anchor_array(*c_idx as u32);
+                for d in 0..MLU_DIM {
+                    centroid[d] += anchor[d];
+                }
+            }
+            normalize_in_place(&mut centroid);
+
+            let mut total_coh = 0.0f32;
+            for (c_idx, _) in &members {
+                let anchor = self.get_anchor_array(*c_idx as u32);
+                total_coh += dot_product(&anchor, &centroid).clamp(0.0, 1.0);
+            }
+            let coherence =
+                ((total_coh / (members.len() as f32)) * 10000.0).round() / 10000.0;
+            let member_names: Vec<String> = members.into_iter().map(|(_, n)| n).collect();
+
+            clusters.push(LatentClusterDto {
+                shared_attractor: attractor.clone(),
+                shared_predicate: predicate,
+                spoke,
+                member_count: member_names.len(),
+                member_concepts: member_names,
+                centroid_coherence: coherence,
+                emergent_abstraction_id: format!("CLUSTER_{}", attractor),
+            });
+        }
+
+        clusters.sort_by(|a, b| {
+            b.member_count
+                .cmp(&a.member_count)
+                .then_with(|| {
+                    b.centroid_coherence
+                        .partial_cmp(&a.centroid_coherence)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
+        clusters
+    }
+
+    /// Phase 24: Native Rust Non-Monotonic Belief Revision & Evidence Update (`revise_belief_360`).
+    ///
+    /// Applies explicit positive (`new_verified = true`) or refuting (`new_verified = false`)
+    /// evidence of strength `evidence_weight` to `(subject, predicate, object)`, flipping
+    /// synapse polarity when refuting evidence outweighs prior positive evidence and
+    /// returning full NARS truth-value diagnostics (`BeliefRevisionDto`).
+    pub fn revise_belief_360(
+        &mut self,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+        new_verified: bool,
+        evidence_weight: f32,
+    ) -> BeliefRevisionDto {
+        let sub_clean = subject.trim().to_uppercase().replace(' ', "_");
+        let obj_clean = object.trim().to_uppercase().replace(' ', "_");
+        let pred_clean = predicate.trim().to_lowercase();
+        let weight = evidence_weight.clamp(0.5, 20.0);
+
+        let pred_vec = deterministic_seed_vec(&pred_clean);
+        let obj_seed = deterministic_seed_vec(&obj_clean);
+        let spoke_idx = route_phase_spoke_idx(&pred_vec, &obj_seed);
+        let default_hub = DEFAULT_SUBCORES[spoke_idx].to_string();
+        let sub_id = self.ensure_cell(&sub_clean, "leaf", Some(default_hub.clone()));
+        let obj_id = self.ensure_cell(&obj_clean, "leaf", Some(default_hub));
+
+        let cell = &mut self.cells[sub_id as usize];
+        let mut old_pos = 0.0f32;
+        let mut old_neg = 0.0f32;
+
+        // Locate existing synapse across all spokes on subject cell
+        let mut found_spoke = spoke_idx;
+        let mut found_pos_idx: Option<usize> = None;
+        for (s_i, edges) in cell.spoke_synapses.iter().enumerate() {
+            if let Some(p_i) = edges
+                .iter()
+                .position(|s| s.target_name == obj_clean && s.predicate == pred_clean)
+            {
+                found_spoke = s_i;
+                found_pos_idx = Some(p_i);
+                old_pos = edges[p_i].pos_evidence;
+                old_neg = edges[p_i].neg_evidence;
+                break;
+            }
+        }
+
+        let old_polarity = if old_pos == 0.0 && old_neg == 0.0 {
+            0
+        } else if old_pos >= old_neg {
+            1
+        } else {
+            -1
+        };
+
+        let (new_pos, new_neg) = if let Some(p_i) = found_pos_idx {
+            let syn = &mut cell.spoke_synapses[found_spoke][p_i];
+            if new_verified {
+                syn.pos_evidence += weight;
+                syn.affinity = (syn.affinity + 0.35 * weight).min(3.5);
+            } else {
+                syn.neg_evidence += weight;
+                syn.affinity = (syn.affinity - 0.45 * weight).max(-3.5);
+            }
+            (syn.pos_evidence, syn.neg_evidence)
+        } else {
+            let pos = if new_verified { weight } else { 0.0 };
+            let neg = if new_verified { 0.0 } else { weight };
+            let aff = if new_verified {
+                (0.35 * weight).min(3.5)
+            } else {
+                (-0.45 * weight).max(-3.5)
+            };
+            cell.spoke_synapses[spoke_idx].push(SpokeSynapse {
+                target_id: obj_id,
+                target_name: obj_clean.clone(),
+                predicate: pred_clean.clone(),
+                affinity: aff,
+                pos_evidence: pos,
+                neg_evidence: neg,
+            });
+            (pos, neg)
+        };
+
+        let new_polarity = if new_pos >= new_neg { 1 } else { -1 };
+        let polarity_flipped = old_polarity != 0 && old_polarity != new_polarity;
+        let total_ev = new_pos + new_neg;
+        let nars_conf = ((total_ev / (total_ev + 1.0)) * 10000.0).round() / 10000.0;
+
+        BeliefRevisionDto {
+            subject_concept: sub_clean,
+            predicate: pred_clean,
+            target_concept: obj_clean,
+            spoke: SPOKE_NAMES[found_spoke].to_string(),
+            old_polarity,
+            new_polarity,
+            polarity_flipped,
+            pos_evidence: new_pos,
+            neg_evidence: new_neg,
+            nars_confidence: nars_conf,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2236,5 +2422,30 @@ pub struct TopologyGraphDto {
     pub nodes: Vec<String>,
     pub edges: Vec<BridgeStepDto>,
     pub mermaid_diagram: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LatentClusterDto {
+    pub shared_attractor: String,
+    pub shared_predicate: String,
+    pub spoke: String,
+    pub member_count: usize,
+    pub member_concepts: Vec<String>,
+    pub centroid_coherence: f32,
+    pub emergent_abstraction_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BeliefRevisionDto {
+    pub subject_concept: String,
+    pub predicate: String,
+    pub target_concept: String,
+    pub spoke: String,
+    pub old_polarity: i32,
+    pub new_polarity: i32,
+    pub polarity_flipped: bool,
+    pub pos_evidence: f32,
+    pub neg_evidence: f32,
+    pub nars_confidence: f32,
 }
 

@@ -1263,6 +1263,45 @@ class SpiderWebMLM:
             "mermaid_diagram": "",
         }
 
+    def discover_clusters_360(self, min_members: int = 2) -> list[dict[str, Any]]:
+        """Phase 23: Discover emergent 64-D concept clusters sharing spoke attractors in native Rust."""
+        if self.rust_arena.is_native:
+            return self.rust_arena.discover_clusters(min_members=min_members)
+        return []
+
+    def revise_belief_360(
+        self,
+        subject: str,
+        predicate: str,
+        object_node: str,
+        verified: bool,
+        evidence_weight: float = 3.0,
+    ) -> dict[str, Any]:
+        """Phase 24: Apply explicit non-monotonic belief revision to a spoke synapse across Rust and Python."""
+        res = (
+            self.rust_arena.revise_belief(
+                subject,
+                predicate,
+                object_node,
+                verified=verified,
+                evidence_weight=evidence_weight,
+            )
+            if self.rust_arena.is_native
+            else {}
+        )
+        spoke = map_predicate_to_spoke(predicate)
+        subj_unit = self.get_or_create_mlu(subject, preferred_spoke=spoke)
+        obj_unit = self.get_or_create_mlu(object_node, preferred_spoke=spoke)
+        for _ in range(max(1, round(evidence_weight))):
+            subj_unit.learn_spoke_relation(
+                predicate=predicate,
+                target_concept=obj_unit.concept_id,
+                target_vec=obj_unit.anchor_vec,
+                learning_rate=0.25,
+                verified=verified,
+            )
+        return res
+
     def consolidate(
         self, min_transition_weight: float = 0.05, replay_lr: float = 0.15
     ) -> dict[str, Any]:
@@ -1284,12 +1323,14 @@ class SpiderWebMLM:
         autonomous_step = self.autonomous_curiosity_step(
             min_confidence=0.65, max_promotions=5
         )
+        clusters = self.discover_clusters_360(min_members=2)
         promoted, pruned = self.run_structural_plasticity_cycle()
         self.save_nodes(promoted if promoted else None)
         return {
             "rust_consolidation": rust_report,
             "curiosity": curiosity,
             "autonomous_curiosity": autonomous_step,
+            "latent_clusters": clusters,
             "python_mitosis_promotions": promoted,
             "python_pruned_nodes": pruned,
             "total_mlu_nodes": len(self.nodes),
@@ -1383,7 +1424,7 @@ class SpiderWebMLM:
 
     @classmethod
     def run_benchmark_suite(cls) -> dict[str, Any]:
-        """Phase 13: Run an isolated, deterministic 5-axis benchmark of the 360° Spider-Web MLM & Rust Arena."""
+        """Phase 13 & 25: Run an isolated, deterministic 8-axis benchmark of the 360° Spider-Web MLM & Rust Arena."""
         import time
 
         with MemoryStore(seed_ontology=False) as bench_mem:
@@ -1397,7 +1438,8 @@ class SpiderWebMLM:
                 "A mammal has warm_blood. An orca can echolocate. An orca lives in the ocean. "
                 "A cobra is a reptile. A reptile is an animal. A mammal is not a reptile. "
                 "An albatross is a seabird. A seabird is a bird. A bird is an animal. "
-                "A bird is not a mammal. An albatross can glide."
+                "A bird is not a mammal. An albatross can glide. "
+                "A dolphin is a cetacean. Drought causes crop_failure. Crop_failure causes famine."
             )
             rep1 = mlm.train_on_text(curriculum, persist=False)
             mlm.consolidate()
@@ -1441,7 +1483,34 @@ class SpiderWebMLM:
                 and q_ellip_no.status == "REFUTED"
             )
 
-            # Axis 5: Native Rust 360° beam latency (microseconds/query)
+            # Axis 5: 360° Comparative Wave Intersection
+            cmp_dto = mlm.compare_360("ORCA", "ALBATROSS")
+            comparative_passed = bool(
+                cmp_dto.get("mutually_exclusive") is True
+                and len(cmp_dto.get("shared_attractors", [])) > 0
+            )
+
+            # Axis 6: Causal Wave & Counterfactual Intervention
+            causal_dto = mlm.simulate_causal_360("DROUGHT", max_hops=3)
+            cf_dto = mlm.intervene_counterfactual_360("DROUGHT", "CROP_FAILURE", max_hops=3)
+            causal_counterfactual_passed = bool(
+                "FAMINE" in causal_dto.get("affected_concepts", [])
+                and "FAMINE" in cf_dto.get("invalidated_conclusions", [])
+            )
+
+            # Axis 7: Relational Bridge, Latent Clusters & Belief Revision
+            bridge_dto = mlm.find_bridge_360("ORCA", "DOLPHIN", max_hops=4)
+            clusters = mlm.discover_clusters_360(min_members=2)
+            rev_dto = mlm.revise_belief_360(
+                "ALBATROSS", "can", "GLIDE", verified=False, evidence_weight=5.0
+            )
+            bridge_cluster_revision_passed = bool(
+                bridge_dto.get("connected") is True
+                and len(clusters) > 0
+                and rev_dto.get("polarity_flipped") is True
+            )
+
+            # Axis 8: Native Rust 360° beam latency (microseconds/query)
             iters = 25
             t0 = time.perf_counter()
             for _ in range(iters):
@@ -1456,6 +1525,9 @@ class SpiderWebMLM:
                 and invariants_passed
                 and abstention_passed
                 and multiturn_passed
+                and comparative_passed
+                and causal_counterfactual_passed
+                and bridge_cluster_revision_passed
             )
             return {
                 "all_passed": all_passed,
@@ -1463,6 +1535,9 @@ class SpiderWebMLM:
                 "invariant_gates_passed": invariants_passed,
                 "zero_hallucination_abstention_passed": abstention_passed,
                 "multiturn_liquid_context_passed": multiturn_passed,
+                "comparative_360_passed": comparative_passed,
+                "causal_counterfactual_passed": causal_counterfactual_passed,
+                "bridge_cluster_revision_passed": bridge_cluster_revision_passed,
                 "rust_beam_avg_latency_us": avg_beam_us,
                 "verified_spokes_learned": rep1.relations_verified,
                 "telemetry": tel,

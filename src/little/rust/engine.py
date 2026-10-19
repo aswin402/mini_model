@@ -331,6 +331,24 @@ class RustAccelerationCore:
                 ]
                 lib.little_core_mlu_arena_export_topology.restype = ctypes.c_void_p
 
+            if hasattr(lib, "little_core_mlu_arena_discover_clusters"):
+                lib.little_core_mlu_arena_discover_clusters.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_size_t,
+                ]
+                lib.little_core_mlu_arena_discover_clusters.restype = ctypes.c_void_p
+
+            if hasattr(lib, "little_core_mlu_arena_revise_belief"):
+                lib.little_core_mlu_arena_revise_belief.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_int32,
+                    ctypes.c_float,
+                ]
+                lib.little_core_mlu_arena_revise_belief.restype = ctypes.c_void_p
+
     # -------------------------------------------------------------------------
     # Public Accelerated Graph API
     # -------------------------------------------------------------------------
@@ -1186,6 +1204,53 @@ class RustMluArena:
         ptr = self._lib.little_core_mlu_arena_export_topology(
             self._handle,
             max(1, int(max_edges)),
+        )
+        if not ptr:
+            return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def discover_clusters(self, min_members: int = 2) -> list[dict[str, Any]]:
+        """Discover emergent 64-D concept clusters sharing spoke attractors in native Rust."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_discover_clusters")
+        ):
+            return []
+        ptr = self._lib.little_core_mlu_arena_discover_clusters(
+            self._handle,
+            max(2, int(min_members)),
+        )
+        if not ptr:
+            return []
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return list(json.loads(res_str))
+
+    def revise_belief(
+        self,
+        subject: str,
+        predicate: str,
+        object_node: str,
+        verified: bool,
+        evidence_weight: float = 3.0,
+    ) -> dict[str, Any]:
+        """Apply explicit non-monotonic belief revision to a spoke synapse in native Rust."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_revise_belief")
+        ):
+            return {}
+        ptr = self._lib.little_core_mlu_arena_revise_belief(
+            self._handle,
+            subject.encode("utf-8"),
+            predicate.encode("utf-8"),
+            object_node.encode("utf-8"),
+            1 if verified else 0,
+            float(evidence_weight),
         )
         if not ptr:
             return {}

@@ -1221,6 +1221,68 @@ pub extern "C" fn little_core_mlu_arena_export_topology(
     to_c_string(&res)
 }
 
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_discover_clusters(
+    arena_ptr: *mut SpiderWebArena,
+    min_members: usize,
+) -> *mut c_char {
+    let empty: Vec<mlu_arena::LatentClusterDto> = Vec::new();
+    if arena_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let arena = unsafe { &*arena_ptr };
+    let res = arena.discover_latent_clusters_360(min_members);
+    to_c_string(&res)
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_revise_belief(
+    arena_ptr: *mut SpiderWebArena,
+    subject_ptr: *const c_char,
+    predicate_ptr: *const c_char,
+    object_ptr: *const c_char,
+    new_verified: i32,
+    evidence_weight: f32,
+) -> *mut c_char {
+    let empty = mlu_arena::BeliefRevisionDto {
+        subject_concept: String::new(),
+        predicate: String::new(),
+        target_concept: String::new(),
+        spoke: String::new(),
+        old_polarity: 0,
+        new_polarity: 0,
+        polarity_flipped: false,
+        pos_evidence: 0.0,
+        neg_evidence: 0.0,
+        nars_confidence: 0.0,
+    };
+    if arena_ptr.is_null()
+        || subject_ptr.is_null()
+        || predicate_ptr.is_null()
+        || object_ptr.is_null()
+    {
+        return to_c_string(&empty);
+    }
+    let Ok(subject) = (unsafe { CStr::from_ptr(subject_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let Ok(predicate) = (unsafe { CStr::from_ptr(predicate_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let Ok(object) = (unsafe { CStr::from_ptr(object_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let arena = unsafe { &mut *arena_ptr };
+    let res = arena.revise_belief_360(
+        subject,
+        predicate,
+        object,
+        new_verified != 0,
+        evidence_weight,
+    );
+    to_c_string(&res)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
