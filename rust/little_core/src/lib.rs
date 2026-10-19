@@ -1100,6 +1100,49 @@ pub extern "C" fn little_core_mlu_arena_discover_curiosity(
     to_c_string(&res)
 }
 
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_simulate_causal(
+    arena_ptr: *mut SpiderWebArena,
+    root_concept_ptr: *const c_char,
+    max_hops: usize,
+) -> *mut c_char {
+    let empty = mlu_arena::CausalSimulationDto {
+        root_concept: String::new(),
+        affected_concepts: Vec::new(),
+        causal_steps: Vec::new(),
+        causal_synthesis: String::new(),
+    };
+    if arena_ptr.is_null() || root_concept_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let Ok(root_concept) = (unsafe { CStr::from_ptr(root_concept_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let arena = unsafe { &mut *arena_ptr };
+    let res = arena.simulate_causal_wave_360(root_concept, max_hops);
+    to_c_string(&res)
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_autonomous_curiosity(
+    arena_ptr: *mut SpiderWebArena,
+    min_confidence: f32,
+    max_promotions: usize,
+) -> *mut c_char {
+    let empty = mlu_arena::AutonomousCuriosityStepDto {
+        hypotheses_evaluated: 0,
+        hypotheses_promoted: 0,
+        promoted_hypotheses: Vec::new(),
+        open_questions: Vec::new(),
+    };
+    if arena_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let arena = unsafe { &mut *arena_ptr };
+    let res = arena.autonomous_curiosity_step(min_confidence, max_promotions);
+    to_c_string(&res)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

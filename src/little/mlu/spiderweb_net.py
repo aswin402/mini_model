@@ -1164,10 +1164,65 @@ class SpiderWebMLM:
             return self.rust_arena.discover_curiosity(max_items=max_items)
         return {"analogical_hypotheses": [], "curiosity_gaps": []}
 
+    def simulate_causal_360(self, root_concept: str, max_hops: int = 3) -> dict[str, Any]:
+        """Phase 17: Run native Rust 360° causal & counterfactual wave simulation from a root concept."""
+        if self.rust_arena.is_native:
+            return self.rust_arena.simulate_causal(root_concept, max_hops=max_hops)
+        return {
+            "root_concept": root_concept,
+            "affected_concepts": [],
+            "causal_steps": [],
+            "causal_synthesis": "",
+        }
+
+    def autonomous_curiosity_step(
+        self, min_confidence: float = 0.65, max_promotions: int = 5
+    ) -> dict[str, Any]:
+        """Phase 18: Actively evaluate and promote invariant-safe analogical hypotheses into the 360° arena."""
+        if not self.rust_arena.is_native:
+            return {
+                "hypotheses_evaluated": 0,
+                "hypotheses_promoted": 0,
+                "promoted_hypotheses": [],
+                "open_questions": [],
+            }
+        step_dto = self.rust_arena.autonomous_curiosity(
+            min_confidence=min_confidence, max_promotions=max_promotions
+        )
+        for hyp in step_dto.get("promoted_hypotheses", []):
+            subj = str(hyp.get("subject_concept", "")).strip()
+            pred = str(hyp.get("predicate", "")).strip()
+            obj = str(hyp.get("target_concept", "")).strip()
+            conf = float(hyp.get("confidence", 0.7))
+            if subj and pred and obj:
+                spoke = map_predicate_to_spoke(pred)
+                subj_unit = self.get_or_create_mlu(subj, preferred_spoke=spoke)
+                obj_unit = self.get_or_create_mlu(obj, preferred_spoke=spoke)
+                subj_unit.learn_spoke_relation(
+                    predicate=pred,
+                    target_concept=obj_unit.concept_id,
+                    target_vec=obj_unit.anchor_vec,
+                    learning_rate=0.18 * conf,
+                    verified=True,
+                )
+        return step_dto
+
+    def save_snapshot(self, path: str) -> bool:
+        """Phase 19: Persist the Rust 360° Spider-Web Arena snapshot to disk."""
+        if self.rust_arena.is_native:
+            return self.rust_arena.save_snapshot(path)
+        return False
+
+    def load_snapshot(self, path: str) -> bool:
+        """Phase 19: Restore the Rust 360° Spider-Web Arena snapshot from disk."""
+        if self.rust_arena.is_native:
+            return self.rust_arena.load_snapshot(path)
+        return False
+
     def consolidate(
         self, min_transition_weight: float = 0.05, replay_lr: float = 0.15
     ) -> dict[str, Any]:
-        """Phase 2 & 15: Run Sleep-Cycle Consolidation (spoke replay + transition pruning + mitosis + curiosity)."""
+        """Phase 2, 15 & 18: Run Sleep-Cycle Consolidation (spoke replay + transition pruning + mitosis + active curiosity)."""
         rust_report = (
             self.rust_arena.consolidate(
                 min_transition_weight=min_transition_weight, replay_lr=replay_lr
@@ -1182,11 +1237,15 @@ class SpiderWebMLM:
             }
         )
         curiosity = self.discover_curiosity(max_items=15)
+        autonomous_step = self.autonomous_curiosity_step(
+            min_confidence=0.65, max_promotions=5
+        )
         promoted, pruned = self.run_structural_plasticity_cycle()
         self.save_nodes(promoted if promoted else None)
         return {
             "rust_consolidation": rust_report,
             "curiosity": curiosity,
+            "autonomous_curiosity": autonomous_step,
             "python_mitosis_promotions": promoted,
             "python_pruned_nodes": pruned,
             "total_mlu_nodes": len(self.nodes),

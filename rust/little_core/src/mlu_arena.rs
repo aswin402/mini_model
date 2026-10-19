@@ -1538,6 +1538,247 @@ impl SpiderWebArena {
             curiosity_gaps,
         }
     }
+
+    /// Phase 17: Native Rust Causal & Counterfactual Wave Simulation (`simulate_causal_wave_360`).
+    ///
+    /// Propagates a directed wave from `root_concept` up to `max_hops`, weighting causal,
+    /// procedural, and dynamical transitions (`spokes 2, 4, 6`) while tracking multi-hop
+    /// downstream impact chains (`affected_concepts`, `causal_steps`, `causal_synthesis`).
+    pub fn simulate_causal_wave_360(&mut self, root_concept: &str, max_hops: usize) -> CausalSimulationDto {
+        let clean_root = root_concept.trim().to_uppercase().replace(' ', "_");
+        let hops = max_hops.clamp(1, 5);
+        let Some(&start_id) = self.name_to_id.get(&clean_root) else {
+            return CausalSimulationDto {
+                root_concept: clean_root.clone(),
+                affected_concepts: Vec::new(),
+                causal_steps: Vec::new(),
+                causal_synthesis: format!(
+                    "I do not yet have verified causal or procedural links starting from '{}'.",
+                    clean_root.to_lowercase().replace('_', " ")
+                ),
+            };
+        };
+
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        visited.insert(clean_root.clone());
+        let mut frontier: Vec<(u32, String, f32)> = vec![(start_id, clean_root.clone(), 1.0)];
+        let mut causal_steps: Vec<CausalStepDto> = Vec::new();
+        let mut affected_set: Vec<String> = Vec::new();
+
+        for hop in 1..=hops {
+            let mut next_frontier: Vec<(u32, String, f32)> = Vec::new();
+            for (cid, cname, parent_conf) in &frontier {
+                let Some(cell) = self.cells.get(*cid as usize) else {
+                    continue;
+                };
+                for (s_idx, edges) in cell.spoke_synapses.iter().enumerate() {
+                    // Harmonic spoke weighting: prioritize causality (2), procedural (4), dynamics (6), and spatial/taxonomy bridges
+                    let spoke_bonus: f32 = if s_idx == 2 || s_idx == 4 || s_idx == 6 {
+                        1.0
+                    } else {
+                        0.75
+                    };
+                    for syn in edges {
+                        if syn.pos_evidence <= syn.neg_evidence
+                            || syn.predicate == "co_occurs_with"
+                            || syn.predicate == "disjoint_with"
+                        {
+                            continue;
+                        }
+                        let total_ev = syn.pos_evidence + syn.neg_evidence;
+                        let nars_conf = total_ev / (total_ev + 1.0);
+                        let step_conf =
+                            (parent_conf * nars_conf * spoke_bonus * (0.90f32).powi((hop - 1) as i32))
+                                .clamp(0.05, 0.99);
+                        let rounded_conf = (step_conf * 10000.0).round() / 10000.0;
+
+                        causal_steps.push(CausalStepDto {
+                            hop,
+                            source_concept: cname.clone(),
+                            predicate: syn.predicate.clone(),
+                            target_concept: syn.target_name.clone(),
+                            spoke: SPOKE_NAMES[s_idx].to_string(),
+                            confidence: rounded_conf,
+                        });
+
+                        if !affected_set.contains(&syn.target_name) && syn.target_name != clean_root {
+                            affected_set.push(syn.target_name.clone());
+                        }
+
+                        if visited.insert(syn.target_name.clone()) {
+                            if let Some(&tid) = self.name_to_id.get(&syn.target_name) {
+                                next_frontier.push((tid, syn.target_name.clone(), rounded_conf));
+                            }
+                        }
+                    }
+                }
+            }
+            if next_frontier.is_empty() {
+                break;
+            }
+            frontier = next_frontier;
+        }
+
+        causal_steps.sort_by(|a, b| {
+            a.hop
+                .cmp(&b.hop)
+                .then_with(|| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal))
+        });
+
+        let root_low = clean_root.to_lowercase().replace('_', " ");
+        let causal_synthesis = if causal_steps.is_empty() {
+            format!(
+                "No downstream causal or procedural chain is currently known for {}.",
+                root_low
+            )
+        } else {
+            let clauses: Vec<String> = causal_steps
+                .iter()
+                .take(4)
+                .map(|st| {
+                    let s_low = st.source_concept.to_lowercase().replace('_', " ");
+                    let p_low = st.predicate.replace('_', " ");
+                    let t_low = st.target_concept.to_lowercase().replace('_', " ");
+                    format!("{} {} {}", s_low, p_low, t_low)
+                })
+                .collect();
+            let mut text = format!("Causal wave from {}: {}.", root_low, clauses.join(" -> "));
+            if let Some(first) = text.get_mut(0..1) {
+                first.make_ascii_uppercase();
+            }
+            text
+        };
+
+        CausalSimulationDto {
+            root_concept: clean_root,
+            affected_concepts: affected_set,
+            causal_steps,
+            causal_synthesis,
+        }
+    }
+
+    /// Phase 18: Active Curiosity-Driven Autonomous Hypothesis Promotion (`autonomous_curiosity_step`).
+    ///
+    /// Discovers epistemic hypotheses via `discover_epistemic_hypotheses`, filters for those
+    /// meeting `min_confidence` and passing `verify_spoke_invariants` (`I_DAG` + `I_MUTEX`),
+    /// and promotes up to `max_promotions` into the 360° Spider-Web Arena as verified analogical
+    /// synapses while generating natural-language inquiry questions for unresolved curiosity gaps.
+    pub fn autonomous_curiosity_step(
+        &mut self,
+        min_confidence: f32,
+        max_promotions: usize,
+    ) -> AutonomousCuriosityStepDto {
+        let report = self.discover_epistemic_hypotheses(max_promotions.max(8) * 2);
+        let mut promoted: Vec<AnalogicalHypothesisDto> = Vec::new();
+        let cap = max_promotions.max(1);
+
+        for hyp in &report.analogical_hypotheses {
+            if promoted.len() >= cap {
+                break;
+            }
+            if hyp.confidence < min_confidence {
+                continue;
+            }
+            let (passed, _gate) = self.verify_spoke_invariants(
+                &hyp.subject_concept,
+                &hyp.predicate,
+                &hyp.target_concept,
+            );
+            if passed {
+                self.learn_spoke_relation(
+                    &hyp.subject_concept,
+                    &hyp.predicate,
+                    &hyp.target_concept,
+                    0.18 * hyp.confidence,
+                    true,
+                );
+                promoted.push(hyp.clone());
+            }
+        }
+
+        let open_questions: Vec<String> = report
+            .curiosity_gaps
+            .iter()
+            .take(5)
+            .map(|gap| {
+                let c_low = gap.concept_id.to_lowercase().replace('_', " ");
+                let first_missing = gap
+                    .missing_spokes
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "properties".to_string());
+                format!("What are the {} characteristics of {}?", first_missing, c_low)
+            })
+            .collect();
+
+        AutonomousCuriosityStepDto {
+            hypotheses_evaluated: report.analogical_hypotheses.len(),
+            hypotheses_promoted: promoted.len(),
+            promoted_hypotheses: promoted,
+            open_questions,
+        }
+    }
+
+    /// Phase 19: Fast Native Rust Snapshot Persistence (`save_arena_snapshot` / `load_arena_snapshot`).
+    pub fn save_arena_snapshot(&self, path_str: &str) -> SnapshotStatusDto {
+        let path = std::path::Path::new(path_str);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match serde_json::to_vec(self) {
+            Ok(bytes) => {
+                let n_bytes = bytes.len();
+                match std::fs::write(path, bytes) {
+                    Ok(_) => SnapshotStatusDto {
+                        success: true,
+                        path: path_str.to_string(),
+                        total_cells: self.cells.len(),
+                        bytes_written: n_bytes,
+                    },
+                    Err(_) => SnapshotStatusDto {
+                        success: false,
+                        path: path_str.to_string(),
+                        total_cells: self.cells.len(),
+                        bytes_written: 0,
+                    },
+                }
+            }
+            Err(_) => SnapshotStatusDto {
+                success: false,
+                path: path_str.to_string(),
+                total_cells: self.cells.len(),
+                bytes_written: 0,
+            },
+        }
+    }
+
+    pub fn load_arena_snapshot(&mut self, path_str: &str) -> SnapshotStatusDto {
+        let path = std::path::Path::new(path_str);
+        let Ok(bytes) = std::fs::read(path) else {
+            return SnapshotStatusDto {
+                success: false,
+                path: path_str.to_string(),
+                total_cells: self.cells.len(),
+                bytes_written: 0,
+            };
+        };
+        let n_bytes = bytes.len();
+        let Ok(restored) = serde_json::from_slice::<SpiderWebArena>(&bytes) else {
+            return SnapshotStatusDto {
+                success: false,
+                path: path_str.to_string(),
+                total_cells: self.cells.len(),
+                bytes_written: 0,
+            };
+        };
+        *self = restored;
+        SnapshotStatusDto {
+            success: true,
+            path: path_str.to_string(),
+            total_cells: self.cells.len(),
+            bytes_written: n_bytes,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1613,5 +1854,39 @@ pub struct CuriosityGapDto {
 pub struct CuriosityReportDto {
     pub analogical_hypotheses: Vec<AnalogicalHypothesisDto>,
     pub curiosity_gaps: Vec<CuriosityGapDto>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CausalStepDto {
+    pub hop: usize,
+    pub source_concept: String,
+    pub predicate: String,
+    pub target_concept: String,
+    pub spoke: String,
+    pub confidence: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CausalSimulationDto {
+    pub root_concept: String,
+    pub affected_concepts: Vec<String>,
+    pub causal_steps: Vec<CausalStepDto>,
+    pub causal_synthesis: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AutonomousCuriosityStepDto {
+    pub hypotheses_evaluated: usize,
+    pub hypotheses_promoted: usize,
+    pub promoted_hypotheses: Vec<AnalogicalHypothesisDto>,
+    pub open_questions: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SnapshotStatusDto {
+    pub success: bool,
+    pub path: String,
+    pub total_cells: usize,
+    pub bytes_written: usize,
 }
 

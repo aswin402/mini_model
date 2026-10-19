@@ -341,4 +341,50 @@ def test_spiderweb_mlm_phase14_to_16_comparative_wave_and_curiosity() -> None:
         mlm.close()
 
 
+def test_spiderweb_mlm_phase17_to_19_causal_wave_autonomous_curiosity_and_snapshots(
+    tmp_path: object,
+) -> None:
+    """Phases 17-19: Native Rust causal wave simulation, autonomous curiosity promotion, and binary snapshot persistence."""
+    with MemoryStore(seed_ontology=False) as memory:
+        mlm = SpiderWebMLM(memory=memory, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+        mlm.train_on_text(
+            "Drought causes crop_failure. Crop_failure causes famine. "
+            "An orca is a cetacean. An orca lives in the ocean. An orca can echolocate. "
+            "A dolphin is a cetacean.",
+            persist=False,
+        )
+
+        # Phase 17: Multi-hop causal wave simulation from DROUGHT
+        causal_dto = mlm.simulate_causal_360("DROUGHT", max_hops=3)
+        assert causal_dto["root_concept"] == "DROUGHT"
+        assert "CROP_FAILURE" in causal_dto["affected_concepts"]
+        assert "FAMINE" in causal_dto["affected_concepts"]
+        assert "drought" in causal_dto["causal_synthesis"].lower()
+
+        # Phase 18: Autonomous curiosity-driven hypothesis promotion (Dolphin inherits Orca's ocean/echolocate via CETACEAN)
+        auto_step = mlm.autonomous_curiosity_step(min_confidence=0.60, max_promotions=5)
+        assert auto_step["hypotheses_evaluated"] > 0
+        assert auto_step["hypotheses_promoted"] > 0
+        assert len(auto_step["open_questions"]) > 0
+        q_dolphin = mlm.query_360("dolphin")
+        assert q_dolphin.status == "VERIFIED"
+        dolphin_targets = {p.target_concept for p in q_dolphin.spoke_predictions}
+        assert "ECHOLOCATE" in dolphin_targets or "OCEAN" in dolphin_targets
+
+        # Phase 19: Fast native Rust snapshot save & restore into a fresh arena
+        snap_file = f"{tmp_path}/spiderweb_arena.bin"
+        assert mlm.save_snapshot(snap_file) is True
+        original_nodes = mlm.rust_arena.node_count
+        mlm.close()
+
+    with MemoryStore(seed_ontology=False) as memory2:
+        mlm2 = SpiderWebMLM(memory=memory2, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+        assert mlm2.load_snapshot(snap_file) is True
+        assert mlm2.rust_arena.node_count == original_nodes
+        causal_restored = mlm2.simulate_causal_360("DROUGHT", max_hops=3)
+        assert "FAMINE" in causal_restored["affected_concepts"]
+        mlm2.close()
+
+
+
 

@@ -907,6 +907,14 @@ def cmd_mlu(args: argparse.Namespace) -> None:
         elif action == "curiosity":
             cur_dict = kernel.mlm.discover_curiosity()
             print(json.dumps(cur_dict, indent=2))
+        elif action == "causal":
+            causal_dict = kernel.mlm.simulate_causal_360(
+                args.concept, max_hops=int(getattr(args, "hops", 3))
+            )
+            print(json.dumps(causal_dict, indent=2))
+        elif action == "self-study":
+            step_dict = kernel.mlm.autonomous_curiosity_step()
+            print(json.dumps(step_dict, indent=2))
         else:
             tel = kernel.mlm.get_telemetry()
             print(json.dumps(tel, indent=2))
@@ -1211,6 +1219,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Discover invariant-safe analogical hypotheses and epistemic curiosity gaps",
     )
     p_mlu_curiosity.set_defaults(func=cmd_mlu)
+    p_mlu_causal = p_mlu_subs.add_parser(
+        "causal",
+        parents=[db_parent],
+        help="Run native Rust 360° causal & counterfactual wave simulation from a root concept",
+    )
+    p_mlu_causal.add_argument("concept", help="Root concept to propagate causal wave from")
+    p_mlu_causal.add_argument(
+        "--hops", type=int, default=3, help="Maximum causal wave hops (default: 3)"
+    )
+    p_mlu_causal.set_defaults(func=cmd_mlu)
+    p_mlu_self_study = p_mlu_subs.add_parser(
+        "self-study",
+        parents=[db_parent],
+        help="Run active curiosity-driven autonomous hypothesis verification & promotion",
+    )
+    p_mlu_self_study.set_defaults(func=cmd_mlu)
 
     return parser
 

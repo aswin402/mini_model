@@ -290,6 +290,22 @@ class RustAccelerationCore:
                 ]
                 lib.little_core_mlu_arena_discover_curiosity.restype = ctypes.c_void_p
 
+            if hasattr(lib, "little_core_mlu_arena_simulate_causal"):
+                lib.little_core_mlu_arena_simulate_causal.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_size_t,
+                ]
+                lib.little_core_mlu_arena_simulate_causal.restype = ctypes.c_void_p
+
+            if hasattr(lib, "little_core_mlu_arena_autonomous_curiosity"):
+                lib.little_core_mlu_arena_autonomous_curiosity.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_float,
+                    ctypes.c_size_t,
+                ]
+                lib.little_core_mlu_arena_autonomous_curiosity.restype = ctypes.c_void_p
+
     # -------------------------------------------------------------------------
     # Public Accelerated Graph API
     # -------------------------------------------------------------------------
@@ -1016,6 +1032,56 @@ class RustMluArena:
         )
         if not ptr:
             return {"analogical_hypotheses": [], "curiosity_gaps": []}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def simulate_causal(self, root_concept: str, max_hops: int = 3) -> dict[str, Any]:
+        """Run native Rust 360° causal & counterfactual wave simulation from a root concept."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_simulate_causal")
+        ):
+            return {
+                "root_concept": root_concept,
+                "affected_concepts": [],
+                "causal_steps": [],
+                "causal_synthesis": "",
+            }
+        ptr = self._lib.little_core_mlu_arena_simulate_causal(
+            self._handle,
+            root_concept.encode("utf-8"),
+            max(1, int(max_hops)),
+        )
+        if not ptr:
+            return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def autonomous_curiosity(
+        self, min_confidence: float = 0.65, max_promotions: int = 5
+    ) -> dict[str, Any]:
+        """Run native Rust active curiosity-driven hypothesis verification and promotion."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_autonomous_curiosity")
+        ):
+            return {
+                "hypotheses_evaluated": 0,
+                "hypotheses_promoted": 0,
+                "promoted_hypotheses": [],
+                "open_questions": [],
+            }
+        ptr = self._lib.little_core_mlu_arena_autonomous_curiosity(
+            self._handle,
+            float(min_confidence),
+            max(1, int(max_promotions)),
+        )
+        if not ptr:
+            return {}
         res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
         self._lib.little_core_free_string(ptr)
         return dict(json.loads(res_str))
