@@ -47,6 +47,7 @@ from little.language.perception import DeterministicPerceptionAdapter, Perceptio
 from little.memory.headroom import HeadroomContextManager
 from little.memory.paged_store import PagedConceptStore
 from little.memory.store import MemoryStore
+from little.mlu import SpiderWebMLM
 from little.neural import NeuralRouter, RoutingDecision
 from little.perception.sensory import SensoryGroundingEngine
 from little.procedural.code_synthesizer import ASTCodeSynthesizer, SynthesizedProgram
@@ -140,6 +141,7 @@ class CognitiveKernel:
             policy=(self.runtime_policy.memory if explicit_runtime_policy and self.runtime_policy.memory else self.memory.memory_policy),
         )
         self.plasticity = PlasticityController()
+        self.mlm = SpiderWebMLM(memory=self.memory, plasticity=self.plasticity)
         self.stream_learner = ContinuousStreamLearner(
             kernel=self,
             paged_store=self.paged_store,
@@ -648,5 +650,6 @@ class CognitiveKernel:
                 "violations": len(canary.regressions),
                 "details": list(canary.regressions),
             },
+            "mlm_spiderweb": self.mlm.get_telemetry(),
         }
 

@@ -21,6 +21,9 @@ Invoke via `uv run little [--db <path>] <subcommand>`:
 | `skills list` | `uv run little skills list` | List registered procedural Python skills |
 | `tool list` | `uv run little tool list` | List typed tools and sandbox configurations |
 | `tool exec` | `uv run little tool exec calculator --args '{"expression": "2+2"}'` | Execute a typed tool with SHA-256 provenance hash |
+| `mlu train` | `uv run little mlu train "A dolphin is a mammal."` | Train the 360° Fractal Spider-Web Mini Learning Model (`SpiderWebMLM`) on raw text |
+| `mlu ask` | `uv run little mlu ask "Is a dolphin an animal?"` | Query the 360° Spider-Web MLM with multi-hop spoke traversal and invariant refutation |
+| `mlu status` | `uv run little mlu status` | Inspect 360° Spider-Web MLM hub/leaf topology and mitosis promotions |
 | `import` | `uv run little import --dataset commonsense` | Ingest curated world-knowledge triples or external CSV/TSV/JSON files |
 | `export` | `uv run little export -o state.json` | Export persistent cognitive memory state to JSON |
 
@@ -30,7 +33,8 @@ Invoke via `uv run little [--db <path>] <subcommand>`:
 
 Inside `little chat` or `CognitiveKernel.chat()`, natural-language meta-cognitive directives are dispatched by `src/little/core/cognitive_command.py`:
 
-- **Telemetry & Status:** `"show cognitive status"`, `"telemetry status"`, `"plasticity status"`, `"growth brakes"`
+- **Telemetry & Status:** `"show cognitive status"`, `"telemetry status"`, `"plasticity status"`, `"growth brakes"`, `"mlu status"`
+- **360° Spider-Web MLM Training & Inquiry:** `"mlm train: <paragraph>"`, `"mlm ask: <question>"`
 - **Knowledge Ingestion:** `"study text: <paragraph>"`, `"crawl document: <paragraph>"`
 - **Living Wiki Search & Navigation:** `"search wiki for <query>"`, `"what links to <concept>?"`, `"show wiki page for <concept>"`
 - **Latent Concept Induction (Cobweb):** `"induce latent knots"`, `"show latent categories"`, `"explain concept cluster for <concept>"`

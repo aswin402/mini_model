@@ -192,14 +192,36 @@ class CognitiveCommandRegistry:
             ),
             CognitiveCommand(
                 command_id="cognitive_status",
-                description="Inspect live cognitive telemetry (paging, plasticity, growth brakes, canary)",
+                description="Inspect live cognitive telemetry (paging, plasticity, growth brakes, canary, 360° MLM)",
                 patterns=(
                     re.compile(
-                        r"^(?:show\s+)?(?:cognitive\s+status|telemetry\s+status|plasticity\s+status|growth\s+brakes)\??$",
+                        r"^(?:show\s+)?(?:cognitive\s+status|telemetry\s+status|plasticity\s+status|growth\s+brakes|mlu\s+status|mlm\s+status)\??$",
                         re.IGNORECASE,
                     ),
                 ),
                 handler=cls._handle_cognitive_status,
+            ),
+            CognitiveCommand(
+                command_id="mlm_train",
+                description="Train the 360° Spider-Web Mini Learning Model (MLM/MLU) on raw text",
+                patterns=(
+                    re.compile(
+                        r"^(?:mlm\s+train|train\s+mlm|mlu\s+train|train\s+mlu)\s*:\s*(?P<train_text>.+)$",
+                        re.IGNORECASE | re.DOTALL,
+                    ),
+                ),
+                handler=cls._handle_mlm_train,
+            ),
+            CognitiveCommand(
+                command_id="mlm_ask",
+                description="Query the 360° Spider-Web Mini Learning Model (MLM/MLU)",
+                patterns=(
+                    re.compile(
+                        r"^(?:mlm\s+ask|ask\s+mlm|mlu\s+ask|ask\s+mlu)\s*:\s*(?P<query_text>.+)$",
+                        re.IGNORECASE,
+                    ),
+                ),
+                handler=cls._handle_mlm_ask,
             ),
         ]
 
@@ -408,6 +430,7 @@ class CognitiveCommandRegistry:
         plast = snap["plasticity"]
         brakes = snap["growth_brakes"]
         canary = snap["canary"]
+        mlm = snap.get("mlm_spiderweb", {})
         return (
             f"Cognitive Telemetry: {mem['total_concepts']} concepts, {mem['total_relations']} relations "
             f"(epoch {mem['concept_mutation_epoch']}) | "
@@ -415,8 +438,38 @@ class CognitiveCommandRegistry:
             f"{paged['dirty_invalidations']} dirty invalidations | "
             f"Plasticity: lr={plast['effective_lr']:.4f} (e_slow={plast['slow_effect_size']:+.2f}, "
             f"shifts={plast['regime_shifts']}, spikes_held={plast['spikes_held_back']}) | "
+            f"360° Spider-Web MLM: {mlm.get('total_mlu_nodes', 0)} MLUs "
+            f"({mlm.get('subcore_hubs', 0)} Sub-Cores, {mlm.get('mitosis_promotions', 0)} mitosis) | "
             f"Growth Brakes: {'OPEN' if brakes['allowed'] else 'ENGAGED'} | "
             f"Canary: {'PASS' if canary['passed'] else 'FAIL'} ({canary['checks_run']} checks)."
         )
+
+    @staticmethod
+    def _handle_mlm_train(
+        kernel: CognitiveKernel, text: str, match: re.Match[str]
+    ) -> str:
+        raw_text = match.group("train_text").strip()
+        rep = kernel.mlm.train_on_text(raw_text)
+        mitosis_str = (
+            f" | Fractal Mitosis -> Sub-Cores: {', '.join(rep.mitosis_promotions)}"
+            if rep.mitosis_promotions
+            else ""
+        )
+        return (
+            f"[360° Spider-Web MLM Trained] {rep.sentences_processed} sentences | "
+            f"{rep.relations_verified} verified 360° spoke links, {rep.relations_refuted} refuted | "
+            f"{rep.token_transitions_learned} token transitions | "
+            f"surprise={rep.average_surprise:.3f}, plasticity={rep.plasticity_multiplier:.3f} | "
+            f"Topology: {rep.total_mlu_nodes} MLUs ({rep.active_subcores} Sub-Cores){mitosis_str}."
+        )
+
+    @staticmethod
+    def _handle_mlm_ask(
+        kernel: CognitiveKernel, text: str, match: re.Match[str]
+    ) -> str:
+        q_text = match.group("query_text").strip()
+        res = kernel.mlm.query_360(q_text)
+        return f"{res.answer}\n  {res.inspectable_trace}"
+
 
 

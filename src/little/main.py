@@ -805,6 +805,7 @@ def cmd_status(args: argparse.Namespace) -> None:
         plast = snap["plasticity"]
         brakes = snap["growth_brakes"]
         canary = snap["canary"]
+        mlm = snap.get("mlm_spiderweb", {})
         print(f"\n📊 [LITTLE Cognitive Telemetry Dashboard: {Path(args.db)}]")
         print("-" * 68)
         print(
@@ -822,6 +823,12 @@ def cmd_status(args: argparse.Namespace) -> None:
             f"trunk={plast['trunk_damping']}x"
         )
         print(
+            f"Spider-Web MLM:    {mlm.get('total_mlu_nodes', 0)} MLUs | "
+            f"{mlm.get('subcore_hubs', 0)} Sub-Cores | "
+            f"{mlm.get('total_360_spoke_edges', 0)} 360° spoke edges | "
+            f"mitosis={mlm.get('mitosis_promotions', 0)}"
+        )
+        print(
             f"Growth Brakes:     {'OPEN (Allowed)' if brakes['allowed'] else 'ENGAGED (Blocked)'} "
             f"[room={brakes['room']}, used={brakes['used']}, earning={brakes['earning']}, "
             f"fits={brakes['fits']}, honest={brakes['honest']}]"
@@ -830,6 +837,34 @@ def cmd_status(args: argparse.Namespace) -> None:
             f"Held-Out Canary:   {'PASS' if canary['passed'] else 'FAIL'} "
             f"({canary['checks_run']} checks, {canary['violations']} violations)\n"
         )
+    finally:
+        kernel.close()
+        store.close()
+
+
+def cmd_mlu(args: argparse.Namespace) -> None:
+    store, kernel = get_kernel(Path(args.db), seed_ontology=False)
+    try:
+        action = getattr(args, "mlu_action", "status")
+        if action == "train":
+            text = " ".join(args.text)
+            rep = kernel.mlm.train_on_text(text)
+            print(
+                f"🕸️  [360° Spider-Web MLM Trained] {rep.sentences_processed} sentences | "
+                f"{rep.relations_verified} verified spoke edges, {rep.relations_refuted} refuted | "
+                f"surprise={rep.average_surprise:.3f} | plasticity={rep.plasticity_multiplier:.3f} | "
+                f"MLUs={rep.total_mlu_nodes} ({rep.active_subcores} Sub-Cores)"
+            )
+            if rep.mitosis_promotions:
+                print(f"    ↳ Fractal Mitosis Promotions -> Sub-Core Hubs: {', '.join(rep.mitosis_promotions)}")
+        elif action == "ask":
+            q = " ".join(args.question)
+            res = kernel.mlm.query_360(q)
+            print(f"[{res.status}] {res.answer}")
+            print(f"  ↳ {res.inspectable_trace}")
+        else:
+            tel = kernel.mlm.get_telemetry()
+            print(json.dumps(tel, indent=2))
     finally:
         kernel.close()
         store.close()
@@ -1064,6 +1099,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output telemetry snapshot as JSON",
     )
     p_status.set_defaults(func=cmd_status)
+
+    # mlu (360° Spider-Web Mini Learning Model)
+    p_mlu = subparsers.add_parser(
+        "mlu",
+        parents=[db_parent],
+        help="Train, query, and inspect the 360° Spider-Web Mini Learning Model (MLM/MLU)",
+    )
+    p_mlu_subs = p_mlu.add_subparsers(dest="mlu_action", required=True)
+    p_mlu_train = p_mlu_subs.add_parser(
+        "train", parents=[db_parent], help="Train 360° Spider-Web MLM on raw text"
+    )
+    p_mlu_train.add_argument("text", nargs="+", help="Text stream to learn")
+    p_mlu_train.set_defaults(func=cmd_mlu)
+    p_mlu_ask = p_mlu_subs.add_parser(
+        "ask", parents=[db_parent], help="Query 360° Spider-Web MLM"
+    )
+    p_mlu_ask.add_argument("question", nargs="+", help="Question or concept to query")
+    p_mlu_ask.set_defaults(func=cmd_mlu)
+    p_mlu_status = p_mlu_subs.add_parser(
+        "status", parents=[db_parent], help="Display 360° Spider-Web MLM topology JSON"
+    )
+    p_mlu_status.set_defaults(func=cmd_mlu)
 
     return parser
 

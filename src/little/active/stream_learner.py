@@ -165,6 +165,11 @@ class ContinuousStreamLearner:
                     else:
                         self.plasticity.observe_error(0.1)
 
+        if hasattr(self.kernel, "mlm") and self.kernel.mlm is not None:
+            mlm_rep = self.kernel.mlm.train_on_text(clean)
+            if mlm_rep.relations_verified > 0 or mlm_rep.token_transitions_learned > 0:
+                learned_any = True
+
         lat = (time.perf_counter() - t0) * 1000.0
         msg = (
             f"Ingested {len(sentences)} sentences: created {len(all_concepts_created)} concepts, "

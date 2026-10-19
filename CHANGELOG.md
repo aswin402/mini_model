@@ -24,6 +24,9 @@ All notable architectural milestones, system repairs, and cognitive upgrades for
   - Extended `DualSpeedInfillingEngine` and `DualSpeedResult` with cumulative halting probability $P(\text{halt} \le d) = 1 - \prod_{k=1}^{d} (1 - \lambda_k)$, `ponder_cost = ponder_beta * depth`, and `halt_freeze`.
 - **Live Cognitive Telemetry Dashboard (`src/little/core/kernel.py`, `src/little/main.py`, `src/little/core/cognitive_command.py`):**
   - Added `CognitiveKernel.get_telemetry_snapshot()`, CLI `little status [--json]`, and interactive REPL command `"show cognitive status"`.
+- **360° Fractal Spider-Web Mini Learning Model (`src/little/mlu/unit.py`, `src/little/mlu/spiderweb_net.py`):**
+  - Implemented `MiniLearningUnit` (`MLU`) combining LFM-2.5 Gated Short-Convolutions + Liquid `CfC` state dynamics, JEPA latent anchor alignment, Laya epistemic entropy, and 6 radial 360° `SpokeHead` projections (`taxonomy`, `mereology`, `attributes`, `dynamics`, `procedural`, `episodic`).
+  - Implemented `SpiderWebMLM` organizing `Central Core (CORE_ROOT) -> 360° Sub-Core Hubs -> 360° Spoke Leaf MLUs` with 5-Brake Fractal Mitosis (promoting heavily used multi-spoke Leaf MLUs into Sub-Core Hubs), DeepSeek-R1 style invariant-gated online training, and CLI/REPL directives (`little mlu train`, `little mlu ask`, `little mlu status`).
 - **Persistent Zero-Copy Rust Graph Handle (`rust/little_core/src/lib.rs`, `src/little/rust/engine.py`, `src/little/inference/invariant_gates.py`):**
   - Implemented `GraphIndexRust` (`little_core_graph_*` C-ABI) and `RustGraphIndex` keyed by `MemoryStore.concept_mutation_epoch`, wired into `DeepSeekInvariantVerifier` to eliminate per-query N+1 SQLite/JSON serialization overhead during $I_{\text{DAG}}$ and $I_{\text{MUTEX}}$ verification.
 - **Documentation Consolidation (`onpkg_docs/`, `README.md`, `CHANGELOG.md`):**

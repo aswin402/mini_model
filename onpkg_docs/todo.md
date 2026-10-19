@@ -24,6 +24,8 @@
   - Maintain a persistent incremental graph index (`GraphIndexRust` / `RustGraphIndex`) in Rust across turns keyed by `concept_mutation_epoch` and wired into `DeepSeekInvariantVerifier` to eliminate per-query JSON edge-list serialization and N+1 SQLite traversals.
 - [x] **Continual Plasticity & Paging Curriculum Verification (`tests/unit/test_mini_agi_upgrades.py`):**
   - Multi-phase streaming curriculum test verifying `PlasticityController` regime shifts, `PagedConceptStore` slot reuse counts, and `RustGraphIndex` invariant enforcement.
+- [x] **360° Fractal Spider-Web Mini Learning Model (`src/little/mlu/`, `tests/unit/test_spiderweb_mlm.py`):**
+  - Implemented `MiniLearningUnit` (`MLU` with LFM-2.5 Gated Short-Conv + Liquid `CfC` dynamics, JEPA latent alignment, Laya entropy, and 6 radial 360° `SpokeHead` projections) and `SpiderWebMLM` (`Central Core -> 360° Sub-Core Hubs -> Leaf MLUs` with 5-Brake Fractal Mitosis, DeepSeek-R1 invariant-gated online training, and `little mlu` CLI).
 - [ ] **Modularization of `LearningEngine` (`src/little/language/parser.py`) & `MemoryStore` (`src/little/memory/store.py`):**
   - Incrementally extract specialized domain collaborators (query planner, ontology seeder, relation repository) while preserving backward-compatible facades.
 
