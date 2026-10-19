@@ -170,6 +170,7 @@ class SpiderWebMLM:
             mitosis_min_verified_spokes=self.mitosis_min_verified_spokes,
         )
 
+        self._dirty_since_save: bool = False
         self._ensure_persistence_table()
         self._init_core_topology()
         self.conversation_liquid_state = list(self.nodes["CORE_ROOT"].hidden_state)
@@ -177,7 +178,9 @@ class SpiderWebMLM:
         self.sync_from_symbolic_memory()
 
     def close(self) -> None:
-        """Release native Rust arena and graph handles owned by this MLM."""
+        """Persist any unsaved 360° Arena state and release native Rust handles."""
+        if getattr(self, "_dirty_since_save", False):
+            self.save_nodes()
         if hasattr(self, "rust_arena") and self.rust_arena is not None:
             self.rust_arena.close()
         if hasattr(self.verifier, "_rust_graph") and self.verifier._rust_graph is not None:
@@ -291,6 +294,7 @@ class SpiderWebMLM:
                     """,
                     (snap_json, self.cycle_step),
                 )
+        self._dirty_since_save = False
 
     def sync_from_symbolic_memory(self) -> int:
         """Ensure existing symbolic relations in `MemoryStore` are mirrored as 360° MLU spokes."""
@@ -434,6 +438,27 @@ class SpiderWebMLM:
             best_tok = max(scored, key=lambda kv: kv[1])[0]
             kept = [best_tok]
         return "_".join(kept), max_sal
+
+    def _resolve_operator_span(self, span_tokens: list[str]) -> tuple[str | None, int]:
+        """Resolve an operator span to a canonical predicate and polarity (+1/-1) via the 64-D operator codebook."""
+        if not span_tokens:
+            return None, 1
+        best_pred: str | None = None
+        best_len = 0
+        polarity = 1
+        n = len(span_tokens)
+        for i in range(n):
+            for j in range(i + 1, min(n + 1, i + 5)):
+                sub = tuple(span_tokens[i:j])
+                core_sub = tuple(t for t in sub if t not in self.frame_policy.stop_determiners)
+                for proto_toks, canonical_pred, _vec in self._operator_codebook:
+                    if sub == proto_toks or (core_sub and core_sub == proto_toks):
+                        if canonical_pred in self.verifier.disjoint_predicates:
+                            polarity = -1
+                        if len(proto_toks) > best_len:
+                            best_len = len(proto_toks)
+                            best_pred = canonical_pred
+        return best_pred, polarity
 
     def _route_to_subcore(self, preferred_spoke: str, concept_vec: list[float]) -> str:
         """Select the best Sub-Core Hub using spoke alignment + cosine similarity."""
@@ -730,6 +755,8 @@ class SpiderWebMLM:
 
         if persist:
             self.save_nodes(list(touched_nodes))
+        elif touched_nodes or sentences_processed > 0:
+            self._dirty_since_save = True
 
         avg_surprise = round(sum(surprises) / max(1, len(surprises)), 4)
         subcore_count = sum(1 for u in self.nodes.values() if u.role == "subcore")
@@ -1067,17 +1094,44 @@ class SpiderWebMLM:
                         fluent_english=ans_ref,
                     )
 
-            # Phase 14 & 16: 360° Bidirectional Comparative Wave Intersection between focal_cid and target_cid
+            # Phase 14, 16, 20 & 21: 360° Counterfactual Intervention, Comparative Wave Intersection & Relational Bridge
             if target_cid in self.nodes:
+                # Check if operator tokens between/around focal_cid and target_cid carry negative polarity (counterfactual suppression)
+                non_concept_toks = [
+                    t
+                    for t in tokens
+                    if t.upper() not in (focal_cid, target_cid)
+                ]
+                _, query_pol = self._resolve_operator_span(non_concept_toks)
+                if query_pol < 0:
+                    cf_dto = self.intervene_counterfactual_360(
+                        focal_cid, target_cid, max_hops=3
+                    )
+                    inv_list = cf_dto.get("invalidated_conclusions", [])
+                    cf_synth = str(cf_dto.get("counterfactual_synthesis", "")).strip()
+                    if inv_list and cf_synth:
+                        return MLMQueryResult(
+                            query=clean_q,
+                            focal_concept=focal_cid,
+                            status="VERIFIED",
+                            answer=cf_synth,
+                            confidence=0.88,
+                            epistemic_entropy=0.1,
+                            active_subcore=active_subcore,
+                            activated_mlus=activated + [target_cid],
+                            spoke_predictions=preds[:6],
+                            inspectable_trace=(
+                                f"[MLU-360-COUNTERFACTUAL] root={focal_cid} | "
+                                f"suppressed={target_cid} | invalidated={inv_list}"
+                            ),
+                            fluent_english=cf_synth,
+                        )
+
                 cmp_dto = self.compare_360(focal_cid, target_cid, max_hops=3)
                 comp_synth = str(cmp_dto.get("comparative_synthesis", "")).strip()
-                if comp_synth:
-                    shared_list = cmp_dto.get("shared_attractors", [])
-                    conf = (
-                        float(shared_list[0]["combined_confidence"])
-                        if shared_list
-                        else preds[0].combined_confidence
-                    )
+                shared_list = cmp_dto.get("shared_attractors", [])
+                if shared_list and comp_synth:
+                    conf = float(shared_list[0]["combined_confidence"])
                     return MLMQueryResult(
                         query=clean_q,
                         focal_concept=focal_cid,
@@ -1095,12 +1149,43 @@ class SpiderWebMLM:
                         fluent_english=comp_synth,
                     )
 
-        # Case B: Open 360° synthesis across all 6 radial spokes + learned neural sequence continuation
+                bridge_dto = self.find_bridge_360(focal_cid, target_cid, max_hops=4)
+                if bridge_dto.get("connected") and bridge_dto.get("bridge_synthesis"):
+                    br_synth = str(bridge_dto["bridge_synthesis"])
+                    return MLMQueryResult(
+                        query=clean_q,
+                        focal_concept=focal_cid,
+                        status="VERIFIED",
+                        answer=br_synth,
+                        confidence=0.82,
+                        epistemic_entropy=0.12,
+                        active_subcore=active_subcore,
+                        activated_mlus=activated + [target_cid],
+                        spoke_predictions=preds[:6],
+                        inspectable_trace=(
+                            f"[MLU-360-BRIDGE] {focal_cid} <-> {target_cid} | "
+                            f"hops={bridge_dto.get('hop_count', 0)}"
+                        ),
+                        fluent_english=br_synth,
+                    )
+
+        # Case B: Open 360° synthesis across all radial spokes + multi-hop causal wave + learned neural sequence continuation
         spoke_clauses: list[str] = []
         for p in preds[:5]:
             rel_text = p.predicate.replace("_", " ")
             tgt_text = p.target_concept.lower().replace("_", " ")
             spoke_clauses.append(f"{rel_text} {tgt_text} [{p.spoke}:{p.combined_confidence:.2f}]")
+
+        causal_suffix = ""
+        causal_trace_tag = ""
+        if any(p.predicate == "causes" for p in preds):
+            causal_dto = self.simulate_causal_360(focal_cid, max_hops=3)
+            affected_list = causal_dto.get("affected_concepts", [])
+            if len(affected_list) > 1:
+                c_synth = str(causal_dto.get("causal_synthesis", "")).strip()
+                if c_synth:
+                    causal_suffix = f" {c_synth}"
+                    causal_trace_tag = f" | [MLU-360-CAUSAL-WAVE] affected={affected_list}"
 
         beam_cache = getattr(self, "_last_rust_beam", {}) or {}
         rust_cont = str(beam_cache.get("generated_continuation", "")).strip()
@@ -1129,12 +1214,13 @@ class SpiderWebMLM:
             + fluency_suffix
         )
         rust_fluent = str(beam_cache.get("fluent_synthesis", "")).strip()
-        fluent_eng = rust_fluent or self._synthesize_fluent_english(
+        base_fluent = rust_fluent or self._synthesize_fluent_english(
             focal_cid, preds, continuation_text
         )
+        fluent_eng = (base_fluent + causal_suffix).strip()
         trace = (
             f"[MLU-360] Activated {len(activated)} units ({' -> '.join(activated)}) | "
-            f"top_conf={top_conf:.2f} | entropy={avg_entropy:.2f}"
+            f"top_conf={top_conf:.2f} | entropy={avg_entropy:.2f}{causal_trace_tag}"
         )
         return MLMQueryResult(
             query=clean_q,
@@ -1205,6 +1291,7 @@ class SpiderWebMLM:
                     learning_rate=0.18 * conf,
                     verified=True,
                 )
+                self._dirty_since_save = True
         return step_dto
 
     def save_snapshot(self, path: str) -> bool:
@@ -1300,6 +1387,7 @@ class SpiderWebMLM:
                 learning_rate=0.25,
                 verified=verified,
             )
+        self._dirty_since_save = True
         return res
 
     def consolidate(

@@ -457,6 +457,53 @@ def test_spiderweb_mlm_phase23_to_25_latent_clusters_belief_revision_and_8_axis_
     assert bench["bridge_cluster_revision_passed"] is True
 
 
+def test_spiderweb_mlm_phase26_to_28_unified_kernel_waves_and_lifecycle_persistence(tmp_path) -> None:
+    """Verify Phases 26-28: Unified 360° wave routing (counterfactual, bridge, causal) and automatic close persistence."""
+    db_file = str(tmp_path / "phase26_lifecycle.db")
+    with MemoryStore(db_file) as mem:
+        mlm = SpiderWebMLM(mem)
+        mlm.train_on_text(
+            "An orca is a mammal. A dolphin is a mammal. "
+            "Drought causes crop_failure. Crop_failure causes famine. "
+            "A bird can fly.",
+            persist=True,
+        )
+
+        # Phase 26a: Counterfactual intervention via unified query_360 (negative polarity operator span)
+        cf_res = mlm.query_360("What if drought is not crop_failure?")
+        assert "[MLU-360-COUNTERFACTUAL]" in cf_res.inspectable_trace
+        assert "FAMINE" in cf_res.fluent_english.upper()
+
+        # Phase 26b: Comparative intersection via unified query_360 (shared attractor MAMMAL)
+        cmp_res = mlm.query_360("orca and dolphin")
+        assert "[MLU-360-COMPARE]" in cmp_res.inspectable_trace
+        assert "mammal" in cmp_res.fluent_english.lower()
+
+        # Phase 26c: Relational bridge discovery via unified query_360 (multi-hop DROUGHT -> CROP_FAILURE -> FAMINE)
+        br_res = mlm.query_360("drought and famine")
+        assert "[MLU-360-BRIDGE]" in br_res.inspectable_trace
+        assert "crop failure" in br_res.fluent_english.lower()
+
+        # Phase 26d: Causal wave synthesis enriched in single-concept query_360
+        causal_res = mlm.query_360("drought")
+        assert "[MLU-360-CAUSAL-WAVE]" in causal_res.inspectable_trace
+        assert "Causal wave from drought:" in causal_res.fluent_english
+
+        # Phase 27: Non-monotonic revision dirty flag auto-persisted on close()
+        rev = mlm.revise_belief_360("BIRD", "can", "FLY", verified=False, evidence_weight=5.0)
+        assert rev["polarity_flipped"] is True
+        assert mlm._dirty_since_save is True
+        mlm.close()
+
+    # Re-open on same SQLite database and verify the revised polarity was persisted on close()
+    with MemoryStore(db_file) as mem2:
+        mlm2 = SpiderWebMLM(mem2)
+        bird_res = mlm2.query_360("bird")
+        fly_preds = [p for p in bird_res.spoke_predictions if p.target_concept == "FLY"]
+        assert not fly_preds
+        mlm2.close()
+
+
 
 
 
