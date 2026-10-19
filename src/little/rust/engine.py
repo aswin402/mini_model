@@ -265,6 +265,15 @@ class RustAccelerationCore:
                 ]
                 lib.little_core_mlu_arena_consolidate.restype = ctypes.c_void_p
 
+            if hasattr(lib, "little_core_mlu_arena_verify_invariants"):
+                lib.little_core_mlu_arena_verify_invariants.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                ]
+                lib.little_core_mlu_arena_verify_invariants.restype = ctypes.c_void_p
+
     # -------------------------------------------------------------------------
     # Public Accelerated Graph API
     # -------------------------------------------------------------------------
@@ -929,6 +938,28 @@ class RustMluArena:
         )
         if not ptr:
             return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def verify_invariants(
+        self, subject: str, predicate: str, object_node: str
+    ) -> dict[str, Any]:
+        """Run native Rust I_DAG & I_MUTEX invariant verification on a candidate spoke link."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_verify_invariants")
+        ):
+            return {"passed": True, "gate": "PASSED"}
+        ptr = self._lib.little_core_mlu_arena_verify_invariants(
+            self._handle,
+            subject.encode("utf-8"),
+            predicate.encode("utf-8"),
+            object_node.encode("utf-8"),
+        )
+        if not ptr:
+            return {"passed": True, "gate": "PASSED"}
         res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
         self._lib.little_core_free_string(ptr)
         return dict(json.loads(res_str))

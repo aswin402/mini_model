@@ -843,9 +843,16 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 
 def cmd_mlu(args: argparse.Namespace) -> None:
+    action = getattr(args, "mlu_action", "status")
+    if action == "benchmark":
+        from little.mlu.spiderweb_net import SpiderWebMLM
+
+        bench = SpiderWebMLM.run_benchmark_suite()
+        print(json.dumps(bench, indent=2))
+        return
+
     store, kernel = get_kernel(Path(args.db), seed_ontology=False)
     try:
-        action = getattr(args, "mlu_action", "status")
         if action == "train":
             text = " ".join(args.text)
             rep = kernel.mlm.train_on_text(text)
@@ -875,6 +882,15 @@ def cmd_mlu(args: argparse.Namespace) -> None:
                 print(
                     f"    ↳ Promoted 360° Sub-Core Hubs: {', '.join(rep_dict['mitosis_promotions'])}"
                 )
+        elif action == "bootstrap":
+            rep_dict = kernel.mlm.bootstrap_curriculum(
+                epochs=int(getattr(args, "epochs", 2))
+            )
+            print(
+                f"🌍 [360° Spider-Web Curriculum Bootstrap] {rep_dict['files_processed']} file(s) x {rep_dict['epochs']} epoch(s) | "
+                f"{rep_dict['relations_verified']} verified spoke links | "
+                f"MLUs={rep_dict['telemetry']['total_mlu_nodes']}"
+            )
         elif action == "consolidate":
             cons_dict = kernel.mlm.consolidate()
             rc = cons_dict["rust_consolidation"]
@@ -1160,6 +1176,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run Sleep-Cycle Consolidation (spoke replay + transition pruning) on the 360° Arena",
     )
     p_mlu_consolidate.set_defaults(func=cmd_mlu)
+    p_mlu_bootstrap = p_mlu_subs.add_parser(
+        "bootstrap",
+        parents=[db_parent],
+        help="Pre-train 360° Spider-Web MLM on the foundational world curriculum",
+    )
+    p_mlu_bootstrap.add_argument(
+        "--epochs", type=int, default=2, help="Number of training epochs (default: 2)"
+    )
+    p_mlu_bootstrap.set_defaults(func=cmd_mlu)
+    p_mlu_benchmark = p_mlu_subs.add_parser(
+        "benchmark",
+        parents=[db_parent],
+        help="Run the isolated 5-axis 360° Spider-Web MLM & Rust Arena benchmark suite",
+    )
+    p_mlu_benchmark.set_defaults(func=cmd_mlu)
 
     return parser
 

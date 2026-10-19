@@ -1015,6 +1015,43 @@ pub extern "C" fn little_core_mlu_arena_consolidate(
     to_c_string(&report)
 }
 
+#[derive(Serialize)]
+struct InvariantCheckDto {
+    passed: bool,
+    gate: String,
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_verify_invariants(
+    arena_ptr: *mut SpiderWebArena,
+    subject_ptr: *const c_char,
+    predicate_ptr: *const c_char,
+    object_ptr: *const c_char,
+) -> *mut c_char {
+    let fallback = InvariantCheckDto {
+        passed: false,
+        gate: "INVALID_PTR".to_string(),
+    };
+    if arena_ptr.is_null() || subject_ptr.is_null() || predicate_ptr.is_null() || object_ptr.is_null() {
+        return to_c_string(&fallback);
+    }
+    let Ok(subject) = (unsafe { CStr::from_ptr(subject_ptr) }).to_str() else {
+        return to_c_string(&fallback);
+    };
+    let Ok(predicate) = (unsafe { CStr::from_ptr(predicate_ptr) }).to_str() else {
+        return to_c_string(&fallback);
+    };
+    let Ok(object) = (unsafe { CStr::from_ptr(object_ptr) }).to_str() else {
+        return to_c_string(&fallback);
+    };
+    let arena = unsafe { &*arena_ptr };
+    let (passed, gate) = arena.verify_spoke_invariants(subject, predicate, object);
+    to_c_string(&InvariantCheckDto {
+        passed,
+        gate: gate.to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

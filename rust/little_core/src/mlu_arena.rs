@@ -131,6 +131,37 @@ pub fn route_phase_spoke_idx(rel_vec: &[f32; MLU_DIM], target_vec: &[f32; MLU_DI
     best_k
 }
 
+/// Phase 11: Pure Shannon character entropy H(w) = -sum p(c) log2 p(c) in bits/char.
+pub fn shannon_char_entropy(token: &str) -> f32 {
+    let chars: Vec<char> = token.chars().collect();
+    let n = chars.len();
+    if n <= 1 {
+        return 0.0;
+    }
+    let mut counts: HashMap<char, usize> = HashMap::new();
+    for ch in chars {
+        *counts.entry(ch).or_insert(0) += 1;
+    }
+    let inv_n = 1.0 / (n as f32);
+    let mut h: f32 = 0.0;
+    for &c in counts.values() {
+        let p = (c as f32) * inv_n;
+        h -= p * p.log2();
+    }
+    h
+}
+
+/// Phase 11: Information-theoretic morphological salience S(w) = H(w) * ln(1 + |w|).
+pub fn token_information_salience(token: &str) -> f32 {
+    if token.is_empty() {
+        return 0.0;
+    }
+    let h = shannon_char_entropy(token);
+    let len_factor = (1.0 + (token.chars().count() as f32)).ln();
+    let compound_bonus = if token.contains('_') { 2.0 } else { 0.0 };
+    h * len_factor + compound_bonus
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SpokeSynapse {
     pub target_id: u32,
@@ -572,11 +603,107 @@ impl SpiderWebArena {
         results
     }
 
+    /// Phase 11: Collect all reachable positive ancestors of `start_concept` across 360° spokes.
+    pub fn collect_positive_ancestors(&self, start_concept: &str) -> std::collections::HashSet<String> {
+        let clean = start_concept.trim().to_uppercase().replace(' ', "_");
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        visited.insert(clean.clone());
+        queue.push_back(clean);
+
+        while let Some(curr) = queue.pop_front() {
+            let Some(&cid) = self.name_to_id.get(&curr) else {
+                continue;
+            };
+            let Some(cell) = self.cells.get(cid as usize) else {
+                continue;
+            };
+            for edges in &cell.spoke_synapses {
+                for syn in edges {
+                    if syn.pos_evidence > syn.neg_evidence
+                        && syn.predicate != "disjoint_with"
+                        && visited.insert(syn.target_name.clone())
+                    {
+                        queue.push_back(syn.target_name.clone());
+                    }
+                }
+            }
+        }
+        visited
+    }
+
+    /// Phase 11: Collect all mutually exclusive concepts linked to any member of `concept_set`.
+    pub fn collect_disjoint_peers(
+        &self,
+        concept_set: &std::collections::HashSet<String>,
+    ) -> std::collections::HashSet<String> {
+        let mut disjoints = std::collections::HashSet::new();
+        for cell in &self.cells {
+            let sub_in = concept_set.contains(&cell.concept_id);
+            for edges in &cell.spoke_synapses {
+                for syn in edges {
+                    let is_disjoint_edge = (syn.predicate == "disjoint_with"
+                        && syn.pos_evidence > syn.neg_evidence)
+                        || (syn.neg_evidence > syn.pos_evidence);
+                    if !is_disjoint_edge {
+                        continue;
+                    }
+                    if sub_in {
+                        disjoints.insert(syn.target_name.clone());
+                    } else if concept_set.contains(&syn.target_name) {
+                        disjoints.insert(cell.concept_id.clone());
+                    }
+                }
+            }
+        }
+        disjoints
+    }
+
+    /// Phase 11: Native Rust Invariant Gate Verifier (`I_DAG` Acyclicity + `I_MUTEX` Mutual Exclusion).
+    pub fn verify_spoke_invariants(
+        &self,
+        subject: &str,
+        predicate: &str,
+        object: &str,
+    ) -> (bool, &'static str) {
+        let sub_clean = subject.trim().to_uppercase().replace(' ', "_");
+        let obj_clean = object.trim().to_uppercase().replace(' ', "_");
+        let pred_clean = predicate.trim().to_lowercase();
+
+        if sub_clean.is_empty() || obj_clean.is_empty() || sub_clean == obj_clean {
+            return (false, "I_DAG");
+        }
+        if pred_clean == "disjoint_with" {
+            let sub_anc = self.collect_positive_ancestors(&sub_clean);
+            let obj_anc = self.collect_positive_ancestors(&obj_clean);
+            if sub_anc.contains(&obj_clean) || obj_anc.contains(&sub_clean) {
+                return (false, "I_MUTEX");
+            }
+            return (true, "PASSED");
+        }
+
+        // Gate 1: I_DAG (check if object already reaches subject)
+        let obj_anc = self.collect_positive_ancestors(&obj_clean);
+        if obj_anc.contains(&sub_clean) {
+            return (false, "I_DAG");
+        }
+
+        // Gate 2: I_MUTEX (check if subject's ancestor closure is disjoint with object's ancestor closure)
+        let sub_anc = self.collect_positive_ancestors(&sub_clean);
+        let sub_disjoints = self.collect_disjoint_peers(&sub_anc);
+        if !sub_disjoints.is_disjoint(&obj_anc) {
+            return (false, "I_MUTEX");
+        }
+
+        (true, "PASSED")
+    }
+
     /// Pure-Rust 360° Liquid-Resonance Stream Learner (zero hardcoded word lists or regexes).
     ///
-    /// Slides a 3-token LFM-2.5 short-convolution window across raw UTF-8 text, selects the
-    /// radial spoke (0..6) with highest liquid trajectory resonance, updates local JEPA spoke
-    /// weights + Multi-Token Prediction (MTP) transitions, and triggers 5-Brake Fractal Mitosis.
+    /// Uses Shannon character-entropy salience `token_information_salience(w)` to separate
+    /// high-information concept anchors from low-entropy structural operators, verifies every
+    /// candidate link via native `verify_spoke_invariants` (`I_DAG` & `I_MUTEX`), updates local
+    /// JEPA spoke weights + Multi-Token Prediction (MTP) transitions, and triggers 5-Brake Fractal Mitosis.
     pub fn train_raw_stream(&mut self, text: &str, learning_rate: f32) -> StreamTrainStatsDto {
         let mut sentences_processed: usize = 0;
         let mut tokens_processed: usize = 0;
@@ -609,10 +736,10 @@ impl SpiderWebArena {
                 surprise_count += 1;
             }
 
-            // 2. Slide 3-tap LFM-2.5 liquid window over content tokens (information capacity len >= 3)
+            // 2. Slide 3-tap LFM-2.5 liquid window over high-salience concept anchors (Shannon H(w) * ln(1+|w|) >= 1.85)
             let content_tokens: Vec<String> = tokens
                 .iter()
-                .filter(|w| w.len() >= 3)
+                .filter(|w| token_information_salience(w) >= 1.85)
                 .cloned()
                 .collect();
 
@@ -634,12 +761,14 @@ impl SpiderWebArena {
                 if idx + 1 < content_tokens.len() {
                     let next_tok = &content_tokens[idx + 1];
                     if next_tok != curr_tok {
+                        let (passed, _gate) =
+                            self.verify_spoke_invariants(curr_tok, prev1, next_tok);
                         let s = self.learn_spoke_relation(
                             curr_tok,
                             prev1,
                             next_tok,
                             learning_rate * 0.5,
-                            true,
+                            passed,
                         );
                         total_surprise += s;
                         surprise_count += 1;

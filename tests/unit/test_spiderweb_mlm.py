@@ -291,3 +291,15 @@ def test_spiderweb_mlm_phase7_to_10_rust_wave_decoder_and_kernel_process() -> No
         assert out_follow.inference is not None
         assert out_follow.inference.status == BeliefStatus.SUPPORTED
 
+
+def test_spiderweb_mlm_phase11_to_13_native_rust_invariants_and_benchmark_suite() -> None:
+    """Phases 11-13: Native Rust I_DAG & I_MUTEX invariant gates, Shannon entropy stream learning, and 5-axis benchmark suite."""
+    bench = SpiderWebMLM.run_benchmark_suite()
+    assert bench["all_passed"] is True
+    assert bench["transitive_360_passed"] is True
+    assert bench["invariant_gates_passed"] is True
+    assert bench["zero_hallucination_abstention_passed"] is True
+    assert bench["multiturn_liquid_context_passed"] is True
+    assert bench["rust_beam_avg_latency_us"] < 2000.0
+
+

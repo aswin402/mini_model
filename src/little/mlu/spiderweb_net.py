@@ -1203,6 +1203,122 @@ class SpiderWebMLM:
             "telemetry": self.get_telemetry(),
         }
 
+    def bootstrap_curriculum(self, epochs: int = 2) -> dict[str, Any]:
+        """Phase 12: Pre-train the 360° Spider-Web MLM on the foundational world corpus directory."""
+        from pathlib import Path
+
+        from little.core.runtime_paths import RuntimePaths
+
+        candidate_dirs = [
+            RuntimePaths.default().database.parent / "knowledge" / "world_corpus",
+            Path("data/knowledge/world_corpus"),
+        ]
+        target_dir = next((d for d in candidate_dirs if d.exists() and d.is_dir()), None)
+        if target_dir is not None:
+            return self.ingest_corpus_path(str(target_dir), epochs=epochs)
+
+        synced = self.sync_from_symbolic_memory()
+        cons = self.consolidate()
+        return {
+            "files_processed": 0,
+            "epochs": max(1, epochs),
+            "sentences_processed": 0,
+            "relations_verified": synced,
+            "relations_refuted": 0,
+            "token_transitions_learned": 0,
+            "epoch_surprises": [],
+            "mitosis_promotions": cons.get("python_mitosis_promotions", []),
+            "consolidation": cons,
+            "telemetry": self.get_telemetry(),
+        }
+
+    @classmethod
+    def run_benchmark_suite(cls) -> dict[str, Any]:
+        """Phase 13: Run an isolated, deterministic 5-axis benchmark of the 360° Spider-Web MLM & Rust Arena."""
+        import time
+
+        with MemoryStore(seed_ontology=False) as bench_mem:
+            mlm = cls(
+                memory=bench_mem,
+                mitosis_min_activations=2,
+                mitosis_min_verified_spokes=2,
+            )
+            curriculum = (
+                "An orca is a cetacean. A cetacean is a mammal. A mammal is an animal. "
+                "A mammal has warm_blood. An orca can echolocate. An orca lives in the ocean. "
+                "A cobra is a reptile. A reptile is an animal. A mammal is not a reptile. "
+                "An albatross is a seabird. A seabird is a bird. A bird is an animal. "
+                "A bird is not a mammal. An albatross can glide."
+            )
+            rep1 = mlm.train_on_text(curriculum, persist=False)
+            mlm.consolidate()
+
+            # Axis 1: Multi-hop 360° transitive reasoning & property inheritance
+            q_trans1 = mlm.query_360("Is an orca an animal?")
+            q_trans2 = mlm.query_360("Is an albatross an animal?")
+            q_prop = mlm.query_360("Does an orca have warm_blood?")
+            transitive_passed = (
+                q_trans1.status == "VERIFIED"
+                and q_trans2.status == "VERIFIED"
+                and q_prop.status == "VERIFIED"
+            )
+
+            # Axis 2: Invariant Gate contradiction rejection (I_DAG + I_MUTEX in Python & Rust)
+            bad_rep = mlm.train_on_text(
+                "An animal is an orca. An orca is a cobra.", persist=False
+            )
+            rust_dag = mlm.rust_arena.verify_invariants("ANIMAL", "is_a", "ORCA")
+            rust_mutex = mlm.rust_arena.verify_invariants("ORCA", "is_a", "COBRA")
+            invariants_passed = (
+                bad_rep.relations_refuted == 2
+                and bad_rep.relations_verified == 0
+                and not rust_dag["passed"]
+                and rust_dag["gate"] == "I_DAG"
+                and not rust_mutex["passed"]
+                and rust_mutex["gate"] == "I_MUTEX"
+            )
+
+            # Axis 3: Zero-hallucination epistemic abstention
+            q_unk = mlm.query_360("What is a hyper_tachyon_quasar?")
+            abstention_passed = q_unk.status == "UNKNOWN" and q_unk.confidence == 0.0
+
+            # Axis 4: Multi-turn liquid context elliptic resolution
+            _ = mlm.query_360("Tell me about orca")
+            q_ellip_yes = mlm.query_360("Can it echolocate?")
+            q_ellip_no = mlm.query_360("Is it a cobra?")
+            multiturn_passed = (
+                q_ellip_yes.status == "VERIFIED"
+                and q_ellip_yes.focal_concept == "ORCA"
+                and q_ellip_no.status == "REFUTED"
+            )
+
+            # Axis 5: Native Rust 360° beam latency (microseconds/query)
+            iters = 25
+            t0 = time.perf_counter()
+            for _ in range(iters):
+                mlm.rust_arena.query_360_beam("ORCA", max_hops=3, top_k=10)
+            avg_beam_us = round(((time.perf_counter() - t0) * 1_000_000.0) / iters, 2)
+
+            tel = mlm.get_telemetry()
+            mlm.close()
+
+            all_passed = bool(
+                transitive_passed
+                and invariants_passed
+                and abstention_passed
+                and multiturn_passed
+            )
+            return {
+                "all_passed": all_passed,
+                "transitive_360_passed": transitive_passed,
+                "invariant_gates_passed": invariants_passed,
+                "zero_hallucination_abstention_passed": abstention_passed,
+                "multiturn_liquid_context_passed": multiturn_passed,
+                "rust_beam_avg_latency_us": avg_beam_us,
+                "verified_spokes_learned": rep1.relations_verified,
+                "telemetry": tel,
+            }
+
     def get_telemetry(self) -> dict[str, Any]:
         """Return live telemetry of the 360° Spider-Web MLM topology."""
         subcores = [cid for cid, u in self.nodes.items() if u.role == "subcore"]
