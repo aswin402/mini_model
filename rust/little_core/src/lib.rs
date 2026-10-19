@@ -935,6 +935,84 @@ pub extern "C" fn little_core_mlu_arena_load_snapshot(
     }
 }
 
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_dump_json(arena_ptr: *const SpiderWebArena) -> *mut c_char {
+    if arena_ptr.is_null() {
+        return to_c_string(&serde_json::json!({}));
+    }
+    let arena = unsafe { &*arena_ptr };
+    let s = arena.dump_snapshot_json();
+    match CString::new(s) {
+        Ok(cstr) => cstr.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_restore_json(
+    arena_ptr: *mut SpiderWebArena,
+    json_ptr: *const c_char,
+) -> i32 {
+    if arena_ptr.is_null() || json_ptr.is_null() {
+        return 0;
+    }
+    let Ok(payload) = (unsafe { CStr::from_ptr(json_ptr) }).to_str() else {
+        return 0;
+    };
+    let arena = unsafe { &mut *arena_ptr };
+    if arena.restore_snapshot_json(payload) {
+        1
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_query_360_beam(
+    arena_ptr: *mut SpiderWebArena,
+    concept_ptr: *const c_char,
+    max_hops: usize,
+    top_k: usize,
+) -> *mut c_char {
+    let empty = mlu_arena::Query360BeamDto {
+        focal_concept: String::new(),
+        active_subcore: "CORE_ROOT".to_string(),
+        role: "unknown".to_string(),
+        activated_cells: vec!["CORE_ROOT".to_string()],
+        predictions: Vec::new(),
+        generated_continuation: String::new(),
+    };
+    if arena_ptr.is_null() || concept_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let Ok(concept) = (unsafe { CStr::from_ptr(concept_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let arena = unsafe { &mut *arena_ptr };
+    let res = arena.query_360_beam(concept, max_hops, top_k);
+    to_c_string(&res)
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_consolidate(
+    arena_ptr: *mut SpiderWebArena,
+    min_transition_weight: f32,
+    replay_lr: f32,
+) -> *mut c_char {
+    let empty = mlu_arena::ConsolidationReportDto {
+        replayed_edges: 0,
+        pruned_transitions: 0,
+        average_replay_surprise: 0.0,
+        mitosis_promotions: 0,
+        total_cells: 0,
+    };
+    if arena_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let arena = unsafe { &mut *arena_ptr };
+    let report = arena.consolidate_arena(min_transition_weight, replay_lr);
+    to_c_string(&report)
+}
 
 #[cfg(test)]
 mod tests {
@@ -1029,15 +1107,18 @@ mod tests {
         let s1 = arena.learn_spoke_relation("ORCA", "is_a", "CETACEAN", 0.25, true);
         let s2 = arena.learn_spoke_relation("ORCA", "has_part", "DORSAL_FIN", 0.25, true);
         let s3 = arena.learn_spoke_relation("ORCA", "can", "ECHOLOCATE", 0.25, true);
+        let _s4 = arena.learn_spoke_relation("CETACEAN", "is_a", "MAMMAL", 0.25, true);
+        let _s5 = arena.learn_spoke_relation("MAMMAL", "is_a", "ANIMAL", 0.25, true);
         assert!(s1 >= 0.0 && s2 >= 0.0 && s3 >= 0.0);
         assert_eq!(arena.total_mitosis_events, 1);
         let orca_id = arena.name_to_id["ORCA"] as usize;
         assert_eq!(arena.cells[orca_id].role, "subcore");
 
         let preds = arena.predict_spoke_targets("ORCA", 0, 5);
-        assert_eq!(preds.len(), 1);
-        assert_eq!(preds[0].target_concept, "CETACEAN");
-        assert!(preds[0].combined_confidence > 0.5);
+        assert!(!preds.is_empty());
+        assert!(preds
+            .iter()
+            .any(|p| p.target_concept == "CETACEAN" && p.combined_confidence > 0.5));
 
         let stream_stats1 = arena.train_raw_stream(
             "An orca is a marine cetacean that hunts in coordinated pods. \
@@ -1054,7 +1135,24 @@ mod tests {
 
         let gen = arena.generate_from_prompt("an orca", 6);
         assert!(gen.contains("marine") || gen.contains("cetacean"));
+
+        // Phase 1: Native Rust 360° Multi-Hop Beam Traversal
+        let beam = arena.query_360_beam("ORCA", 3, 10);
+        assert_eq!(beam.focal_concept, "ORCA");
+        assert_eq!(beam.role, "subcore");
+        assert!(beam.predictions.iter().any(|p| p.target_concept == "ANIMAL"));
+        assert!(beam.activated_cells.contains(&"CETACEAN".to_string()));
+        assert!(beam.activated_cells.contains(&"MAMMAL".to_string()));
+
+        // Phase 2: Native Rust Sleep-Cycle Consolidation + JSON Snapshot round-trip
+        let cons = arena.consolidate_arena(0.05, 0.15);
+        assert!(cons.replayed_edges >= 5);
+        let snap_json = arena.dump_snapshot_json();
+        let mut arena2 = SpiderWebArena::new(3, 2);
+        assert!(arena2.restore_snapshot_json(&snap_json));
+        assert_eq!(arena2.cells.len(), arena.cells.len());
     }
 }
+
 
 

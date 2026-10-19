@@ -15,7 +15,7 @@ Architecture:
 from __future__ import annotations
 
 import json
-import re
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -29,6 +29,7 @@ from little.mlu.unit import (
     deterministic_seed_vector,
     map_predicate_to_spoke,
 )
+from little.neural.semantic_frame_policy import SemanticFramePolicy
 
 DEFAULT_SUBCORES: tuple[str, ...] = (
     "SUBCORE_TAXONOMY",
@@ -39,128 +40,54 @@ DEFAULT_SUBCORES: tuple[str, ...] = (
     "SUBCORE_EPISODIC",
 )
 
-STOPWORDS: frozenset[str] = frozenset(
-    {
-        "a",
-        "an",
-        "the",
-        "and",
-        "or",
-        "but",
-        "if",
-        "then",
-        "of",
-        "to",
-        "in",
-        "on",
-        "at",
-        "by",
-        "for",
-        "with",
-        "from",
-        "as",
-        "is",
-        "are",
-        "was",
-        "were",
-        "be",
-        "been",
-        "being",
-        "it",
-        "this",
-        "that",
-        "these",
-        "those",
-        "what",
-        "which",
-        "who",
-        "whom",
-        "how",
-        "why",
-        "where",
-        "when",
-        "does",
-        "do",
-        "did",
-        "tell",
-        "me",
-        "about",
-    }
-)
 
-# Natural-language relational patterns for open-stream extraction
-STREAM_RELATION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (
-        re.compile(
-            r"^(?:(?:the|an|a)\b\s+)?([a-z0-9_\s]+?)\s+(?:is\s+a|is\s+an|are\s+a|are)\s+(?:kind\s+of\s+|type\s+of\s+)?([a-z0-9_\s]+)$",
-            re.IGNORECASE,
-        ),
-        "is_a",
-    ),
-    (
-        re.compile(
-            r"^(?:(?:the|an|a)\b\s+)?([a-z0-9_\s]+?)\s+(?:is\s+not\s+a|is\s+not\s+an|cannot\s+be\s+a|is\s+disjoint\s+with)\s+([a-z0-9_\s]+)$",
-            re.IGNORECASE,
-        ),
-        "disjoint_with",
-    ),
-    (
-        re.compile(
-            r"^(?:(?:the|an|a)\b\s+)?([a-z0-9_\s]+?)\s+(?:is\s+part\s+of|belongs\s+to)\s+(?:(?:the|an|a)\b\s+)?([a-z0-9_\s]+)$",
-            re.IGNORECASE,
-        ),
-        "part_of",
-    ),
-    (
-        re.compile(
-            r"^(?:(?:the|an|a)\b\s+)?([a-z0-9_\s]+?)\s+(?:has\s+a|has\s+an|has|contains|consists\s+of)\s+([a-z0-9_\s]+)$",
-            re.IGNORECASE,
-        ),
-        "has_part",
-    ),
-    (
-        re.compile(
-            r"^(?:(?:the|an|a)\b\s+)?([a-z0-9_\s]+?)\s+(?:can|is\s+able\s+to|is\s+capable\s+of)\s+([a-z0-9_\s]+)$",
-            re.IGNORECASE,
-        ),
-        "can",
-    ),
-    (
-        re.compile(
-            r"^(?:(?:the|an|a)\b\s+)?([a-z0-9_\s]+?)\s+(?:is\s+used\s+for|is\s+used\s+to|helps\s+to)\s+([a-z0-9_\s]+)$",
-            re.IGNORECASE,
-        ),
-        "used_for",
-    ),
-    (
-        re.compile(
-            r"^(?:(?:the|an|a)\b\s+)?([a-z0-9_\s]+?)\s+(?:causes|leads\s+to|triggers|produces|creates)\s+([a-z0-9_\s]+)$",
-            re.IGNORECASE,
-        ),
-        "causes",
-    ),
-    (
-        re.compile(
-            r"^(?:(?:the|an|a)\b\s+)?([a-z0-9_\s]+?)\s+(?:requires|needs|depends\s+on)\s+([a-z0-9_\s]+)$",
-            re.IGNORECASE,
-        ),
-        "requires",
-    ),
-    (
-        re.compile(
-            r"^(?:(?:the|an|a)\b\s+)?([a-z0-9_\s]+?)\s+(?:lives\s+in|is\s+found\s+in|is\s+located\s+in|inhabits)\s+(?:(?:the|an|a)\b\s+)?([a-z0-9_\s]+)$",
-            re.IGNORECASE,
-        ),
-        "located_in",
-    ),
-    (
-        re.compile(
-            r"^(?:(?:the|an|a)\b\s+)?([a-z0-9_\s]+?)\s+(?:is|are)\s+([a-z0-9_]+)$",
-            re.IGNORECASE,
-        ),
-        "has_property",
-    ),
-)
+def _tokenize_words(text: str) -> list[str]:
+    """Pure character-state alphanumeric tokenizer without regular expressions."""
+    tokens: list[str] = []
+    buf: list[str] = []
+    for ch in text:
+        if ch.isalnum() or ch == "_":
+            buf.append(ch.lower())
+        elif buf:
+            tokens.append("".join(buf))
+            buf.clear()
+    if buf:
+        tokens.append("".join(buf))
+    return tokens
+
+
+def _segment_sentences(text: str) -> list[str]:
+    """Segment raw stream into utterances via character boundary state transitions."""
+    sentences: list[str] = []
+    buf: list[str] = []
+    for ch in text:
+        if ch in ".!?\n":
+            candidate = "".join(buf).strip()
+            if candidate:
+                sentences.append(candidate)
+            buf.clear()
+        else:
+            buf.append(ch)
+    tail = "".join(buf).strip()
+    if tail:
+        sentences.append(tail)
+    return sentences
+
+
+def _shannon_char_entropy(token: str) -> float:
+    """Compute Shannon character-level entropy H(X) = -sum p(c) log2 p(c) for a token."""
+    n = len(token)
+    if n <= 1:
+        return 0.0
+    counts: dict[str, int] = {}
+    for ch in token:
+        counts[ch] = counts.get(ch, 0) + 1
+    inv_n = 1.0 / float(n)
+    entropy = 0.0
+    for c in counts.values():
+        p = float(c) * inv_n
+        entropy -= p * math.log2(p)
+    return entropy
 
 
 @dataclass(frozen=True)
@@ -217,6 +144,7 @@ class SpiderWebMLM:
         self.memory = memory
         self.verifier = verifier or DeepSeekInvariantVerifier(memory)
         self.plasticity = plasticity or PlasticityController(base_lr=0.20)
+        self.frame_policy = SemanticFramePolicy.default()
         self.dim = dim
         self.max_mlu_nodes = max_mlu_nodes
         self.mitosis_min_activations = mitosis_min_activations
@@ -228,6 +156,10 @@ class SpiderWebMLM:
         self.subcore_children: dict[str, set[str]] = {}
         self.total_mitosis_events: int = 0
         self.total_pruned_nodes: int = 0
+        self._operator_codebook: list[tuple[tuple[str, ...], str, list[float]]] = []
+        self._operator_token_mass: dict[str, float] = {}
+        self._build_operator_codebook()
+
         from little.rust.engine import RustMluArena
 
         self.rust_arena = RustMluArena(
@@ -253,6 +185,15 @@ class SpiderWebMLM:
                     role TEXT NOT NULL,
                     parent_hub TEXT,
                     payload_json TEXT NOT NULL,
+                    updated_step INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            self.memory.transaction().execute(
+                """
+                CREATE TABLE IF NOT EXISTS mlu_arena_snapshots (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    snapshot_json TEXT NOT NULL,
                     updated_step INTEGER NOT NULL DEFAULT 0
                 )
                 """
@@ -289,8 +230,15 @@ class SpiderWebMLM:
             except (json.JSONDecodeError, KeyError, TypeError, ValueError):
                 continue
 
+        if self.rust_arena.is_native:
+            cursor.execute("SELECT snapshot_json, updated_step FROM mlu_arena_snapshots WHERE id = 1")
+            row = cursor.fetchone()
+            if row and row[0]:
+                self.rust_arena.restore_json(str(row[0]))
+                self.cycle_step = max(self.cycle_step, int(row[1] or 0))
+
     def save_nodes(self, concept_ids: list[str] | None = None) -> None:
-        """Persist modified MLU nodes to SQLite."""
+        """Persist modified MLU nodes and the native Rust 360° Arena snapshot to SQLite."""
         ids_to_save = concept_ids if concept_ids is not None else list(self.nodes.keys())
         rows: list[tuple[str, str, str | None, str, int]] = []
         for cid in ids_to_save:
@@ -306,8 +254,8 @@ class SpiderWebMLM:
                     self.cycle_step,
                 )
             )
-        if rows:
-            with self.memory.transaction():
+        with self.memory.transaction():
+            if rows:
                 self.memory.transaction().executemany(
                     """
                     INSERT INTO mlu_spiderweb_nodes (concept_id, role, parent_hub, payload_json, updated_step)
@@ -319,6 +267,18 @@ class SpiderWebMLM:
                         updated_step = excluded.updated_step
                     """,
                     rows,
+                )
+            if self.rust_arena.is_native:
+                snap_json = self.rust_arena.dump_json()
+                self.memory.transaction().execute(
+                    """
+                    INSERT INTO mlu_arena_snapshots (id, snapshot_json, updated_step)
+                    VALUES (1, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        snapshot_json = excluded.snapshot_json,
+                        updated_step = excluded.updated_step
+                    """,
+                    (snap_json, self.cycle_step),
                 )
 
     def sync_from_symbolic_memory(self) -> int:
@@ -346,6 +306,10 @@ class SpiderWebMLM:
                     learning_rate=0.15,
                     verified=True,
                 )
+                if self.rust_arena.is_native:
+                    self.rust_arena.learn_spoke(
+                        sub_cid, rel.predicate, obj_cid, learning_rate=0.15, verified=True
+                    )
                 synced += 1
         return synced
 
@@ -355,9 +319,108 @@ class SpiderWebMLM:
 
     @staticmethod
     def _clean_id(text: str) -> str:
-        cleaned = re.sub(r"[^a-zA-Z0-9_\s]", "", text).strip().upper()
-        cleaned = re.sub(r"\s+", "_", cleaned)
-        return cleaned
+        return "_".join(t.upper() for t in _tokenize_words(text))
+
+    def _build_operator_codebook(self) -> None:
+        """Build 64-D relational operator prototypes from SchemaRegistry and SemanticFramePolicy."""
+        neg_tuples = [
+            tuple(_tokenize_words(phrase))
+            for phrase in self.frame_policy.negation_tokens
+            if _tokenize_words(phrase)
+        ]
+        for det in self.frame_policy.stop_determiners:
+            for tok in _tokenize_words(det):
+                self._operator_token_mass[tok] = self._operator_token_mass.get(tok, 0.0) + 3.0
+
+        disjoint_pred = (
+            "disjoint_with"
+            if "disjoint_with" in self.verifier.disjoint_predicates
+            else next(iter(self.verifier.disjoint_predicates), "disjoint_with")
+        )
+        seen_tuples: set[tuple[str, ...]] = set()
+
+        def _contains_negation(seq: tuple[str, ...]) -> bool:
+            for nt in neg_tuples:
+                k = len(nt)
+                if k > 0 and any(seq[idx : idx + k] == nt for idx in range(len(seq) - k + 1)):
+                    return True
+            return False
+
+        for base_rel, phrases in self.frame_policy.relational_indicators.items():
+            for phrase in phrases:
+                ptoks = tuple(_tokenize_words(phrase))
+                if not ptoks:
+                    continue
+                for tok in ptoks:
+                    self._operator_token_mass[tok] = self._operator_token_mass.get(tok, 0.0) + 2.0
+
+                has_neg = _contains_negation(ptoks)
+                if has_neg:
+                    canonical = disjoint_pred
+                elif base_rel == "has_property" and ptoks[0] in ("has", "have", "had"):
+                    canonical = "has_part"
+                elif base_rel == "capable_of" and ptoks == ("can",):
+                    canonical = "can"
+                else:
+                    canonical = base_rel
+
+                if self.verifier.registry.relation(canonical) is None:
+                    canonical = self.verifier.taxonomy_predicate or "is_a"
+
+                for candidate_toks in (
+                    ptoks,
+                    ptoks[:-1]
+                    if len(ptoks) > 1 and ptoks[-1] in self.frame_policy.stop_determiners
+                    else ptoks,
+                ):
+                    if candidate_toks and candidate_toks not in seen_tuples:
+                        seen_tuples.add(candidate_toks)
+                        vec = deterministic_seed_vector("_".join(candidate_toks), self.dim)
+                        self._operator_codebook.append((candidate_toks, canonical, vec))
+
+        for reg_pred in self.verifier.registry.predicates():
+            ptoks = tuple(_tokenize_words(reg_pred))
+            if ptoks and ptoks not in seen_tuples:
+                seen_tuples.add(ptoks)
+                for tok in ptoks:
+                    self._operator_token_mass[tok] = self._operator_token_mass.get(tok, 0.0) + 1.5
+                vec = deterministic_seed_vector(reg_pred, self.dim)
+                self._operator_codebook.append((ptoks, reg_pred, vec))
+
+    def _token_salience(self, token: str) -> float:
+        """Compute Shannon character-entropy & epistemic anchor salience for a token."""
+        if not token:
+            return 0.0
+        char_h = _shannon_char_entropy(token)
+        morph_info = char_h * math.log(1.0 + float(len(token)))
+        if "_" in token:
+            morph_info += 2.0
+        cid = token.upper()
+        anchor_bonus = (
+            2.0
+            if (cid in self.nodes and cid != "CORE_ROOT" and cid not in DEFAULT_SUBCORES)
+            else 0.0
+        )
+        op_mass = self._operator_token_mass.get(token, 0.0)
+        return (morph_info + anchor_bonus) / (1.0 + op_mass)
+
+    def _extract_salient_concept(self, span_tokens: list[str]) -> tuple[str, float]:
+        """Select the highest-information concept token(s) from a token span."""
+        if not span_tokens:
+            return "", 0.0
+        scored = [(t, self._token_salience(t)) for t in span_tokens]
+        max_sal = max(s for _, s in scored)
+        if max_sal <= 0.15:
+            return "", 0.0
+        kept = [
+            t
+            for t, s in scored
+            if s >= 0.60 * max_sal and self._operator_token_mass.get(t, 0.0) < 2.0
+        ]
+        if not kept:
+            best_tok = max(scored, key=lambda kv: kv[1])[0]
+            kept = [best_tok]
+        return "_".join(kept), max_sal
 
     def _route_to_subcore(self, preferred_spoke: str, concept_vec: list[float]) -> str:
         """Select the best Sub-Core Hub using spoke alignment + cosine similarity."""
@@ -464,44 +527,81 @@ class SpiderWebMLM:
     # ------------------------------------------------------------------
 
     def _extract_candidate_triples(self, sentence: str) -> list[tuple[str, str, str]]:
-        """Extract structured relational triples AND open-domain concept associations from a sentence."""
-        clean = sentence.strip().rstrip(".!?").strip()
-        if not clean:
+        """Extract relational triples via joint Shannon salience & 64-D operator subspace optimization."""
+        tokens = _tokenize_words(sentence)
+        if len(tokens) < 2:
             return []
 
-        triples: list[tuple[str, str, str]] = []
-        for pattern, pred in STREAM_RELATION_PATTERNS:
-            m = pattern.match(clean)
-            if m:
-                subj = re.sub(r"^(?:the|an|a)\b\s+", "", m.group(1).strip().lower()).strip()
-                obj = re.sub(r"^(?:the|an|a)\b\s+", "", m.group(2).strip().lower()).strip()
-                if subj and obj and subj not in STOPWORDS and obj not in STOPWORDS:
-                    triples.append((subj, pred, obj))
-                break
+        best_score = -1e9
+        best_triple: tuple[str, str, str] | None = None
+        n = len(tokens)
 
-        # Even if a sentence is free-form prose, extract salient content concepts for episodic co-occurrence
-        if not triples:
-            words = [
-                w.lower()
-                for w in re.findall(r"[a-zA-Z][a-zA-Z0-9_]{2,}", clean)
-                if w.lower() not in STOPWORDS
+        for i in range(1, n):
+            for j in range(i + 1, min(n, i + 6)):
+                bridge = tuple(tokens[i:j])
+                # Strip trailing determiners inside the bridge if needed
+                core_bridge = tuple(
+                    t for t in bridge if t not in self.frame_policy.stop_determiners
+                )
+                matched_pred: str | None = None
+                op_resonance = -1.0
+
+                for proto_toks, canonical_pred, _vec in self._operator_codebook:
+                    if bridge == proto_toks or (core_bridge and core_bridge == proto_toks):
+                        res = 1.0 + 0.25 * float(len(proto_toks))
+                        if res > op_resonance:
+                            op_resonance = res
+                            matched_pred = canonical_pred
+
+                if matched_pred is None:
+                    continue
+
+                subj_concept, subj_sal = self._extract_salient_concept(tokens[:i])
+                obj_concept, obj_sal = self._extract_salient_concept(tokens[j:])
+                if not subj_concept or not obj_concept or subj_concept == obj_concept:
+                    continue
+
+                total_score = subj_sal + obj_sal + 4.0 * op_resonance
+                if total_score > best_score:
+                    best_score = total_score
+                    best_triple = (subj_concept, matched_pred, obj_concept)
+
+        if best_triple is not None:
+            return [best_triple]
+
+        # Open-vocabulary SVO projection: rank tokens by Shannon salience and project interior bridge
+        salient = [
+            (idx, tok, self._token_salience(tok))
+            for idx, tok in enumerate(tokens)
+            if self._token_salience(tok) > 0.5
+        ]
+        if len(salient) >= 3:
+            subj_tok = salient[0][1]
+            bridge_tok = salient[1][1]
+            obj_tok = salient[-1][1]
+            if subj_tok != obj_tok:
+                bridge_vec = deterministic_seed_vector(bridge_tok, self.dim)
+                best_pred = "causes"
+                best_sim = -1e9
+                for _ptoks, canonical_pred, proto_vec in self._operator_codebook:
+                    sim = sum(a * b for a, b in zip(bridge_vec, proto_vec, strict=False))
+                    if sim > best_sim:
+                        best_sim = sim
+                        best_pred = canonical_pred
+                return [(subj_tok, best_pred, obj_tok)]
+
+        if len(salient) >= 2:
+            anchor = salient[0][1]
+            return [
+                (anchor, "related_to", other_tok)
+                for _idx, other_tok, _sal in salient[1:4]
+                if other_tok != anchor
             ]
-            if len(words) >= 2:
-                anchor = words[0]
-                for other in words[1:4]:
-                    if other != anchor:
-                        triples.append((anchor, "co_occurs_with", other))
-        return triples
+        return []
 
     def train_on_text(self, text: str, persist: bool = True) -> MLMTrainingStepReport:
         """Train the 360° Spider-Web MLM step-by-step on raw text or multi-sentence documents."""
-        raw_sentences = [
-            s.strip()
-            for s in re.split(r"(?<=[.!?])\s+|\n+", text)
-            if s and s.strip()
-        ]
-        if not raw_sentences and text.strip():
-            raw_sentences = [text.strip()]
+        raw_sentences = _segment_sentences(text)
 
         sentences_processed = 0
         relations_verified = 0
@@ -521,7 +621,7 @@ class SpiderWebMLM:
             sentences_processed += 1
 
             # 1. Tokenize and train Central Core Multi-Token Prediction (MTP)
-            tokens = re.findall(r"[a-zA-Z0-9_]+", sent.lower())
+            tokens = _tokenize_words(sent)
             if len(tokens) >= 2:
                 tok_surprise = core_unit.learn_token_sequence(
                     tokens, learning_rate=0.15 * self.plasticity.plasticity_multiplier
@@ -651,11 +751,41 @@ class SpiderWebMLM:
         for spoke_name in SPOKE_NAMES:
             all_preds.extend(focal_unit.predict_spoke_targets(spoke_name, candidate_vecs, top_k=4))
 
-        # Multi-hop transitive taxonomic & property inheritance across the Spider-Web
+        # Phase 1: Fuse native Rust 360° Multi-Hop Beam Traversal predictions
+        if self.rust_arena.is_native:
+            beam_dto = self.rust_arena.query_360_beam(
+                focal_unit.concept_id, max_hops=max_hops, top_k=12
+            )
+            for cell_name in beam_dto.get("activated_cells", []):
+                if cell_name in self.nodes and cell_name not in activated:
+                    activated.append(str(cell_name))
+            for item in beam_dto.get("predictions", []):
+                pred_name = str(item["predicate"])
+                tgt_name = str(item["target_concept"])
+                if (
+                    self.verifier.registry.relation(pred_name) is None
+                    or tgt_name not in self.nodes
+                ):
+                    continue
+                all_preds.append(
+                    MLUSpokePrediction(
+                        source_concept=str(item["source_concept"]),
+                        spoke=str(item["spoke"]),
+                        predicate=pred_name,
+                        target_concept=tgt_name,
+                        neural_score=round(float(item["neural_score"]), 4),
+                        nars_confidence=round(float(item["nars_confidence"]), 4),
+                        epistemic_entropy=round(float(item["epistemic_entropy"]), 4),
+                        combined_confidence=round(float(item["combined_confidence"]), 4),
+                        verified=bool(item["verified"]),
+                    )
+                )
+
+        # Multi-hop transitive inheritance across verified acyclic links in the Spider-Web
         frontier = [
             p.target_concept
             for p in all_preds
-            if p.spoke == "taxonomy" and p.predicate == "is_a"
+            if p.predicate in self.verifier.acyclic_predicates
         ]
         visited = {focal_unit.concept_id}
         hop = 1
@@ -671,12 +801,15 @@ class SpiderWebMLM:
                     continue
                 if parent_cid not in activated:
                     activated.append(parent_cid)
-                for spoke_name in ("taxonomy", "mereology", "attributes", "procedural", "episodic"):
+                for spoke_name in SPOKE_NAMES:
                     parent_preds = parent_unit.predict_spoke_targets(
                         spoke_name, candidate_vecs, top_k=3
                     )
                     for pp in parent_preds:
-                        if pp.target_concept == focal_unit.concept_id or pp.predicate == "disjoint_with":
+                        if (
+                            pp.target_concept == focal_unit.concept_id
+                            or pp.predicate in self.verifier.disjoint_predicates
+                        ):
                             continue
                         inherited = MLUSpokePrediction(
                             source_concept=focal_unit.concept_id,
@@ -692,7 +825,7 @@ class SpiderWebMLM:
                             verified=pp.verified,
                         )
                         all_preds.append(inherited)
-                        if pp.spoke == "taxonomy" and pp.predicate == "is_a":
+                        if pp.predicate in self.verifier.acyclic_predicates:
                             next_frontier.append(pp.target_concept)
             frontier = next_frontier
             hop += 1
@@ -710,11 +843,7 @@ class SpiderWebMLM:
     def query_360(self, query: str) -> MLMQueryResult:
         """Answer a natural-language question or concept inquiry using the 360° Spider-Web MLM."""
         clean_q = query.strip()
-        tokens = [
-            w.lower()
-            for w in re.findall(r"[a-zA-Z0-9_]+", clean_q)
-            if w.lower() not in STOPWORDS
-        ]
+        tokens = _tokenize_words(clean_q)
 
         # Identify focal concept (and optional target concept for yes/no relational queries)
         focal_cid: str | None = None
@@ -724,20 +853,30 @@ class SpiderWebMLM:
         for i in range(len(tokens)):
             if i + 1 < len(tokens):
                 bigram_cid = f"{tokens[i].upper()}_{tokens[i + 1].upper()}"
-                if bigram_cid in self.nodes and bigram_cid not in DEFAULT_SUBCORES:
+                if (
+                    bigram_cid in self.nodes
+                    and bigram_cid != "CORE_ROOT"
+                    and bigram_cid not in DEFAULT_SUBCORES
+                ):
                     if focal_cid is None:
                         focal_cid = bigram_cid
                     elif bigram_cid != focal_cid:
                         target_cid = bigram_cid
             single_cid = tokens[i].upper()
-            if single_cid in self.nodes and single_cid not in DEFAULT_SUBCORES:
+            if (
+                single_cid in self.nodes
+                and single_cid != "CORE_ROOT"
+                and single_cid not in DEFAULT_SUBCORES
+            ):
                 if focal_cid is None:
                     focal_cid = single_cid
                 elif single_cid != focal_cid and target_cid is None:
                     target_cid = single_cid
 
         if focal_cid is None and tokens:
-            focal_cid = tokens[0].upper()
+            # Select the token with the highest Shannon character-entropy & morphological salience
+            best_tok = max(tokens, key=self._token_salience)
+            focal_cid = best_tok.upper()
 
         if not focal_cid or focal_cid not in self.nodes:
             return MLMQueryResult(
@@ -872,6 +1011,89 @@ class SpiderWebMLM:
             inspectable_trace=trace,
         )
 
+    def consolidate(
+        self, min_transition_weight: float = 0.05, replay_lr: float = 0.15
+    ) -> dict[str, Any]:
+        """Phase 2: Run Sleep-Cycle Consolidation (spoke replay + transition pruning + mitosis)."""
+        rust_report = (
+            self.rust_arena.consolidate(
+                min_transition_weight=min_transition_weight, replay_lr=replay_lr
+            )
+            if self.rust_arena.is_native
+            else {
+                "replayed_edges": 0,
+                "pruned_transitions": 0,
+                "average_replay_surprise": 0.0,
+                "mitosis_promotions": 0,
+                "total_cells": len(self.nodes),
+            }
+        )
+        promoted, pruned = self.run_structural_plasticity_cycle()
+        self.save_nodes(promoted if promoted else None)
+        return {
+            "rust_consolidation": rust_report,
+            "python_mitosis_promotions": promoted,
+            "python_pruned_nodes": pruned,
+            "total_mlu_nodes": len(self.nodes),
+            "rust_arena_nodes": self.rust_arena.node_count,
+        }
+
+    def ingest_corpus_path(
+        self, target_path: str, epochs: int = 2
+    ) -> dict[str, Any]:
+        """Phase 3: Stream-train the 360° Spider-Web MLM on a file or directory of text/markdown files."""
+        from pathlib import Path
+
+        root = Path(target_path)
+        files: list[Path] = []
+        if root.is_file():
+            files.append(root)
+        elif root.is_dir():
+            for ext in ("*.md", "*.txt"):
+                files.extend(sorted(root.rglob(ext)))
+
+        total_sentences = 0
+        total_verified = 0
+        total_refuted = 0
+        total_tokens = 0
+        epoch_surprises: list[float] = []
+        all_promotions: list[str] = []
+
+        for _ep in range(max(1, epochs)):
+            ep_surprises: list[float] = []
+            for fpath in files:
+                try:
+                    content = fpath.read_text(encoding="utf-8", errors="ignore")
+                except OSError:
+                    continue
+                if not content.strip():
+                    continue
+                rep = self.train_on_text(content, persist=False)
+                total_sentences += rep.sentences_processed
+                total_verified += rep.relations_verified
+                total_refuted += rep.relations_refuted
+                total_tokens += rep.token_transitions_learned
+                ep_surprises.append(rep.average_surprise)
+                for p in rep.mitosis_promotions:
+                    if p not in all_promotions:
+                        all_promotions.append(p)
+            if ep_surprises:
+                epoch_surprises.append(round(sum(ep_surprises) / len(ep_surprises), 4))
+
+        cons = self.consolidate()
+        return {
+            "files_processed": len(files),
+            "epochs": max(1, epochs),
+            "sentences_processed": total_sentences,
+            "relations_verified": total_verified,
+            "relations_refuted": total_refuted,
+            "token_transitions_learned": total_tokens,
+            "epoch_surprises": epoch_surprises,
+            "mitosis_promotions": all_promotions,
+            "consolidation": cons,
+            "telemetry": self.get_telemetry(),
+        }
+
     def get_telemetry(self) -> dict[str, Any]:
         """Return live telemetry of the 360° Spider-Web MLM topology."""
         subcores = [cid for cid, u in self.nodes.items() if u.role == "subcore"]
@@ -893,4 +1115,5 @@ class SpiderWebMLM:
             "cycle_step": self.cycle_step,
             "rust_arena_native": self.rust_arena.is_native,
             "rust_arena_nodes": self.rust_arena.node_count,
+            "rust_arena_mitosis": self.rust_arena.mitosis_count,
         }

@@ -96,31 +96,39 @@ pub fn deterministic_seed_vec(key: &str) -> [f32; MLU_DIM] {
     out
 }
 
-pub fn map_predicate_to_spoke_idx(predicate: &str) -> usize {
-    let norm = predicate.trim().to_lowercase().replace(' ', "_");
-    match norm.as_str() {
-        "is_a" | "instance_of" | "subclass_of" | "kind_of" | "disjoint_with" => 0,
-        "part_of" | "has_part" | "has" | "contains" | "made_of" => 1,
-        "has_property" | "is" | "color" | "shape" | "taste" | "temperature" => 2,
-        "causes" | "becomes" | "requires" | "produces" | "triggers" => 3,
-        "can" | "capable_of" | "used_for" | "performs" => 4,
-        "located_in" | "found_in" | "lives_in" | "co_occurs_with" => 5,
-        _ => {
-            if norm.contains("part") || norm.contains("contain") || norm.contains("consist") {
-                1
-            } else if norm.contains("prop") || norm.contains("color") || norm.contains("size") {
-                2
-            } else if norm.contains("cause") || norm.contains("change") || norm.contains("req") {
-                3
-            } else if norm.contains("can") || norm.contains("use") || norm.contains("skill") {
-                4
-            } else if norm.contains("locat") || norm.contains("live") || norm.contains("find") {
-                5
-            } else {
-                0
-            }
+/// 360° Angular Harmonic Phase Basis Vector for Spoke `k` (k = 0..6, 60° = 2πk/6 phase intervals).
+pub fn harmonic_spoke_basis(spoke_idx: usize) -> [f32; MLU_DIM] {
+    let theta = (spoke_idx as f32) * (2.0 * std::f32::consts::PI / (NUM_SPOKES as f32));
+    let mut out = [0.0f32; MLU_DIM];
+    for (d, slot) in out.iter_mut().enumerate() {
+        let harmonic = 1.0 + ((d % NUM_SPOKES) as f32) * 0.5;
+        let dim_phase = (d as f32) * std::f32::consts::PI / (MLU_DIM as f32);
+        *slot = (theta * harmonic + dim_phase).cos();
+    }
+    normalize_in_place(&mut out);
+    out
+}
+
+/// Pure mathematical 360° angular spoke router: projects the coupled (relation, target) wave
+/// onto the 6 orthogonal harmonic phase basis vectors and returns argmax_k.
+pub fn route_phase_spoke_idx(rel_vec: &[f32; MLU_DIM], target_vec: &[f32; MLU_DIM]) -> usize {
+    let mut coupled = [0.0f32; MLU_DIM];
+    for i in 0..MLU_DIM {
+        coupled[i] = rel_vec[i] + 0.35 * target_vec[i];
+    }
+    normalize_in_place(&mut coupled);
+
+    let mut best_k: usize = 0;
+    let mut best_proj: f32 = -1e9;
+    for k in 0..NUM_SPOKES {
+        let basis = harmonic_spoke_basis(k);
+        let proj = dot_product(&basis, &coupled);
+        if proj > best_proj {
+            best_proj = proj;
+            best_k = k;
         }
     }
+    best_k
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -176,8 +184,13 @@ impl MluCell {
         let seed = deterministic_seed_vec(&clean);
         let gate = deterministic_seed_vec(&format!("GATE::{clean}"));
         let mut spoke_weights = Vec::with_capacity(NUM_SPOKES);
-        for s_name in SPOKE_NAMES {
-            spoke_weights.push(deterministic_seed_vec(&format!("SPOKE::{s_name}")).to_vec());
+        for k in 0..NUM_SPOKES {
+            let mut basis = harmonic_spoke_basis(k);
+            for i in 0..MLU_DIM {
+                basis[i] = 0.75 * basis[i] + 0.25 * seed[i];
+            }
+            normalize_in_place(&mut basis);
+            spoke_weights.push(basis.to_vec());
         }
         Self {
             id,
@@ -356,7 +369,9 @@ impl SpiderWebArena {
         learning_rate: f32,
         verified: bool,
     ) -> f32 {
-        let spoke_idx = map_predicate_to_spoke_idx(predicate);
+        let pred_vec = deterministic_seed_vec(predicate);
+        let obj_seed = deterministic_seed_vec(object);
+        let spoke_idx = route_phase_spoke_idx(&pred_vec, &obj_seed);
         let default_hub = DEFAULT_SUBCORES[spoke_idx].to_string();
         let sub_id = self.ensure_cell(subject, "leaf", Some(default_hub.clone()));
         let obj_id = self.ensure_cell(object, "leaf", Some(default_hub));
@@ -366,13 +381,13 @@ impl SpiderWebArena {
 
         // Step Wave 1 (LFM Liquid State) on subject, object, and CORE_ROOT
         if let Some(sub_cell) = self.cells.get_mut(sub_id as usize) {
-            sub_cell.forward_liquid_step(&obj_anchor, &sub_anchor, &obj_anchor, 1.0);
+            sub_cell.forward_liquid_step(&obj_anchor, &pred_vec, &sub_anchor, 1.0);
         }
         if let Some(obj_cell) = self.cells.get_mut(obj_id as usize) {
-            obj_cell.forward_liquid_step(&sub_anchor, &obj_anchor, &sub_anchor, 1.0);
+            obj_cell.forward_liquid_step(&sub_anchor, &pred_vec, &obj_anchor, 1.0);
         }
         if let Some(core_cell) = self.cells.get_mut(0) {
-            core_cell.forward_liquid_step(&sub_anchor, &obj_anchor, &sub_anchor, 1.0);
+            core_cell.forward_liquid_step(&sub_anchor, &pred_vec, &obj_anchor, 1.0);
         }
 
         let obj_clean = object.trim().to_uppercase().replace(' ', "_");
@@ -462,7 +477,8 @@ impl SpiderWebArena {
         surprise
     }
 
-    /// Wave 2: Predict top-k 360° spoke targets for `concept_id` on `spoke_idx` in Rust.
+    /// Wave 2: Predict top-k 360° spoke targets for `concept_id` on `spoke_idx` in Rust
+    /// using continuous 360° angular phase coherence across the cell's radial synapses.
     pub fn predict_spoke_targets(
         &self,
         concept_id: &str,
@@ -476,26 +492,41 @@ impl SpiderWebArena {
         let Some(cell) = self.cells.get(cid as usize) else {
             return Vec::new();
         };
-        if spoke_idx >= NUM_SPOKES || cell.spoke_synapses[spoke_idx].is_empty() {
+        if spoke_idx >= NUM_SPOKES {
             return Vec::new();
         }
 
-        let mut raw_scores: Vec<(String, f32, f32, String, bool)> = Vec::new();
-        for syn in &cell.spoke_synapses[spoke_idx] {
-            if syn.neg_evidence > syn.pos_evidence {
-                continue;
+        let mut raw_scores: Vec<(String, f32, f32, String, usize, bool)> = Vec::new();
+        let direct_non_empty = !cell.spoke_synapses[spoke_idx].is_empty();
+        let spoke_range: Vec<usize> = if direct_non_empty {
+            vec![spoke_idx]
+        } else {
+            (0..NUM_SPOKES).collect()
+        };
+
+        for s_idx in spoke_range {
+            let angle_diff = ((s_idx as f32) - (spoke_idx as f32))
+                * (2.0 * std::f32::consts::PI / (NUM_SPOKES as f32));
+            let phase_coherence = 0.75 + 0.25 * angle_diff.cos();
+            for syn in &cell.spoke_synapses[s_idx] {
+                if syn.neg_evidence > syn.pos_evidence {
+                    continue;
+                }
+                let target_vec = self.get_anchor_array(syn.target_id);
+                let neural_score =
+                    cell.score_spoke_target(s_idx, &syn.target_name, &target_vec) * phase_coherence;
+                let total_ev = syn.pos_evidence + syn.neg_evidence;
+                let nars_conf =
+                    (syn.pos_evidence / total_ev.max(1.0)) * (total_ev / (total_ev + 0.5));
+                raw_scores.push((
+                    syn.target_name.clone(),
+                    neural_score,
+                    nars_conf,
+                    syn.predicate.clone(),
+                    s_idx,
+                    syn.pos_evidence > 0.0,
+                ));
             }
-            let target_vec = self.get_anchor_array(syn.target_id);
-            let neural_score = cell.score_spoke_target(spoke_idx, &syn.target_name, &target_vec);
-            let total_ev = syn.pos_evidence + syn.neg_evidence;
-            let nars_conf = (syn.pos_evidence / total_ev.max(1.0)) * (total_ev / (total_ev + 0.5));
-            raw_scores.push((
-                syn.target_name.clone(),
-                neural_score,
-                nars_conf,
-                syn.predicate.clone(),
-                syn.pos_evidence > 0.0,
-            ));
         }
 
         if raw_scores.is_empty() {
@@ -514,14 +545,13 @@ impl SpiderWebArena {
             (shannon / (raw_scores.len() as f32).ln()).clamp(0.0, 1.0)
         };
 
-        let spoke_label = SPOKE_NAMES[spoke_idx].to_string();
         let mut results: Vec<SpokePredictionDto> = raw_scores
             .into_iter()
-            .map(|(target_name, neural_score, nars_conf, pred_label, is_ver)| {
+            .map(|(target_name, neural_score, nars_conf, pred_label, s_idx, is_ver)| {
                 let combined = 0.65 * nars_conf + 0.35 * neural_score;
                 SpokePredictionDto {
                     source_concept: cell.concept_id.clone(),
-                    spoke: spoke_label.clone(),
+                    spoke: SPOKE_NAMES[s_idx].to_string(),
                     predicate: pred_label,
                     target_concept: target_name,
                     neural_score,
@@ -579,7 +609,7 @@ impl SpiderWebArena {
                 surprise_count += 1;
             }
 
-            // 2. Slide 3-tap LFM-2.5 liquid window over content tokens (len >= 3)
+            // 2. Slide 3-tap LFM-2.5 liquid window over content tokens (information capacity len >= 3)
             let content_tokens: Vec<String> = tokens
                 .iter()
                 .filter(|w| w.len() >= 3)
@@ -604,26 +634,11 @@ impl SpiderWebArena {
                 if idx + 1 < content_tokens.len() {
                     let next_tok = &content_tokens[idx + 1];
                     if next_tok != curr_tok {
-                        let next_vec = deterministic_seed_vec(next_tok);
-                        // Automatically route to the 360° radial spoke with highest liquid resonance
-                        let mut best_spoke: usize = 0;
-                        let mut best_res: f32 = -1e9;
-                        if let Some(cell) = self.cells.get(cid as usize) {
-                            for s_idx in 0..NUM_SPOKES {
-                                let proj = cell.project_spoke(s_idx);
-                                let res = dot_product(&proj, &next_vec);
-                                if res > best_res {
-                                    best_res = res;
-                                    best_spoke = s_idx;
-                                }
-                            }
-                        }
-                        let spoke_pred = SPOKE_NAMES[best_spoke];
                         let s = self.learn_spoke_relation(
                             curr_tok,
-                            spoke_pred,
+                            prev1,
                             next_tok,
-                            learning_rate,
+                            learning_rate * 0.5,
                             true,
                         );
                         total_surprise += s;
@@ -745,6 +760,233 @@ impl SpiderWebArena {
         *self = restored;
         true
     }
+
+    /// Serialize the entire 360° Spider-Web Arena state to a JSON string (for SQLite blob/text storage).
+    pub fn dump_snapshot_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Restore the 360° Spider-Web Arena state from a JSON string.
+    pub fn restore_snapshot_json(&mut self, payload: &str) -> bool {
+        let Ok(restored) = serde_json::from_str::<SpiderWebArena>(payload) else {
+            return false;
+        };
+        *self = restored;
+        true
+    }
+
+    /// Phase 1: Native Rust 360° Multi-Hop Beam Traversal & Neural Continuation (`query_360_beam`).
+    ///
+    /// Executes Wave 1 (liquid state step), Wave 2 (direct 6-spoke predictions + multi-hop
+    /// confidence-guided beam expansion with 0.88^hop decay), deduplication, and Multi-Token
+    /// Prediction continuation in a single native Rust pass.
+    pub fn query_360_beam(
+        &mut self,
+        concept_id: &str,
+        max_hops: usize,
+        top_k: usize,
+    ) -> Query360BeamDto {
+        let clean = concept_id.trim().to_uppercase().replace(' ', "_");
+        let Some(&cid) = self.name_to_id.get(&clean) else {
+            return Query360BeamDto {
+                focal_concept: clean,
+                active_subcore: "CORE_ROOT".to_string(),
+                role: "unknown".to_string(),
+                activated_cells: vec!["CORE_ROOT".to_string()],
+                predictions: Vec::new(),
+                generated_continuation: String::new(),
+            };
+        };
+
+        let core_hidden = self.get_hidden_array(0);
+        if let Some(focal_cell) = self.cells.get_mut(cid as usize) {
+            focal_cell.forward_liquid_step(&core_hidden, &core_hidden, &core_hidden, 1.0);
+        }
+
+        let (role, active_subcore) = {
+            let cell = &self.cells[cid as usize];
+            (
+                cell.role.clone(),
+                cell.parent_hub
+                    .clone()
+                    .unwrap_or_else(|| "CORE_ROOT".to_string()),
+            )
+        };
+
+        let mut activated_cells = vec!["CORE_ROOT".to_string()];
+        if active_subcore != "CORE_ROOT" {
+            activated_cells.push(active_subcore.clone());
+        }
+        activated_cells.push(clean.clone());
+
+        let mut all_preds: Vec<SpokePredictionDto> = Vec::new();
+        for s_idx in 0..NUM_SPOKES {
+            if !self.cells[cid as usize].spoke_synapses[s_idx].is_empty() {
+                all_preds.extend(self.predict_spoke_targets(&clean, s_idx, 4));
+            }
+        }
+
+        // Multi-hop confidence-guided beam expansion across the 360° Spider-Web
+        let mut frontier: Vec<String> = all_preds
+            .iter()
+            .filter(|p| p.verified && p.nars_confidence >= 0.45)
+            .map(|p| p.target_concept.clone())
+            .collect();
+
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(clean.clone());
+        let mut hop: usize = 1;
+        let decay_base: f32 = 0.88;
+
+        while !frontier.is_empty() && hop < max_hops.max(1) {
+            let factor = decay_base.powi(hop as i32);
+            let mut next_frontier: Vec<String> = Vec::new();
+
+            for parent_cid in frontier {
+                if !visited.insert(parent_cid.clone()) {
+                    continue;
+                }
+                let Some(&p_id) = self.name_to_id.get(&parent_cid) else {
+                    continue;
+                };
+                if !activated_cells.contains(&parent_cid) {
+                    activated_cells.push(parent_cid.clone());
+                }
+                for s_idx in 0..NUM_SPOKES {
+                    if self.cells[p_id as usize].spoke_synapses[s_idx].is_empty() {
+                        continue;
+                    }
+                    let parent_preds = self.predict_spoke_targets(&parent_cid, s_idx, 3);
+                    for pp in parent_preds {
+                        if pp.target_concept == clean || !pp.verified {
+                            continue;
+                        }
+                        if pp.nars_confidence >= 0.45 {
+                            next_frontier.push(pp.target_concept.clone());
+                        }
+                        all_preds.push(SpokePredictionDto {
+                            source_concept: clean.clone(),
+                            spoke: pp.spoke,
+                            predicate: pp.predicate,
+                            target_concept: pp.target_concept,
+                            neural_score: pp.neural_score * factor,
+                            nars_confidence: pp.nars_confidence * factor,
+                            epistemic_entropy: pp.epistemic_entropy,
+                            combined_confidence: pp.combined_confidence * factor,
+                            verified: pp.verified,
+                        });
+                    }
+                }
+            }
+            frontier = next_frontier;
+            hop += 1;
+        }
+
+        // Deduplicate by (spoke, predicate, target_concept) keeping highest combined_confidence
+        let mut dedup: HashMap<(String, String, String), SpokePredictionDto> = HashMap::new();
+        for pred in all_preds {
+            let key = (
+                pred.spoke.clone(),
+                pred.predicate.clone(),
+                pred.target_concept.clone(),
+            );
+            let replace = match dedup.get(&key) {
+                Some(existing) => pred.combined_confidence > existing.combined_confidence,
+                None => true,
+            };
+            if replace {
+                dedup.insert(key, pred);
+            }
+        }
+
+        let mut sorted: Vec<SpokePredictionDto> = dedup.into_values().collect();
+        sorted.sort_by(|a, b| {
+            b.combined_confidence
+                .partial_cmp(&a.combined_confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        sorted.truncate(top_k.max(1));
+
+        let prompt = clean.to_lowercase().replace('_', " ");
+        let generated_continuation = self.generate_from_prompt(&prompt, 8);
+
+        Query360BeamDto {
+            focal_concept: clean,
+            active_subcore,
+            role,
+            activated_cells,
+            predictions: sorted,
+            generated_continuation,
+        }
+    }
+
+    /// Phase 2: Native Rust Sleep-Cycle Consolidation (`consolidate_arena`).
+    ///
+    /// 1. Replays verified spoke synapses (`pos_evidence > neg_evidence`) across all cells to
+    ///    sharpen 360° radial spoke separation and reduce prediction surprise.
+    /// 2. Prunes low-weight noise transitions (`w < min_transition_weight`) from `token_transitions`
+    ///    so memory stays bounded over long continuous streams.
+    pub fn consolidate_arena(
+        &mut self,
+        min_transition_weight: f32,
+        replay_lr: f32,
+    ) -> ConsolidationReportDto {
+        let mut replayed_edges: usize = 0;
+        let mut total_surprise: f32 = 0.0;
+        let mut pruned_transitions: usize = 0;
+        let initial_mitosis = self.total_mitosis_events;
+
+        // Collect verified edges to replay
+        let mut replay_queue: Vec<(String, String, String)> = Vec::new();
+        for cell in &mut self.cells {
+            // Prune weak token transitions
+            let mut empty_keys: Vec<String> = Vec::new();
+            for (ctx_key, row) in cell.token_transitions.iter_mut() {
+                let before = row.len();
+                row.retain(|_, &mut w| w >= min_transition_weight);
+                pruned_transitions += before.saturating_sub(row.len());
+                if row.is_empty() {
+                    empty_keys.push(ctx_key.clone());
+                }
+            }
+            for k in empty_keys {
+                cell.token_transitions.remove(&k);
+            }
+
+            for spoke_edges in &cell.spoke_synapses {
+                for syn in spoke_edges {
+                    if syn.pos_evidence > syn.neg_evidence {
+                        replay_queue.push((
+                            cell.concept_id.clone(),
+                            syn.predicate.clone(),
+                            syn.target_name.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        let eff_lr = replay_lr.clamp(0.02, 0.35);
+        for (subj, pred, obj) in replay_queue {
+            let s = self.learn_spoke_relation(&subj, &pred, &obj, eff_lr, true);
+            total_surprise += s;
+            replayed_edges += 1;
+        }
+
+        let avg_surprise = if replayed_edges > 0 {
+            total_surprise / (replayed_edges as f32)
+        } else {
+            0.0
+        };
+
+        ConsolidationReportDto {
+            replayed_edges,
+            pruned_transitions,
+            average_replay_surprise: avg_surprise,
+            mitosis_promotions: (self.total_mitosis_events - initial_mitosis) as usize,
+            total_cells: self.cells.len(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -757,4 +999,21 @@ pub struct StreamTrainStatsDto {
     pub mitosis_promotions: usize,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Query360BeamDto {
+    pub focal_concept: String,
+    pub active_subcore: String,
+    pub role: String,
+    pub activated_cells: Vec<String>,
+    pub predictions: Vec<SpokePredictionDto>,
+    pub generated_continuation: String,
+}
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConsolidationReportDto {
+    pub replayed_edges: usize,
+    pub pruned_transitions: usize,
+    pub average_replay_surprise: f32,
+    pub mitosis_promotions: usize,
+    pub total_cells: usize,
+}

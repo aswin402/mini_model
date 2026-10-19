@@ -862,6 +862,29 @@ def cmd_mlu(args: argparse.Namespace) -> None:
             res = kernel.mlm.query_360(q)
             print(f"[{res.status}] {res.answer}")
             print(f"  ↳ {res.inspectable_trace}")
+        elif action == "ingest":
+            rep_dict = kernel.mlm.ingest_corpus_path(
+                args.path, epochs=int(getattr(args, "epochs", 2))
+            )
+            print(
+                f"📚 [360° Spider-Web Corpus Ingestion] {rep_dict['files_processed']} file(s) x {rep_dict['epochs']} epoch(s) | "
+                f"{rep_dict['sentences_processed']} sentences | {rep_dict['relations_verified']} verified spoke links | "
+                f"epoch_surprises={rep_dict['epoch_surprises']}"
+            )
+            if rep_dict["mitosis_promotions"]:
+                print(
+                    f"    ↳ Promoted 360° Sub-Core Hubs: {', '.join(rep_dict['mitosis_promotions'])}"
+                )
+        elif action == "consolidate":
+            cons_dict = kernel.mlm.consolidate()
+            rc = cons_dict["rust_consolidation"]
+            print(
+                f"🌙 [360° Spider-Web Sleep-Cycle Consolidation] "
+                f"replayed_edges={rc.get('replayed_edges', 0)} | "
+                f"pruned_transitions={rc.get('pruned_transitions', 0)} | "
+                f"replay_surprise={rc.get('average_replay_surprise', 0.0):.4f} | "
+                f"rust_nodes={cons_dict['rust_arena_nodes']}"
+            )
         else:
             tel = kernel.mlm.get_telemetry()
             print(json.dumps(tel, indent=2))
@@ -1121,6 +1144,22 @@ def build_parser() -> argparse.ArgumentParser:
         "status", parents=[db_parent], help="Display 360° Spider-Web MLM topology JSON"
     )
     p_mlu_status.set_defaults(func=cmd_mlu)
+    p_mlu_ingest = p_mlu_subs.add_parser(
+        "ingest",
+        parents=[db_parent],
+        help="Stream-train 360° Spider-Web MLM on a file or directory of Markdown/text files",
+    )
+    p_mlu_ingest.add_argument("path", help="File or directory path to ingest")
+    p_mlu_ingest.add_argument(
+        "--epochs", type=int, default=2, help="Number of training epochs (default: 2)"
+    )
+    p_mlu_ingest.set_defaults(func=cmd_mlu)
+    p_mlu_consolidate = p_mlu_subs.add_parser(
+        "consolidate",
+        parents=[db_parent],
+        help="Run Sleep-Cycle Consolidation (spoke replay + transition pruning) on the 360° Arena",
+    )
+    p_mlu_consolidate.set_defaults(func=cmd_mlu)
 
     return parser
 

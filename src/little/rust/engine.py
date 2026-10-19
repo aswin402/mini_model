@@ -237,6 +237,34 @@ class RustAccelerationCore:
                 ]
                 lib.little_core_mlu_arena_load_snapshot.restype = ctypes.c_int32
 
+            if hasattr(lib, "little_core_mlu_arena_dump_json"):
+                lib.little_core_mlu_arena_dump_json.argtypes = [ctypes.c_void_p]
+                lib.little_core_mlu_arena_dump_json.restype = ctypes.c_void_p
+
+            if hasattr(lib, "little_core_mlu_arena_restore_json"):
+                lib.little_core_mlu_arena_restore_json.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                ]
+                lib.little_core_mlu_arena_restore_json.restype = ctypes.c_int32
+
+            if hasattr(lib, "little_core_mlu_arena_query_360_beam"):
+                lib.little_core_mlu_arena_query_360_beam.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_size_t,
+                    ctypes.c_size_t,
+                ]
+                lib.little_core_mlu_arena_query_360_beam.restype = ctypes.c_void_p
+
+            if hasattr(lib, "little_core_mlu_arena_consolidate"):
+                lib.little_core_mlu_arena_consolidate.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_float,
+                    ctypes.c_float,
+                ]
+                lib.little_core_mlu_arena_consolidate.restype = ctypes.c_void_p
+
     # -------------------------------------------------------------------------
     # Public Accelerated Graph API
     # -------------------------------------------------------------------------
@@ -826,6 +854,84 @@ class RustMluArena:
             str(path).encode("utf-8"),
         )
         return bool(res == 1)
+
+    def dump_json(self) -> str:
+        """Serialize the entire Rust 360° Spider-Web Arena to a JSON string."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_dump_json")
+        ):
+            return "{}"
+        ptr = self._lib.little_core_mlu_arena_dump_json(self._handle)
+        if not ptr:
+            return "{}"
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return res_str
+
+    def restore_json(self, payload: str) -> bool:
+        """Restore the entire Rust 360° Spider-Web Arena from a JSON string."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_restore_json")
+        ):
+            return False
+        res = self._lib.little_core_mlu_arena_restore_json(
+            self._handle,
+            payload.encode("utf-8"),
+        )
+        return bool(res == 1)
+
+    def query_360_beam(
+        self, concept: str, max_hops: int = 3, top_k: int = 10
+    ) -> dict[str, Any]:
+        """Run native Rust 360° Multi-Hop Beam Traversal & Neural Continuation."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_query_360_beam")
+        ):
+            return {}
+        ptr = self._lib.little_core_mlu_arena_query_360_beam(
+            self._handle,
+            concept.encode("utf-8"),
+            int(max_hops),
+            int(top_k),
+        )
+        if not ptr:
+            return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def consolidate(
+        self, min_transition_weight: float = 0.05, replay_lr: float = 0.15
+    ) -> dict[str, Any]:
+        """Run native Rust Sleep-Cycle Consolidation (spoke replay + transition pruning)."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_consolidate")
+        ):
+            return {
+                "replayed_edges": 0,
+                "pruned_transitions": 0,
+                "average_replay_surprise": 0.0,
+                "mitosis_promotions": 0,
+                "total_cells": 0,
+            }
+        ptr = self._lib.little_core_mlu_arena_consolidate(
+            self._handle,
+            float(min_transition_weight),
+            float(replay_lr),
+        )
+        if not ptr:
+            return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
 
     def close(self) -> None:
         if self._lib is not None and self._handle is not None:

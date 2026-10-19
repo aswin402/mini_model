@@ -23,56 +23,6 @@ SPOKE_NAMES: tuple[str, ...] = (
     "episodic",
 )
 
-PREDICATE_TO_SPOKE: dict[str, str] = {
-    "is_a": "taxonomy",
-    "instance_of": "taxonomy",
-    "subclass_of": "taxonomy",
-    "kind_of": "taxonomy",
-    "part_of": "mereology",
-    "has_part": "mereology",
-    "has": "mereology",
-    "contains": "mereology",
-    "made_of": "mereology",
-    "has_property": "attributes",
-    "is": "attributes",
-    "color": "attributes",
-    "shape": "attributes",
-    "taste": "attributes",
-    "temperature": "attributes",
-    "causes": "dynamics",
-    "becomes": "dynamics",
-    "requires": "dynamics",
-    "produces": "dynamics",
-    "triggers": "dynamics",
-    "can": "procedural",
-    "capable_of": "procedural",
-    "used_for": "procedural",
-    "performs": "procedural",
-    "located_in": "episodic",
-    "found_in": "episodic",
-    "lives_in": "episodic",
-    "co_occurs_with": "episodic",
-}
-
-
-def map_predicate_to_spoke(predicate: str) -> str:
-    """Map any symbolic or natural predicate to one of the 6 radial 360° spokes."""
-    norm = predicate.strip().lower().replace(" ", "_")
-    if norm in PREDICATE_TO_SPOKE:
-        return PREDICATE_TO_SPOKE[norm]
-    if "part" in norm or "contain" in norm or "consist" in norm:
-        return "mereology"
-    if "cause" in norm or "lead" in norm or "change" in norm or "transform" in norm:
-        return "dynamics"
-    if "can" in norm or "use" in norm or "skill" in norm or "action" in norm:
-        return "procedural"
-    if "locat" in norm or "live" in norm or "find" in norm or "where" in norm:
-        return "episodic"
-    if "prop" in norm or "color" in norm or "size" in norm or "weight" in norm:
-        return "attributes"
-    return "taxonomy"
-
-
 def _sigmoid(x: float) -> float:
     if x >= 0.0:
         z = math.exp(-min(x, 30.0))
@@ -102,6 +52,55 @@ def deterministic_seed_vector(name: str, dim: int = 64) -> list[float]:
         angle = ((byte_val / 255.0) * 2.0 - 1.0) * math.pi
         vec[i] = math.sin(angle * (1 + (i // len(digest))))
     return _normalize_vec(vec)
+
+
+def harmonic_spoke_basis(spoke_idx: int, dim: int = 64) -> list[float]:
+    """Generate the k-th orthogonal 360° angular phase basis vector in R^dim."""
+    num_spokes = len(SPOKE_NAMES)
+    theta = (2.0 * math.pi * float(spoke_idx % num_spokes)) / float(num_spokes)
+    vec = [0.0] * dim
+    for d in range(dim):
+        freq = float(d + 1)
+        vec[d] = math.cos(freq * theta + 0.5 * math.sin(freq * theta))
+    return _normalize_vec(vec)
+
+
+def route_phase_spoke_idx(
+    rel_vec: list[float],
+    target_vec: list[float] | None = None,
+) -> int:
+    """Route a relation/transition vector to a 360° spoke index [0..5] via harmonic cosine resonance."""
+    dim = len(rel_vec)
+    if target_vec is not None and len(target_vec) == dim:
+        combined = _normalize_vec(
+            [
+                0.75 * r + 0.25 * t + 0.15 * (r * t)
+                for r, t in zip(rel_vec, target_vec, strict=False)
+            ]
+        )
+    else:
+        combined = _normalize_vec(rel_vec)
+
+    best_idx = 0
+    best_sim = -1e9
+    for idx in range(len(SPOKE_NAMES)):
+        basis = harmonic_spoke_basis(idx, dim)
+        sim = sum(c * b for c, b in zip(combined, basis, strict=False))
+        if sim > best_sim:
+            best_sim = sim
+            best_idx = idx
+    return best_idx
+
+
+def map_predicate_to_spoke(
+    predicate: str,
+    target_vec: list[float] | None = None,
+    dim: int = 64,
+) -> str:
+    """Project a relation descriptor into 64-D phase space and select its resonant 360° spoke."""
+    rel_vec = deterministic_seed_vector(predicate, dim)
+    idx = route_phase_spoke_idx(rel_vec, target_vec)
+    return SPOKE_NAMES[idx]
 
 
 @dataclass(frozen=True)
@@ -266,7 +265,7 @@ class MiniLearningUnit:
 
         Returns the prediction surprise (loss) in [0.0, 1.0] prior to the weight update.
         """
-        spoke_name = map_predicate_to_spoke(predicate)
+        spoke_name = map_predicate_to_spoke(predicate, target_vec, self.dim)
         spoke = self.spokes[spoke_name]
         clean_target = target_concept.strip().upper().replace(" ", "_")
 
@@ -345,24 +344,47 @@ class MiniLearningUnit:
         top_k: int = 5,
     ) -> list[MLUSpokePrediction]:
         """Predict top-k 360° spoke targets with Laya normalized entropy & NARS confidence."""
-        spoke = self.spokes.get(spoke_name)
-        if spoke is None or not spoke.target_affinities:
+        req_idx = SPOKE_NAMES.index(spoke_name) if spoke_name in SPOKE_NAMES else 0
+        primary_spoke = self.spokes.get(spoke_name)
+        if primary_spoke is not None and primary_spoke.target_affinities:
+            active_spokes = [(req_idx, spoke_name, primary_spoke)]
+        else:
+            active_spokes = [
+                (idx, s_name, self.spokes[s_name])
+                for idx, s_name in enumerate(SPOKE_NAMES)
+                if self.spokes[s_name].target_affinities
+            ]
+
+        if not active_spokes:
             return []
 
-        raw_scores: list[tuple[str, float, float, str, bool]] = []
-        for target_name, rec in spoke.target_affinities.items():
-            pos_ev = float(rec[0])
-            neg_ev = float(rec[1])
-            pred_label = str(rec[3])
-            if neg_ev > pos_ev:
-                continue
-            t_vec = candidate_vectors.get(
-                target_name, deterministic_seed_vector(target_name, self.dim)
-            )
-            neural_score = spoke.score_target(self.hidden_state, target_name, t_vec)
-            total_ev = pos_ev + neg_ev
-            nars_conf = (pos_ev / max(1.0, total_ev)) * (total_ev / (total_ev + 0.5))
-            raw_scores.append((target_name, neural_score, nars_conf, pred_label, pos_ev > 0))
+        total_known_targets = sum(len(s.target_affinities) for _, _, s in active_spokes)
+        filter_by_candidates = 0 < len(candidate_vectors) < total_known_targets
+
+        raw_scores: list[tuple[str, float, float, str, bool, str]] = []
+        num_spokes = float(len(SPOKE_NAMES))
+        for s_idx, s_name, spoke in active_spokes:
+            angle_diff = (2.0 * math.pi * float(s_idx - req_idx)) / num_spokes
+            phase_coherence = 0.75 + 0.25 * math.cos(angle_diff)
+            for target_name, rec in spoke.target_affinities.items():
+                if filter_by_candidates and target_name not in candidate_vectors:
+                    continue
+                pos_ev = float(rec[0])
+                neg_ev = float(rec[1])
+                pred_label = str(rec[3])
+                if neg_ev > pos_ev:
+                    continue
+                t_vec = candidate_vectors.get(
+                    target_name, deterministic_seed_vector(target_name, self.dim)
+                )
+                neural_score = (
+                    spoke.score_target(self.hidden_state, target_name, t_vec) * phase_coherence
+                )
+                total_ev = pos_ev + neg_ev
+                nars_conf = (pos_ev / max(1.0, total_ev)) * (total_ev / (total_ev + 0.5))
+                raw_scores.append(
+                    (target_name, neural_score, nars_conf, pred_label, pos_ev > 0, s_name)
+                )
 
         if not raw_scores:
             return []
@@ -377,12 +399,12 @@ class MiniLearningUnit:
             norm_entropy = min(1.0, max(0.0, shannon / math.log(len(probs))))
 
         results: list[MLUSpokePrediction] = []
-        for target_name, neural_score, nars_conf, pred_label, is_ver in raw_scores:
+        for target_name, neural_score, nars_conf, pred_label, is_ver, s_name in raw_scores:
             combined = round(0.65 * nars_conf + 0.35 * neural_score, 4)
             results.append(
                 MLUSpokePrediction(
                     source_concept=self.concept_id,
-                    spoke=spoke_name,
+                    spoke=s_name,
                     predicate=pred_label,
                     target_concept=target_name,
                     neural_score=round(neural_score, 4),
