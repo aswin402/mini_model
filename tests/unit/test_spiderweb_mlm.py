@@ -824,6 +824,45 @@ def test_spiderweb_mlm_phase50_to_52_true_differentiable_neural_mlu_backprop(tmp
         mlm2.close()
 
 
+def test_spiderweb_mlm_phase53_zero_regex_and_live_neural_distillation(tmp_path) -> None:
+    """Verify Phase 53: Zero regex in MLU/Kernel pipeline, schema-driven operator codebook, and live Backprop distillation during chat."""
+    from pathlib import Path
+
+    # 1. Verify zero `import re` across active MLU + SemanticFramePolicy + CognitiveKernel modules
+    for rel_path in (
+        "src/little/mlu/spiderweb_net.py",
+        "src/little/mlu/unit.py",
+        "src/little/neural/semantic_frame_policy.py",
+        "src/little/core/kernel.py",
+    ):
+        src = Path(rel_path).read_text(encoding="utf-8")
+        assert "import re" not in src, f"Found forbidden regex import in {rel_path}"
+
+    # 2. Verify live conversational learning distills verified 360° triples directly into NeuralSpiderWebMlu via Backprop + AdamW
+    db_file = str(tmp_path / "phase53_live_distill.db")
+    with MemoryStore(db_file, seed_ontology=False) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+        learn_turn = mlm.chat_turn_360("A peregrine is a bird, and can dive.", persist=False)
+        assert learn_turn["mode"] == "LEARN_AND_DELIBERATE"
+        assert learn_turn["status"] == "VERIFIED"
+        assert learn_turn["relations_verified"] >= 2
+        assert learn_turn["neural_sequences_distilled"] >= 84  # 3 synthesized CoT sequences * 28 epochs
+        assert learn_turn["neural_final_perplexity"] < 1.5
+
+        # Querying NeuralSpiderWebMlu directly should now produce both neural_thinking and neural_answer for peregrine!
+        gen_dive = mlm.generate_neural_mlu("can a peregrine dive?", max_new_tokens=20)
+        assert "procedural" in gen_dive["neural_thinking"].lower()
+        assert "yes" in gen_dive["neural_answer"].lower()
+        assert "dive" in gen_dive["neural_answer"].lower()
+
+        ask_turn = mlm.chat_turn_360("Can a peregrine dive?", persist=False)
+        assert ask_turn["status"] == "VERIFIED"
+        assert "procedural" in ask_turn["neural_thinking"].lower()
+        assert "[NEURAL-THINK]" in ask_turn["trace"]
+        mlm.close()
+
+
+
 
 
 

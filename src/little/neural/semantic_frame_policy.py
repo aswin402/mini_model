@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +21,7 @@ class SemanticFramePolicy:
     passive_patterns: dict[str, str]
     negation_tokens: tuple[str, ...]
     stop_determiners: tuple[str, ...]
+    operator_canonical_map: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         value = self.min_extraction_confidence
@@ -67,6 +67,10 @@ class SemanticFramePolicy:
         determiners = tuple(
             str(d).lower().strip() for d in payload.get("stop_determiners", [])
         )
+        op_canon = {
+            str(k).lower().strip(): str(v).lower().strip()
+            for k, v in payload.get("operator_canonical_map", {}).items()
+        }
 
         return cls(
             min_extraction_confidence=min_conf,
@@ -75,6 +79,7 @@ class SemanticFramePolicy:
             passive_patterns=passives,
             negation_tokens=negations,
             stop_determiners=determiners,
+            operator_canonical_map=op_canon,
         )
 
     @classmethod
@@ -82,7 +87,7 @@ class SemanticFramePolicy:
         return cls.load(RuntimePaths.default().schema_directory)
 
     def clean_filler(self, text: str) -> str:
-        """Strip conversational filler phrases from the beginning of an utterance."""
+        """Strip conversational filler phrases from the beginning of an utterance without regular expressions."""
         cleaned = text.strip()
         lower = cleaned.lower()
 
@@ -90,13 +95,15 @@ class SemanticFramePolicy:
         sorted_fillers = sorted(self.filler_prefixes, key=len, reverse=True)
         for prefix in sorted_fillers:
             if lower.startswith(prefix):
-                cleaned = cleaned[len(prefix) :].strip()
-                # Remove any leftover punctuation like comma
-                cleaned = re.sub(r"^[,:\-\s]+", "", cleaned)
+                cleaned = cleaned[len(prefix) :].lstrip(",:- \t\n\r")
                 lower = cleaned.lower()
 
-        # Also strip introductory prepositional phrases like "In Mexico," if followed by comma
-        cleaned = re.sub(r"^in\s+[a-zA-Z0-9_\s]+,\s*", "", cleaned, flags=re.IGNORECASE)
+        # Strip introductory prepositional phrases like "In Mexico," if followed by comma
+        if lower.startswith("in ") and "," in cleaned:
+            comma_idx = cleaned.find(",")
+            intro = cleaned[3:comma_idx].strip()
+            if intro and all(c.isalnum() or c in "_ " for c in intro):
+                cleaned = cleaned[comma_idx + 1 :].lstrip()
 
         return cleaned.strip()
 

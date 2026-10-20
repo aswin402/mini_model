@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -48,6 +47,7 @@ from little.memory.headroom import HeadroomContextManager
 from little.memory.paged_store import PagedConceptStore
 from little.memory.store import MemoryStore
 from little.mlu import SpiderWebMLM
+from little.mlu.spiderweb_net import _tokenize_words
 from little.neural import NeuralRouter, RoutingDecision
 from little.perception.sensory import SensoryGroundingEngine
 from little.procedural.code_synthesizer import ASTCodeSynthesizer, SynthesizedProgram
@@ -384,7 +384,7 @@ class CognitiveKernel:
         self.headroom.record_turn(role="user", text=text)
 
         # Context activation voting over concept graph ("The text chooses")
-        tokens = [w for w in re.findall(r"[a-zA-Z0-9_]+", text)]
+        tokens = _tokenize_words(text)
         self.paged_store.vote_from_tokens(tokens)
 
         # 1. Normalize user utterance (discourse markers, colloquialisms, contractions)

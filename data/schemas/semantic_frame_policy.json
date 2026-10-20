@@ -164,5 +164,11 @@
     "that",
     "these",
     "those"
-  ]
+  ],
+  "operator_canonical_map": {
+    "has": "has_part",
+    "have": "has_part",
+    "had": "has_part",
+    "can": "can"
+  }
 }

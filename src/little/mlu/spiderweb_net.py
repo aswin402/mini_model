@@ -104,6 +104,7 @@ class MLMTrainingStepReport:
     total_mlu_nodes: int
     mitosis_promotions: list[str] = field(default_factory=list)
     pruned_nodes: list[str] = field(default_factory=list)
+    verified_triples: list[tuple[str, str, str]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -402,14 +403,14 @@ class SpiderWebMLM:
                     self._operator_token_mass[tok] = self._operator_token_mass.get(tok, 0.0) + 2.0
 
                 has_neg = _contains_negation(ptoks)
+                phrase_key = " ".join(ptoks)
                 if has_neg:
                     canonical = disjoint_pred
-                elif base_rel == "has_property" and ptoks[0] in ("has", "have", "had"):
-                    canonical = "has_part"
-                elif base_rel == "capable_of" and ptoks == ("can",):
-                    canonical = "can"
                 else:
-                    canonical = base_rel
+                    canonical = self.frame_policy.operator_canonical_map.get(
+                        phrase_key,
+                        self.frame_policy.operator_canonical_map.get(ptoks[0], base_rel),
+                    )
 
                 if self.verifier.registry.relation(canonical) is None:
                     canonical = self.verifier.taxonomy_predicate or "is_a"
@@ -476,19 +477,33 @@ class SpiderWebMLM:
             return None, 1
         best_pred: str | None = None
         best_len = 0
+        best_sim = -1.0
         polarity = 1
         n = len(span_tokens)
         for i in range(n):
             for j in range(i + 1, min(n + 1, i + 5)):
                 sub = tuple(span_tokens[i:j])
                 core_sub = tuple(t for t in sub if t not in self.frame_policy.stop_determiners)
-                for proto_toks, canonical_pred, _vec in self._operator_codebook:
+                probe_vec = (
+                    deterministic_seed_vector("_".join(core_sub or sub), self.dim)
+                    if (core_sub or sub)
+                    else None
+                )
+                for proto_toks, canonical_pred, proto_vec in self._operator_codebook:
                     if sub == proto_toks or (core_sub and core_sub == proto_toks):
                         if canonical_pred in self.verifier.disjoint_predicates:
                             polarity = -1
                         if len(proto_toks) > best_len:
                             best_len = len(proto_toks)
                             best_pred = canonical_pred
+                            best_sim = 1.0
+                    elif best_len == 0 and probe_vec is not None:
+                        sim = sum(a * b for a, b in zip(probe_vec, proto_vec, strict=False))
+                        if sim >= 0.85 and sim > best_sim:
+                            best_sim = sim
+                            best_pred = canonical_pred
+                            if canonical_pred in self.verifier.disjoint_predicates:
+                                polarity = -1
         return best_pred, polarity
 
     def _route_to_subcore(self, preferred_spoke: str, concept_vec: list[float]) -> str:
@@ -718,6 +733,7 @@ class SpiderWebMLM:
         relations_refuted = 0
         token_transitions_learned = 0
         surprises: list[float] = []
+        verified_triples: list[tuple[str, str, str]] = []
         touched_nodes: set[str] = {"CORE_ROOT"}
         active_discourse_focus: str | None = (
             self.recent_focal_stack[0][0].lower() if self.recent_focal_stack else None
@@ -801,6 +817,7 @@ class SpiderWebMLM:
 
                     # Commit verified symbolic fact into MemoryStore so symbolic & neural stay 100% unified
                     if pred != "co_occurs_with":
+                        verified_triples.append((subj_unit.concept_id, pred, obj_unit.concept_id))
                         obj_unit.verified_hits += 0.5
                         c_sub = self.memory.create_concept(subj.upper().replace(" ", "_"))
                         c_obj = self.memory.create_concept(obj.upper().replace(" ", "_"))
@@ -851,6 +868,7 @@ class SpiderWebMLM:
             total_mlu_nodes=len(self.nodes),
             mitosis_promotions=promoted,
             pruned_nodes=pruned,
+            verified_triples=verified_triples,
         )
 
     # ------------------------------------------------------------------
@@ -1793,8 +1811,58 @@ class SpiderWebMLM:
             text, epochs=epochs, learning_rate=learning_rate, persist=persist
         )
 
+    def distill_triples_to_neural_mlu(
+        self,
+        triples: list[tuple[str, str, str]],
+        epochs: int = 28,
+        learning_rate: float = 0.04,
+        persist: bool = False,
+    ) -> dict[str, Any]:
+        """Phase 53: Automatically synthesize Chain-of-Thought ('think ... answer ...') sequences from verified 360° spoke triples and train the Differentiable Neural MLU via Backpropagation + AdamW."""
+        if not triples:
+            return {"epochs": 0, "sequences_trained": 0}
+        lines: list[str] = []
+        for subj, pred, obj in triples:
+            s = subj.lower().replace("_", " ").strip()
+            p = pred.lower().replace("_", " ").strip()
+            o = obj.lower().replace("_", " ").strip()
+            if not s or not o:
+                continue
+            if pred in ("is_a", "subclass_of", "instance_of"):
+                lines.append(
+                    f"is a {s} a {o}? think {s} is a verified taxonomic child of {o} in the 360 spider web answer yes a {s} is a {o}."
+                )
+                lines.append(
+                    f"what is a {s}? think querying 360 taxonomy spoke for {s} answer a {s} is a {o}."
+                )
+            elif pred in ("can", "capable_of"):
+                lines.append(
+                    f"can a {s} {o}? think checking procedural spoke of {s} for {o} answer yes a {s} can {o}."
+                )
+            elif pred in ("has_part", "has_property", "has"):
+                lines.append(
+                    f"does a {s} have {o}? think checking mereology and attribute spokes of {s} for {o} answer yes a {s} has {o}."
+                )
+            elif pred == "causes":
+                lines.append(
+                    f"what causes {o}? think tracing backward causal spoke to {s} answer {s} causes {o}."
+                )
+            elif pred in ("disjoint_with", "cannot_be", "different_from"):
+                lines.append(
+                    f"is a {s} a {o}? think mutual exclusivity gate refutes {s} and {o} answer no a {s} is not a {o}."
+                )
+            else:
+                lines.append(
+                    f"tell me about {s}? think activating 360 spokes around {s} answer {s} {p} {o}."
+                )
+        if not lines:
+            return {"epochs": 0, "sequences_trained": 0}
+        return self.train_neural_mlu(
+            "\n".join(lines), epochs=epochs, learning_rate=learning_rate, persist=persist
+        )
+
     def chat_turn_360(self, user_input: str, persist: bool = True) -> dict[str, Any]:
-        """Phase 34 & 52: Execute a unified 360° conversational turn combining Differentiable Neural Thinking + 360° Spider-Web Arena."""
+        """Phase 34, 52 & 53: Execute a unified 360° conversational turn combining Differentiable Neural Thinking + 360° Spider-Web Arena."""
         clean_in = user_input.strip()
         if not clean_in:
             return {
@@ -1865,6 +1933,11 @@ class SpiderWebMLM:
             }
 
         rep = self.train_on_text(clean_in, persist=persist)
+        neural_distill_rep: dict[str, Any] = {}
+        if rep.verified_triples:
+            neural_distill_rep = self.distill_triples_to_neural_mlu(
+                rep.verified_triples, epochs=28, learning_rate=0.04, persist=persist
+            )
         focal_cid = (
             self.recent_focal_stack[0][0]
             if self.recent_focal_stack
@@ -1887,10 +1960,13 @@ class SpiderWebMLM:
             "focal_concept": focal_cid,
             "relations_verified": rep.relations_verified,
             "relations_refuted": rep.relations_refuted,
+            "neural_sequences_distilled": int(neural_distill_rep.get("sequences_trained", 0)),
+            "neural_final_perplexity": float(neural_distill_rep.get("final_perplexity", 0.0)),
             "reply": reply,
             "trace": (
                 f"[MLU-360-CHAT] focal={focal_cid} | verified={rep.relations_verified} | "
-                f"refuted={rep.relations_refuted} | F={delib.get('free_energy', 0.0):.2f}"
+                f"refuted={rep.relations_refuted} | F={delib.get('free_energy', 0.0):.2f} | "
+                f"neural_distilled={neural_distill_rep.get('sequences_trained', 0)}"
             ),
             "follow_up_question": delib.get("follow_up_question", ""),
         }
