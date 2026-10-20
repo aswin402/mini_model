@@ -429,10 +429,11 @@ class SpiderWebMLM:
         max_sal = max(s for _, s in scored)
         if max_sal <= 0.15:
             return "", 0.0
+        min_sal = max(2.25, 0.60 * max_sal) if max_sal >= 2.25 else 0.60 * max_sal
         kept = [
             t
             for t, s in scored
-            if s >= 0.60 * max_sal and self._operator_token_mass.get(t, 0.0) < 2.0
+            if s >= min_sal and self._operator_token_mass.get(t, 0.0) < 2.0
         ]
         if not kept:
             best_tok = max(scored, key=lambda kv: kv[1])[0]
@@ -564,48 +565,94 @@ class SpiderWebMLM:
     # Online Stream Training (JEPA + LFM + DeepSeek-R1 Verification Gate)
     # ------------------------------------------------------------------
 
-    def _extract_candidate_triples(self, sentence: str) -> list[tuple[str, str, str]]:
-        """Extract relational triples via joint Shannon salience & 64-D operator subspace optimization."""
+    def _extract_candidate_triples(
+        self, sentence: str, active_subject_fallback: str | None = None
+    ) -> list[tuple[str, str, str]]:
+        """Extract relational triples via multi-clause operator energy decomposition & liquid coreference binding."""
         tokens = _tokenize_words(sentence)
         if len(tokens) < 2:
             return []
 
-        best_score = -1e9
-        best_triple: tuple[str, str, str] | None = None
         n = len(tokens)
+        raw_spans: list[tuple[int, int, str, float]] = []
 
         for i in range(1, n):
+            best_j = -1
+            best_pred: str | None = None
+            best_res = -1.0
             for j in range(i + 1, min(n, i + 6)):
                 bridge = tuple(tokens[i:j])
-                # Strip trailing determiners inside the bridge if needed
                 core_bridge = tuple(
                     t for t in bridge if t not in self.frame_policy.stop_determiners
                 )
-                matched_pred: str | None = None
-                op_resonance = -1.0
-
                 for proto_toks, canonical_pred, _vec in self._operator_codebook:
                     if bridge == proto_toks or (core_bridge and core_bridge == proto_toks):
                         res = 1.0 + 0.25 * float(len(proto_toks))
-                        if res > op_resonance:
-                            op_resonance = res
-                            matched_pred = canonical_pred
+                        if res > best_res or (res == best_res and j > best_j):
+                            best_res = res
+                            best_pred = canonical_pred
+                            best_j = j
+            if best_pred is not None and best_j > i:
+                raw_spans.append((i, best_j, best_pred, best_res))
 
-                if matched_pred is None:
+        # Select non-overlapping operator spans across the sentence
+        op_spans: list[tuple[int, int, str, float]] = []
+        for span in raw_spans:
+            i_curr, _j_curr, _pred_curr, res_curr = span
+            if not op_spans:
+                op_spans.append(span)
+            else:
+                _i_prev, j_prev, _pred_prev, res_prev = op_spans[-1]
+                if i_curr >= j_prev:
+                    op_spans.append(span)
+                elif res_curr > res_prev:
+                    op_spans[-1] = span
+
+        if op_spans:
+            extracted: list[tuple[str, str, str]] = []
+            i0 = op_spans[0][0]
+            subj_concept, subj_sal = self._extract_salient_concept(tokens[:i0])
+            # Phase 29: Liquid Coreference Binding for low-information anaphoric subjects
+            if (
+                not subj_concept
+                or (subj_sal < 2.25 and subj_concept.upper() not in self.nodes)
+            ) and active_subject_fallback:
+                subj_concept = active_subject_fallback.lower()
+
+            current_subj = subj_concept
+            num_spans = len(op_spans)
+            for k, (_ik, jk, matched_pred, _op_res) in enumerate(op_spans):
+                end_idx = op_spans[k + 1][0] if k + 1 < num_spans else n
+                seg = list(tokens[jk:end_idx])
+                if not seg:
                     continue
 
-                subj_concept, subj_sal = self._extract_salient_concept(tokens[:i])
-                obj_concept, obj_sal = self._extract_salient_concept(tokens[j:])
-                if not subj_concept or not obj_concept or subj_concept == obj_concept:
-                    continue
+                next_subj = current_subj
+                if k + 1 < num_spans:
+                    # Strip trailing low-salience connector tokens (e.g., coordinate bridges)
+                    while len(seg) > 1 and self._token_salience(seg[-1]) < 2.25:
+                        seg.pop()
+                    # Check if the segment introduces a new explicit subject before the next operator
+                    if (
+                        len(seg) >= 3
+                        and self._token_salience(seg[0]) >= 2.25
+                        and self._token_salience(seg[-1]) >= 2.25
+                        and any(self._token_salience(t) < 2.25 for t in seg[1:-1])
+                    ):
+                        next_subj = seg[-1]
+                        seg = seg[:-1]
+                        while len(seg) > 1 and self._token_salience(seg[-1]) < 2.25:
+                            seg.pop()
 
-                total_score = subj_sal + obj_sal + 4.0 * op_resonance
-                if total_score > best_score:
-                    best_score = total_score
-                    best_triple = (subj_concept, matched_pred, obj_concept)
+                obj_concept, _obj_sal = self._extract_salient_concept(seg)
+                if current_subj and obj_concept and current_subj != obj_concept:
+                    triple = (current_subj, matched_pred, obj_concept)
+                    if triple not in extracted:
+                        extracted.append(triple)
+                current_subj = next_subj
 
-        if best_triple is not None:
-            return [best_triple]
+            if extracted:
+                return extracted
 
         # Open-vocabulary SVO projection: rank tokens by Shannon salience and project interior bridge
         salient = [
@@ -615,6 +662,12 @@ class SpiderWebMLM:
         ]
         if len(salient) >= 3:
             subj_tok = salient[0][1]
+            if (
+                self._token_salience(subj_tok) < 2.25
+                and subj_tok.upper() not in self.nodes
+                and active_subject_fallback
+            ):
+                subj_tok = active_subject_fallback.lower()
             bridge_tok = salient[1][1]
             obj_tok = salient[-1][1]
             if subj_tok != obj_tok:
@@ -630,6 +683,12 @@ class SpiderWebMLM:
 
         if len(salient) >= 2:
             anchor = salient[0][1]
+            if (
+                self._token_salience(anchor) < 2.25
+                and anchor.upper() not in self.nodes
+                and active_subject_fallback
+            ):
+                anchor = active_subject_fallback.lower()
             return [
                 (anchor, "related_to", other_tok)
                 for _idx, other_tok, _sal in salient[1:4]
@@ -647,6 +706,9 @@ class SpiderWebMLM:
         token_transitions_learned = 0
         surprises: list[float] = []
         touched_nodes: set[str] = {"CORE_ROOT"}
+        active_discourse_focus: str | None = (
+            self.recent_focal_stack[0][0].lower() if self.recent_focal_stack else None
+        )
 
         core_unit = self.nodes["CORE_ROOT"]
         if self.rust_arena.is_native and text.strip():
@@ -667,14 +729,18 @@ class SpiderWebMLM:
                 surprises.append(tok_surprise)
                 token_transitions_learned += len(tokens) - 1
 
-            # 2. Extract candidate relational & co-occurrence triples
-            triples = self._extract_candidate_triples(sent)
+            # 2. Extract candidate relational & co-occurrence triples (with multi-clause & coreference binding)
+            triples = self._extract_candidate_triples(
+                sent, active_subject_fallback=active_discourse_focus
+            )
             context_vecs: list[list[float]] = []
 
             for subj, pred, obj in triples:
                 spoke = map_predicate_to_spoke(pred)
                 subj_unit = self.get_or_create_mlu(subj, preferred_spoke=spoke)
                 obj_unit = self.get_or_create_mlu(obj, preferred_spoke=spoke)
+                active_discourse_focus = subj_unit.concept_id.lower()
+                self._update_conversation_context(subj_unit.concept_id)
                 touched_nodes.add(subj_unit.concept_id)
                 touched_nodes.add(obj_unit.concept_id)
                 if subj_unit.parent_hub:
@@ -1187,6 +1253,30 @@ class SpiderWebMLM:
                     causal_suffix = f" {c_synth}"
                     causal_trace_tag = f" | [MLU-360-CAUSAL-WAVE] affected={affected_list}"
 
+        delib_suffix = ""
+        delib_trace_tag = ""
+        if self.rust_arena.is_native:
+            delib_dto = self.deliberate_360(focal_cid, max_hops=3)
+            peers = delib_dto.get("cluster_peers", [])
+            insights = delib_dto.get("analogical_insights", [])
+            if peers:
+                peer_names = ", ".join(p.lower().replace("_", " ") for p in peers[:3])
+                if insights:
+                    h0 = insights[0]
+                    delib_suffix = (
+                        f" Through 360° cluster resonance with {peer_names}, "
+                        f"{focal_cid.lower().replace('_', ' ')} may also "
+                        f"{str(h0.get('predicate', '')).replace('_', ' ')} "
+                        f"{str(h0.get('target_concept', '')).lower().replace('_', ' ')} "
+                        f"(shared {str(h0.get('shared_attractor', '')).lower().replace('_', ' ')})."
+                    )
+                else:
+                    delib_suffix = f" In the 360° arena, {focal_cid.lower().replace('_', ' ')} clusters with {peer_names}."
+                delib_trace_tag = (
+                    f" | [MLU-360-DELIBERATE] peers={peers[:3]} "
+                    f"F={delib_dto.get('free_energy', 0.0):.2f}"
+                )
+
         beam_cache = getattr(self, "_last_rust_beam", {}) or {}
         rust_cont = str(beam_cache.get("generated_continuation", "")).strip()
         if not rust_cont and self.rust_arena.is_native:
@@ -1217,10 +1307,10 @@ class SpiderWebMLM:
         base_fluent = rust_fluent or self._synthesize_fluent_english(
             focal_cid, preds, continuation_text
         )
-        fluent_eng = (base_fluent + causal_suffix).strip()
+        fluent_eng = (base_fluent + causal_suffix + delib_suffix).strip()
         trace = (
             f"[MLU-360] Activated {len(activated)} units ({' -> '.join(activated)}) | "
-            f"top_conf={top_conf:.2f} | entropy={avg_entropy:.2f}{causal_trace_tag}"
+            f"top_conf={top_conf:.2f} | entropy={avg_entropy:.2f}{causal_trace_tag}{delib_trace_tag}"
         )
         return MLMQueryResult(
             query=clean_q,
@@ -1389,6 +1479,22 @@ class SpiderWebMLM:
             )
         self._dirty_since_save = True
         return res
+
+    def deliberate_360(self, concept: str, max_hops: int = 3) -> dict[str, Any]:
+        """Phase 30: Run native Rust 5-wave System-2 Deliberative Thinking over a concept."""
+        if self.rust_arena.is_native:
+            return self.rust_arena.deliberate_360(concept, max_hops=max_hops)
+        return {
+            "focal_concept": concept.upper(),
+            "waves_executed": 0,
+            "free_energy": 1.0,
+            "verified_facts": [],
+            "causal_consequences": [],
+            "cluster_peers": [],
+            "analogical_insights": [],
+            "follow_up_question": "",
+            "deliberative_synthesis": "",
+        }
 
     def consolidate(
         self, min_transition_weight: float = 0.05, replay_lr: float = 0.15
@@ -1598,7 +1704,23 @@ class SpiderWebMLM:
                 and rev_dto.get("polarity_flipped") is True
             )
 
-            # Axis 8: Native Rust 360° beam latency (microseconds/query)
+            # Axis 8: Multi-Clause English Comprehension, Coreference Binding & System-2 Deliberation
+            comp_rep = mlm.train_on_text(
+                "An eagle is a bird, has talons, and can soar. It hunts prey.",
+                persist=False,
+            )
+            q_eagle = mlm.query_360("Does an eagle have talons?")
+            q_soar = mlm.query_360("Can an eagle soar?")
+            delib_orca = mlm.deliberate_360("ORCA", max_hops=3)
+            comprehension_deliberation_passed = bool(
+                comp_rep.relations_verified >= 3
+                and q_eagle.status == "VERIFIED"
+                and q_soar.status == "VERIFIED"
+                and delib_orca.get("waves_executed") == 5
+                and "DOLPHIN" in delib_orca.get("cluster_peers", [])
+            )
+
+            # Axis 9: Native Rust 360° beam latency (microseconds/query)
             iters = 25
             t0 = time.perf_counter()
             for _ in range(iters):
@@ -1616,6 +1738,7 @@ class SpiderWebMLM:
                 and comparative_passed
                 and causal_counterfactual_passed
                 and bridge_cluster_revision_passed
+                and comprehension_deliberation_passed
             )
             return {
                 "all_passed": all_passed,
@@ -1626,8 +1749,9 @@ class SpiderWebMLM:
                 "comparative_360_passed": comparative_passed,
                 "causal_counterfactual_passed": causal_counterfactual_passed,
                 "bridge_cluster_revision_passed": bridge_cluster_revision_passed,
+                "comprehension_deliberation_passed": comprehension_deliberation_passed,
                 "rust_beam_avg_latency_us": avg_beam_us,
-                "verified_spokes_learned": rep1.relations_verified,
+                "verified_spokes_learned": rep1.relations_verified + comp_rep.relations_verified,
                 "telemetry": tel,
             }
 

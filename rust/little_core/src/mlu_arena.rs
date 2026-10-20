@@ -711,6 +711,7 @@ impl SpiderWebArena {
         let mut total_surprise: f32 = 0.0;
         let mut surprise_count: usize = 0;
         let initial_mitosis = self.total_mitosis_events;
+        let mut active_discourse_focus: Option<String> = None;
 
         for raw_sent in text.split(['.', '!', '?', '\n']) {
             let trimmed = raw_sent.trim();
@@ -743,6 +744,55 @@ impl SpiderWebArena {
                 .filter(|(_, w)| token_information_salience(w) >= 2.25)
                 .map(|(i, _)| i)
                 .collect();
+
+            // Phase 29: Liquid Coreference Binding for low-entropy leading anaphors
+            if let Some(&first_idx) = anchor_indices.first() {
+                if first_idx == 0
+                    || (first_idx == 1 && token_information_salience(&tokens[0]) < 1.85)
+                {
+                    if first_idx == 1 && active_discourse_focus.is_some() && anchor_indices.len() == 1 {
+                        if let Some(ref focus) = active_discourse_focus {
+                            let target_tok = &tokens[first_idx];
+                            if focus != target_tok {
+                                let pred = &tokens[0];
+                                let (passed, _) =
+                                    self.verify_spoke_invariants(focus, pred, target_tok);
+                                let s = self.learn_spoke_relation(
+                                    focus,
+                                    pred,
+                                    target_tok,
+                                    learning_rate * 0.5,
+                                    passed,
+                                );
+                                total_surprise += s;
+                                surprise_count += 1;
+                                spoke_updates += 1;
+                            }
+                        }
+                    } else {
+                        active_discourse_focus = Some(tokens[first_idx].clone());
+                    }
+                } else if first_idx >= 2 {
+                    if let Some(ref focus) = active_discourse_focus {
+                        let target_tok = &tokens[first_idx];
+                        if focus != target_tok {
+                            let pred = tokens[1..first_idx].join("_");
+                            let (passed, _) =
+                                self.verify_spoke_invariants(focus, &pred, target_tok);
+                            let s = self.learn_spoke_relation(
+                                focus,
+                                &pred,
+                                target_tok,
+                                learning_rate * 0.5,
+                                passed,
+                            );
+                            total_surprise += s;
+                            surprise_count += 1;
+                            spoke_updates += 1;
+                        }
+                    }
+                }
+            }
 
             for idx in 0..anchor_indices.len() {
                 let tok_idx = anchor_indices[idx];
@@ -2274,6 +2324,139 @@ impl SpiderWebArena {
             nars_confidence: nars_conf,
         }
     }
+
+    /// Phase 30: Native Rust System-2 Multi-Wave Deliberative Thinking (`deliberate_360`).
+    ///
+    /// Executes a 5-stage deliberative wave loop over `concept_id`:
+    ///   1. 360° Taxonomic, Capability & Meronymic Beam Wave (`query_360_beam`)
+    ///   2. Multi-Hop Causal & Forward Consequence Wave (`simulate_causal_wave_360`)
+    ///   3. Emergent Cluster & Analogical Peer Resonance Wave
+    ///   4. Epistemic Free-Energy & Spoke Gap Assessment
+    ///   5. Coherent Multi-Sentence Discourse Synthesis
+    pub fn deliberate_360(&mut self, concept_id: &str, max_hops: usize) -> Deliberation360Dto {
+        let hops = max_hops.clamp(1, 5);
+        let beam = self.query_360_beam(concept_id, hops, 12);
+        let clean = beam.focal_concept.clone();
+
+        if beam.role == "unknown" {
+            let subj_low = clean.to_lowercase().replace('_', " ");
+            return Deliberation360Dto {
+                focal_concept: clean,
+                waves_executed: 1,
+                free_energy: 1.0,
+                verified_facts: Vec::new(),
+                causal_consequences: Vec::new(),
+                cluster_peers: Vec::new(),
+                analogical_insights: Vec::new(),
+                follow_up_question: format!("What is {} and how does it relate to known concepts?", subj_low),
+                deliberative_synthesis: format!(
+                    "I do not yet have verified 360° MLU knowledge about {}. What is {} and how does it relate to known concepts?",
+                    subj_low, subj_low
+                ),
+            };
+        }
+
+        // Wave 1: Verified facts
+        let verified_facts: Vec<SpokePredictionDto> = beam
+            .predictions
+            .iter()
+            .filter(|p| p.verified && p.predicate != "co_occurs_with")
+            .cloned()
+            .collect();
+
+        // Wave 2: Causal wave from focal concept and its direct procedural targets
+        let causal_sim = self.simulate_causal_wave_360(&clean, hops);
+        let causal_consequences = causal_sim.affected_concepts.clone();
+
+        // Wave 3: Cluster peers & Analogical insights
+        let clusters = self.discover_latent_clusters_360(2);
+        let mut cluster_peers: Vec<String> = Vec::new();
+        for cl in &clusters {
+            if cl.member_concepts.contains(&clean) {
+                for m in &cl.member_concepts {
+                    if m != &clean && !cluster_peers.contains(m) {
+                        cluster_peers.push(m.clone());
+                    }
+                }
+            }
+        }
+
+        let curiosity = self.discover_epistemic_hypotheses(15);
+        let analogical_insights: Vec<AnalogicalHypothesisDto> = curiosity
+            .analogical_hypotheses
+            .into_iter()
+            .filter(|h| h.subject_concept == clean)
+            .take(3)
+            .collect();
+
+        // Wave 4: Epistemic Free-Energy & Curiosity Question
+        let avg_entropy = if verified_facts.is_empty() {
+            1.0
+        } else {
+            let sum_h: f32 = verified_facts.iter().map(|p| p.epistemic_entropy).sum();
+            sum_h / (verified_facts.len() as f32)
+        };
+        let info_bonus = 0.15 * ((1.0 + verified_facts.len() as f32).ln())
+            + 0.10 * ((1.0 + causal_consequences.len() as f32).ln())
+            + 0.08 * ((1.0 + cluster_peers.len() as f32).ln());
+        let free_energy = (((avg_entropy - info_bonus).clamp(0.0, 1.0) * 10000.0).round()) / 10000.0;
+
+        let subj_low = clean.to_lowercase().replace('_', " ");
+        let follow_up_question = curiosity
+            .curiosity_gaps
+            .iter()
+            .find(|g| g.concept_id == clean)
+            .and_then(|g| g.missing_spokes.first())
+            .map(|spoke| format!("What are the {} characteristics of {}?", spoke, subj_low))
+            .unwrap_or_default();
+
+        // Wave 5: Coherent Multi-Sentence Discourse Synthesis
+        let mut sentences: Vec<String> = Vec::new();
+        if !beam.fluent_synthesis.is_empty() {
+            sentences.push(beam.fluent_synthesis.clone());
+        }
+        if !causal_consequences.is_empty() && !causal_sim.causal_synthesis.is_empty() {
+            sentences.push(causal_sim.causal_synthesis);
+        }
+        if !cluster_peers.is_empty() {
+            let peer_list: Vec<String> = cluster_peers
+                .iter()
+                .take(3)
+                .map(|p| p.to_lowercase().replace('_', " "))
+                .collect();
+            if let Some(first_hyp) = analogical_insights.first() {
+                sentences.push(format!(
+                    "Through 360° cluster resonance with {}, {} may also {} {} (shared {}).",
+                    peer_list.join(", "),
+                    subj_low,
+                    first_hyp.predicate.replace('_', " "),
+                    first_hyp.target_concept.to_lowercase().replace('_', " "),
+                    first_hyp.shared_attractor.to_lowercase().replace('_', " ")
+                ));
+            } else {
+                sentences.push(format!(
+                    "In the 360° arena, {} clusters with {}.",
+                    subj_low,
+                    peer_list.join(", ")
+                ));
+            }
+        }
+        if !follow_up_question.is_empty() && verified_facts.len() < 4 {
+            sentences.push(follow_up_question.clone());
+        }
+
+        Deliberation360Dto {
+            focal_concept: clean,
+            waves_executed: 5,
+            free_energy,
+            verified_facts,
+            causal_consequences,
+            cluster_peers,
+            analogical_insights,
+            follow_up_question,
+            deliberative_synthesis: sentences.join(" "),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2448,4 +2631,18 @@ pub struct BeliefRevisionDto {
     pub neg_evidence: f32,
     pub nars_confidence: f32,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Deliberation360Dto {
+    pub focal_concept: String,
+    pub waves_executed: usize,
+    pub free_energy: f32,
+    pub verified_facts: Vec<SpokePredictionDto>,
+    pub causal_consequences: Vec<String>,
+    pub cluster_peers: Vec<String>,
+    pub analogical_insights: Vec<AnalogicalHypothesisDto>,
+    pub follow_up_question: String,
+    pub deliberative_synthesis: String,
+}
+
 

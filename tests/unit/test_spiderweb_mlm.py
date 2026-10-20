@@ -504,6 +504,48 @@ def test_spiderweb_mlm_phase26_to_28_unified_kernel_waves_and_lifecycle_persiste
         mlm2.close()
 
 
+def test_spiderweb_mlm_phase29_to_31_multiclause_coreference_and_deliberation(tmp_path) -> None:
+    """Verify Phases 29-31: Multi-clause sentence decomposition, cross-sentence anaphoric coreference, and 5-wave System-2 deliberation."""
+    db_file = str(tmp_path / "phase29_deliberation.db")
+    with MemoryStore(db_file) as mem:
+        mlm = SpiderWebMLM(mem)
+        # Phase 29: Single compound sentence with 3 operator bridges + second sentence with low-entropy anaphor 'It'
+        rep = mlm.train_on_text(
+            "An eagle is a bird, has talons, and can soar. "
+            "It requires thermals. "
+            "A falcon is a bird, and can dive.",
+            persist=True,
+        )
+        assert rep.relations_verified >= 5
+
+        # Verify all 3 clauses from sentence 1 + coreference clause from sentence 2 were learned on EAGLE
+        q_bird = mlm.query_360("Is an eagle a bird?")
+        q_talons = mlm.query_360("Does an eagle have talons?")
+        q_soar = mlm.query_360("Can an eagle soar?")
+        assert q_bird.status == "VERIFIED"
+        assert q_talons.status == "VERIFIED"
+        assert q_soar.status == "VERIFIED"
+
+        eagle_open = mlm.query_360("eagle")
+        eagle_targets = {p.target_concept for p in eagle_open.spoke_predictions}
+        assert {"BIRD", "TALONS", "SOAR"}.issubset(eagle_targets)
+
+        # Phase 30: 5-Wave System-2 Deliberation on FALCON (discovers cluster peer EAGLE & analogical insights)
+        delib = mlm.deliberate_360("FALCON", max_hops=3)
+        assert delib["focal_concept"] == "FALCON"
+        assert delib["waves_executed"] == 5
+        assert "EAGLE" in delib["cluster_peers"]
+        assert delib["deliberative_synthesis"] != ""
+        assert "[MLU-360-DELIBERATE]" in eagle_open.inspectable_trace
+        mlm.close()
+
+    # Phase 31: Verify 9-axis benchmark suite including comprehension_deliberation_passed
+    bench = SpiderWebMLM.run_benchmark_suite()
+    assert bench["all_passed"] is True
+    assert bench["comprehension_deliberation_passed"] is True
+
+
+
 
 
 

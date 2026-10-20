@@ -944,6 +944,11 @@ def cmd_mlu(args: argparse.Namespace) -> None:
                 evidence_weight=float(getattr(args, "weight", 3.0)),
             )
             print(json.dumps(rev_dict, indent=2))
+        elif action == "deliberate":
+            delib_dict = kernel.mlm.deliberate_360(
+                args.concept, max_hops=int(getattr(args, "hops", 3))
+            )
+            print(json.dumps(delib_dict, indent=2))
         else:
             tel = kernel.mlm.get_telemetry()
             print(json.dumps(tel, indent=2))
@@ -1313,6 +1318,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--weight", type=float, default=3.0, help="Evidence weight (default: 3.0)"
     )
     p_mlu_revise.set_defaults(func=cmd_mlu)
+    p_mlu_delib = p_mlu_subs.add_parser(
+        "deliberate",
+        parents=[db_parent],
+        help="Run native Rust 5-wave System-2 Deliberative Thinking over a concept",
+    )
+    p_mlu_delib.add_argument("concept", help="Concept to deliberate on")
+    p_mlu_delib.add_argument(
+        "--hops", type=int, default=3, help="Maximum deliberation hops (default: 3)"
+    )
+    p_mlu_delib.set_defaults(func=cmd_mlu)
 
     return parser
 

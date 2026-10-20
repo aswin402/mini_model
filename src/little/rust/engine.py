@@ -349,6 +349,14 @@ class RustAccelerationCore:
                 ]
                 lib.little_core_mlu_arena_revise_belief.restype = ctypes.c_void_p
 
+            if hasattr(lib, "little_core_mlu_arena_deliberate_360"):
+                lib.little_core_mlu_arena_deliberate_360.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_size_t,
+                ]
+                lib.little_core_mlu_arena_deliberate_360.restype = ctypes.c_void_p
+
     # -------------------------------------------------------------------------
     # Public Accelerated Graph API
     # -------------------------------------------------------------------------
@@ -1251,6 +1259,25 @@ class RustMluArena:
             object_node.encode("utf-8"),
             1 if verified else 0,
             float(evidence_weight),
+        )
+        if not ptr:
+            return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def deliberate_360(self, concept: str, max_hops: int = 3) -> dict[str, Any]:
+        """Run native Rust 5-wave System-2 Deliberative Thinking over a concept."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_deliberate_360")
+        ):
+            return {}
+        ptr = self._lib.little_core_mlu_arena_deliberate_360(
+            self._handle,
+            concept.encode("utf-8"),
+            max(1, int(max_hops)),
         )
         if not ptr:
             return {}

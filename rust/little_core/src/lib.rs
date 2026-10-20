@@ -1283,6 +1283,34 @@ pub extern "C" fn little_core_mlu_arena_revise_belief(
     to_c_string(&res)
 }
 
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_deliberate_360(
+    arena_ptr: *mut SpiderWebArena,
+    concept_ptr: *const c_char,
+    max_hops: usize,
+) -> *mut c_char {
+    let empty = mlu_arena::Deliberation360Dto {
+        focal_concept: String::new(),
+        waves_executed: 0,
+        free_energy: 1.0,
+        verified_facts: Vec::new(),
+        causal_consequences: Vec::new(),
+        cluster_peers: Vec::new(),
+        analogical_insights: Vec::new(),
+        follow_up_question: String::new(),
+        deliberative_synthesis: String::new(),
+    };
+    if arena_ptr.is_null() || concept_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let Ok(concept) = (unsafe { CStr::from_ptr(concept_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let arena = unsafe { &mut *arena_ptr };
+    let res = arena.deliberate_360(concept, max_hops);
+    to_c_string(&res)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
