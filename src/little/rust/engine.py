@@ -383,6 +383,23 @@ class RustAccelerationCore:
                 ]
                 lib.little_core_mlu_arena_summarize_domain_360.restype = ctypes.c_void_p
 
+            if hasattr(lib, "little_core_mlu_arena_diagnose_abductive_360"):
+                lib.little_core_mlu_arena_diagnose_abductive_360.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_size_t,
+                    ctypes.c_size_t,
+                ]
+                lib.little_core_mlu_arena_diagnose_abductive_360.restype = ctypes.c_void_p
+
+            if hasattr(lib, "little_core_mlu_arena_compose_discourse_360"):
+                lib.little_core_mlu_arena_compose_discourse_360.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_size_t,
+                ]
+                lib.little_core_mlu_arena_compose_discourse_360.restype = ctypes.c_void_p
+
     # -------------------------------------------------------------------------
     # Public Accelerated Graph API
     # -------------------------------------------------------------------------
@@ -1369,6 +1386,52 @@ class RustMluArena:
             self._handle,
             domain_concept.encode("utf-8"),
             max(1, int(max_items)),
+        )
+        if not ptr:
+            return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def diagnose_abductive_360(
+        self, observations: list[str] | str, max_hops: int = 3, top_k: int = 5
+    ) -> dict[str, Any]:
+        """Run native Rust 360° Abductive Diagnostic & Root-Cause Engine."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_diagnose_abductive_360")
+        ):
+            return {}
+        obs_csv = (
+            ",".join(str(x).strip() for x in observations if str(x).strip())
+            if isinstance(observations, list)
+            else str(observations).strip()
+        )
+        ptr = self._lib.little_core_mlu_arena_diagnose_abductive_360(
+            self._handle,
+            obs_csv.encode("utf-8"),
+            max(1, int(max_hops)),
+            max(1, int(top_k)),
+        )
+        if not ptr:
+            return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def compose_discourse_360(self, concept: str, max_hops: int = 3) -> dict[str, Any]:
+        """Run native Rust 360° Multi-Paragraph Discourse & Essay Composer."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_compose_discourse_360")
+        ):
+            return {}
+        ptr = self._lib.little_core_mlu_arena_compose_discourse_360(
+            self._handle,
+            concept.encode("utf-8"),
+            max(1, int(max_hops)),
         )
         if not ptr:
             return {}

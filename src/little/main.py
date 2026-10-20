@@ -969,6 +969,19 @@ def cmd_mlu(args: argparse.Namespace) -> None:
                 max_items=int(getattr(args, "top", 8)),
             )
             print(json.dumps(sum_dict, indent=2))
+        elif action == "diagnose":
+            diag_dict = kernel.mlm.diagnose_abductive_360(
+                args.observations,
+                max_hops=int(getattr(args, "hops", 3)),
+                top_k=int(getattr(args, "top", 5)),
+            )
+            print(json.dumps(diag_dict, indent=2))
+        elif action == "essay":
+            essay_dict = kernel.mlm.compose_discourse_360(
+                args.concept,
+                max_hops=int(getattr(args, "hops", 3)),
+            )
+            print(json.dumps(essay_dict, indent=2))
         elif action == "chat":
             print("🕸️  [360° Spider-Web MLU Interactive Chat] Type 'exit' or 'quit' to stop.\n")
             while True:
@@ -1399,6 +1412,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--top", type=int, default=8, help="Maximum items per section (default: 8)"
     )
     p_mlu_summary.set_defaults(func=cmd_mlu)
+    p_mlu_diagnose = p_mlu_subs.add_parser(
+        "diagnose",
+        parents=[db_parent],
+        help="Run native Rust 360° Abductive Diagnostic & Root-Cause Engine",
+    )
+    p_mlu_diagnose.add_argument(
+        "observations", nargs="+", help="Observed symptoms, properties, or effects"
+    )
+    p_mlu_diagnose.add_argument(
+        "--hops", type=int, default=3, help="Maximum reverse abductive hops (default: 3)"
+    )
+    p_mlu_diagnose.add_argument(
+        "--top", type=int, default=5, help="Maximum candidate explanations (default: 5)"
+    )
+    p_mlu_diagnose.set_defaults(func=cmd_mlu)
+    p_mlu_essay = p_mlu_subs.add_parser(
+        "essay",
+        parents=[db_parent],
+        help="Run native Rust 360° Multi-Paragraph Discourse & Essay Composer",
+    )
+    p_mlu_essay.add_argument("concept", help="Topic or concept to compose discourse on")
+    p_mlu_essay.add_argument(
+        "--hops", type=int, default=3, help="Maximum 360° wave hops (default: 3)"
+    )
+    p_mlu_essay.set_defaults(func=cmd_mlu)
     p_mlu_chat = p_mlu_subs.add_parser(
         "chat",
         parents=[db_parent],

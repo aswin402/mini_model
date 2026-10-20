@@ -3055,6 +3055,307 @@ impl SpiderWebArena {
             domain_synthesis: synthesis,
         }
     }
+
+    /// Phase 38: Native Rust 360° Abductive Diagnostic & Root-Cause Engine (`diagnose_abductive_360`).
+    ///
+    /// Given a comma/space-separated list of observed symptoms, properties, or effects (`observations_csv`),
+    /// propagates reverse 360° abductive likelihood waves across all spokes (`causal`, `taxonomy`,
+    /// `spatial`, `capability`, `meronymy`) and ranks candidate root causes / explanatory concepts by
+    /// Parsimonious Explanatory Coverage * Bayesian-NARS Posterior Confidence.
+    pub fn diagnose_abductive_360(
+        &self,
+        observations_csv: &str,
+        max_hops: usize,
+        top_k: usize,
+    ) -> AbductiveDiagnosis360Dto {
+        let hops = max_hops.clamp(1, 6);
+        let k = top_k.clamp(1, 10);
+
+        // Parse observations from comma-separated or whitespace-separated list
+        let observations: Vec<String> = observations_csv
+            .split(|c: char| c == ',' || c == ';' || c == '|')
+            .map(|s| s.trim().to_uppercase().replace(' ', "_"))
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if observations.is_empty() {
+            return AbductiveDiagnosis360Dto {
+                observations: Vec::new(),
+                best_explanation: String::new(),
+                best_coverage_ratio: 0.0,
+                candidates: Vec::new(),
+                diagnostic_synthesis: "No observations provided for 360° abductive diagnosis.".to_string(),
+            };
+        }
+
+        // Build reverse adjacency: target -> Vec<(source, predicate, confidence)>
+        let mut rev_adj: std::collections::HashMap<String, Vec<(String, String, f32)>> =
+            std::collections::HashMap::new();
+        // Also track negative polarity / disjoint links to filter out refuted candidates
+        let mut neg_targets: std::collections::HashMap<String, std::collections::HashSet<String>> =
+            std::collections::HashMap::new();
+
+        for cell in &self.cells {
+            if cell.concept_id == "CORE_ROOT" || cell.concept_id.starts_with("SUBCORE_") {
+                continue;
+            }
+            for edges in &cell.spoke_synapses {
+                for syn in edges {
+                    if syn.predicate == "co_occurs_with" {
+                        continue;
+                    }
+                    let total_ev = syn.pos_evidence + syn.neg_evidence;
+                    let conf = total_ev / (total_ev + 1.0);
+                    if syn.pos_evidence > syn.neg_evidence && syn.predicate != "disjoint_with" {
+                        rev_adj
+                            .entry(syn.target_name.clone())
+                            .or_default()
+                            .push((cell.concept_id.clone(), syn.predicate.clone(), conf));
+                    } else if syn.neg_evidence > syn.pos_evidence || syn.predicate == "disjoint_with"
+                    {
+                        neg_targets
+                            .entry(cell.concept_id.clone())
+                            .or_default()
+                            .insert(syn.target_name.clone());
+                    }
+                }
+            }
+        }
+
+        // For each observation, run reverse BFS up to `hops` to find all candidate explanatory concepts
+        // candidate -> Map<observation, (best_path_conf, proof_step)>
+        let mut cand_map: std::collections::HashMap<
+            String,
+            std::collections::HashMap<String, (f32, String)>,
+        > = std::collections::HashMap::new();
+
+        for obs in &observations {
+            let mut q: std::collections::VecDeque<(String, f32, usize, String)> =
+                std::collections::VecDeque::new();
+            let mut best_vis: std::collections::HashMap<String, f32> =
+                std::collections::HashMap::new();
+
+            q.push_back((obs.clone(), 1.0, 0, obs.to_lowercase().replace('_', " ")));
+            best_vis.insert(obs.clone(), 1.0);
+
+            while let Some((curr, path_conf, d, trace_str)) = q.pop_front() {
+                if d >= hops {
+                    continue;
+                }
+                if let Some(parents) = rev_adj.get(&curr) {
+                    for (src, pred, edge_conf) in parents {
+                        if src == obs {
+                            continue;
+                        }
+                        let decay = if pred == "is_a" || pred == "causes" {
+                            0.92
+                        } else {
+                            0.85
+                        };
+                        let next_conf = path_conf * edge_conf * decay;
+                        let prev_best = *best_vis.get(src).unwrap_or(&0.0);
+                        if next_conf > prev_best {
+                            best_vis.insert(src.clone(), next_conf);
+                            let step_desc = format!(
+                                "{} {} {}",
+                                src.to_lowercase().replace('_', " "),
+                                pred.replace('_', " "),
+                                trace_str
+                            );
+                            cand_map
+                                .entry(src.clone())
+                                .or_default()
+                                .insert(obs.clone(), (next_conf, step_desc.clone()));
+                            q.push_back((src.clone(), next_conf, d + 1, step_desc));
+                        }
+                    }
+                }
+            }
+        }
+
+        let obs_total = observations.len() as f32;
+        let mut candidates: Vec<AbductiveCandidateDto> = Vec::new();
+
+        for (cand_cid, obs_hits) in cand_map {
+            // Filter out candidates that have a direct negative / disjoint link with any observation
+            if let Some(negs) = neg_targets.get(&cand_cid) {
+                if observations.iter().any(|o| negs.contains(o)) {
+                    continue;
+                }
+            }
+            let covered_count = obs_hits.len();
+            let coverage_ratio = (covered_count as f32) / obs_total;
+            let sum_conf: f32 = obs_hits.values().map(|(c, _)| *c).sum();
+            let avg_conf = sum_conf / (covered_count as f32);
+            // Parsimonious explanatory score rewards coverage first, then posterior confidence
+            let posterior_score = (coverage_ratio * 0.70 + avg_conf * 0.30).clamp(0.0, 1.0);
+
+            let mut matched_observations: Vec<String> = obs_hits.keys().cloned().collect();
+            matched_observations.sort();
+            let mut explanatory_paths: Vec<String> =
+                obs_hits.values().map(|(_, s)| s.clone()).collect();
+            explanatory_paths.sort();
+
+            candidates.push(AbductiveCandidateDto {
+                hypothesis_concept: cand_cid,
+                observations_explained: covered_count,
+                coverage_ratio: (coverage_ratio * 1000.0).round() / 1000.0,
+                posterior_confidence: (posterior_score * 1000.0).round() / 1000.0,
+                matched_observations,
+                explanatory_paths,
+            });
+        }
+
+        candidates.sort_by(|a, b| {
+            b.observations_explained
+                .cmp(&a.observations_explained)
+                .then_with(|| {
+                    b.posterior_confidence
+                        .partial_cmp(&a.posterior_confidence)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
+        candidates.truncate(k);
+
+        let (best_explanation, best_coverage_ratio, synthesis) =
+            if let Some(top) = candidates.first() {
+                let obs_human: Vec<String> = observations
+                    .iter()
+                    .map(|o| o.to_lowercase().replace('_', " "))
+                    .collect();
+                let top_human = top.hypothesis_concept.to_lowercase().replace('_', " ");
+                let paths_str = top.explanatory_paths.join("; ");
+                (
+                    top.hypothesis_concept.clone(),
+                    top.coverage_ratio,
+                    format!(
+                        "Abductive 360° diagnosis for [{}]: primary hypothesis is {} (explains {}/{} observations, posterior={:.2} via {}).",
+                        obs_human.join(", "),
+                        top_human,
+                        top.observations_explained,
+                        observations.len(),
+                        top.posterior_confidence,
+                        paths_str
+                    ),
+                )
+            } else {
+                (
+                    String::new(),
+                    0.0,
+                    "No verified 360° abductive hypothesis found for the given observations."
+                        .to_string(),
+                )
+            };
+
+        AbductiveDiagnosis360Dto {
+            observations,
+            best_explanation,
+            best_coverage_ratio,
+            candidates,
+            diagnostic_synthesis: synthesis,
+        }
+    }
+
+    /// Phase 39: Native Rust 360° Multi-Paragraph Discourse & Essay Composer (`compose_discourse_360`).
+    ///
+    /// Synthesizes a structured 3-paragraph grounded exposition for `concept` by orchestrating:
+    ///   - Paragraph 1 (Ontological & Structural Grounding): 360° radial beam predictions across taxonomy, parts, habitat, and capabilities.
+    ///   - Paragraph 2 (Causal Dynamics, Poset Order & Goal Planning): Upstream prerequisites (`plan_goal_360`) and downstream causal waves (`simulate_causal_wave_360`).
+    ///   - Paragraph 3 (System-2 Cluster Resonance & Epistemic Frontier): 5-wave deliberation (`deliberate_360`), cluster peers, and analogical insights.
+    pub fn compose_discourse_360(
+        &mut self,
+        concept: &str,
+        max_hops: usize,
+    ) -> Discourse360Dto {
+        let clean_cid = concept.trim().to_uppercase().replace(' ', "_");
+        let hops = max_hops.clamp(1, 5);
+        let subj_human = clean_cid.to_lowercase().replace('_', " ");
+
+        let beam = self.query_360_beam(&clean_cid, hops, 12);
+        if beam.predictions.is_empty() {
+            let plan = self.plan_goal_360(&clean_cid, "", hops + 2);
+            if plan.achievable {
+                let p1 = format!(
+                    "{} is a terminal outcome concept in the 360° Spider-Web Arena.",
+                    subj_human
+                );
+                let p2 = plan.plan_synthesis.clone();
+                let p3 = format!(
+                    "Root prerequisites driving {} include: {}.",
+                    subj_human,
+                    plan.root_prerequisites.join(", ").to_lowercase().replace('_', " ")
+                );
+                let full_text = format!("{}\n\n{}\n\n{}", p1, p2, p3);
+                return Discourse360Dto {
+                    focal_concept: clean_cid,
+                    title: format!("360° Knowledge Discourse: {}", subj_human),
+                    paragraph_count: 3,
+                    paragraphs: vec![p1, p2, p3],
+                    full_discourse: full_text,
+                };
+            }
+            return Discourse360Dto {
+                focal_concept: clean_cid,
+                title: format!("360° Knowledge Discourse: {}", subj_human),
+                paragraph_count: 0,
+                paragraphs: Vec::new(),
+                full_discourse: String::new(),
+            };
+        }
+
+        // Paragraph 1: Ontological & Structural Grounding
+        let mut p1 = beam.fluent_synthesis.clone();
+        if !beam.generated_continuation.is_empty() {
+            p1.push_str(&format!(
+                " In continuous liquid sequence memory, {} {}.",
+                subj_human, beam.generated_continuation
+            ));
+        }
+
+        // Paragraph 2: Causal Dynamics, Poset Order & Goal Planning
+        let causal = self.simulate_causal_wave_360(&clean_cid, hops);
+        let plan = self.plan_goal_360(&clean_cid, "", hops + 1);
+        let mut p2_parts: Vec<String> = Vec::new();
+        if causal.affected_concepts.len() > 1 && !causal.causal_synthesis.is_empty() {
+            p2_parts.push(causal.causal_synthesis);
+        }
+        if plan.achievable && !plan.plan_synthesis.is_empty() {
+            p2_parts.push(plan.plan_synthesis);
+        }
+        if p2_parts.is_empty() {
+            let chain_nodes: Vec<String> = beam
+                .activated_cells
+                .iter()
+                .filter(|c| *c != "CORE_ROOT" && !c.starts_with("SUBCORE_"))
+                .map(|c| c.to_lowercase().replace('_', " "))
+                .collect();
+            p2_parts.push(format!(
+                "Across multi-hop 360° propagation within {}, {} activates the verified conceptual neighborhood: {}.",
+                beam.active_subcore,
+                subj_human,
+                chain_nodes.join(" -> ")
+            ));
+        }
+        let p2 = p2_parts.join(" ");
+
+        // Paragraph 3: System-2 Cluster Resonance & Epistemic Frontier
+        let delib = self.deliberate_360(&clean_cid, hops);
+        let mut p3 = delib.deliberative_synthesis;
+        if !delib.follow_up_question.is_empty() {
+            p3.push_str(&format!(" Open epistemic inquiry: {}", delib.follow_up_question));
+        }
+
+        let paragraphs = vec![p1, p2, p3];
+        let full_discourse = paragraphs.join("\n\n");
+
+        Discourse360Dto {
+            focal_concept: clean_cid,
+            title: format!("360° Knowledge Discourse: {}", subj_human),
+            paragraph_count: paragraphs.len(),
+            paragraphs,
+            full_discourse,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -3287,4 +3588,33 @@ pub struct DomainSummary360Dto {
     pub open_curiosity_questions: Vec<String>,
     pub domain_synthesis: String,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AbductiveCandidateDto {
+    pub hypothesis_concept: String,
+    pub observations_explained: usize,
+    pub coverage_ratio: f32,
+    pub posterior_confidence: f32,
+    pub matched_observations: Vec<String>,
+    pub explanatory_paths: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AbductiveDiagnosis360Dto {
+    pub observations: Vec<String>,
+    pub best_explanation: String,
+    pub best_coverage_ratio: f32,
+    pub candidates: Vec<AbductiveCandidateDto>,
+    pub diagnostic_synthesis: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Discourse360Dto {
+    pub focal_concept: String,
+    pub title: String,
+    pub paragraph_count: usize,
+    pub paragraphs: Vec<String>,
+    pub full_discourse: String,
+}
+
 

@@ -643,3 +643,50 @@ def test_spiderweb_mlm_phase35_to_37_order_poset_and_domain_summary(tmp_path) ->
     assert bench["order_and_summary_passed"] is True
 
 
+def test_spiderweb_mlm_phase38_to_40_abductive_diagnosis_and_discourse(tmp_path) -> None:
+    """Verify Phases 38-40: Native Rust 360° Abductive Root-Cause Diagnosis, Multi-Paragraph Discourse Synthesis, and 12-axis benchmark."""
+    db_file = str(tmp_path / "phase38_abductive_discourse.db")
+    with MemoryStore(db_file) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+        mlm.train_on_text(
+            "An orca is a cetacean. A cetacean is a mammal. A mammal has warm_blood. "
+            "An orca can echolocate. An orca lives in the ocean. "
+            "A dolphin is a cetacean. "
+            "Drought causes crop_failure. Crop_failure causes famine.",
+            persist=True,
+        )
+
+        # Phase 38a: Abductive diagnosis across taxonomic/capability/spatial spokes
+        diag = mlm.diagnose_abductive_360(
+            ["ECHOLOCATE", "OCEAN", "WARM_BLOOD"], max_hops=3, top_k=5
+        )
+        assert diag["best_explanation"] == "ORCA"
+        assert diag["best_coverage_ratio"] == 1.0
+        assert len(diag["candidates"]) >= 1
+        assert diag["candidates"][0]["observations_explained"] == 3
+        assert "Abductive 360° diagnosis" in diag["diagnostic_synthesis"]
+
+        # Phase 38b: Abductive root-cause diagnosis along causal chains
+        causal_diag = mlm.diagnose_abductive_360(
+            ["CROP_FAILURE", "FAMINE"], max_hops=3, top_k=5
+        )
+        assert causal_diag["best_explanation"] == "DROUGHT"
+        assert causal_diag["best_coverage_ratio"] == 1.0
+
+        # Phase 39: Multi-paragraph 360° discourse composition
+        essay = mlm.compose_discourse_360("ORCA", max_hops=3)
+        assert essay["focal_concept"] == "ORCA"
+        assert essay["paragraph_count"] == 3
+        assert len(essay["paragraphs"]) == 3
+        assert "cetacean" in essay["paragraphs"][0].lower()
+        assert "dolphin" in essay["paragraphs"][2].lower()
+        assert "\n\n" in essay["full_discourse"]
+        mlm.close()
+
+    # Phase 40: Verify 12-axis benchmark suite including abductive_and_discourse_passed
+    bench = SpiderWebMLM.run_benchmark_suite()
+    assert bench["all_passed"] is True
+    assert bench["abductive_and_discourse_passed"] is True
+
+
+

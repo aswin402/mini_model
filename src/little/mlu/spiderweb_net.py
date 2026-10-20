@@ -1563,7 +1563,7 @@ class SpiderWebMLM:
                 domain_concept=domain_concept, max_items=max_items
             )
         return {
-            "domain_name": domain_concept.upper().strip() or "ARENA_GLOBAL",
+            "domain_name": domain_concept.upper().strip() or "ALL_DOMAINS",
             "active_concepts_count": len(self.nodes),
             "verified_synapses_count": 0,
             "central_hubs": [],
@@ -1571,6 +1571,36 @@ class SpiderWebMLM:
             "emergent_clusters": [],
             "open_curiosity_questions": [],
             "domain_synthesis": "",
+        }
+
+    def diagnose_abductive_360(
+        self, observations: list[str] | str, max_hops: int = 3, top_k: int = 5
+    ) -> dict[str, Any]:
+        """Phase 38: Run native Rust 360° Abductive Diagnostic & Root-Cause Engine."""
+        if self.rust_arena.is_native:
+            return self.rust_arena.diagnose_abductive_360(
+                observations, max_hops=max_hops, top_k=top_k
+            )
+        return {
+            "observations": [],
+            "best_explanation": "",
+            "best_coverage_ratio": 0.0,
+            "candidates": [],
+            "diagnostic_synthesis": "",
+        }
+
+    def compose_discourse_360(
+        self, concept: str, max_hops: int = 3
+    ) -> dict[str, Any]:
+        """Phase 39: Run native Rust 360° Multi-Paragraph Discourse & Essay Composer."""
+        if self.rust_arena.is_native:
+            return self.rust_arena.compose_discourse_360(concept, max_hops=max_hops)
+        return {
+            "focal_concept": concept.upper().strip(),
+            "title": f"360° Knowledge Discourse: {concept.lower().strip()}",
+            "paragraph_count": 0,
+            "paragraphs": [],
+            "full_discourse": "",
         }
 
     def chat_turn_360(self, user_input: str, persist: bool = True) -> dict[str, Any]:
@@ -1898,7 +1928,20 @@ class SpiderWebMLM:
                 and bool(dom_dto.get("domain_synthesis"))
             )
 
-            # Axis 11: Native Rust 360° beam latency (microseconds/query)
+            # Axis 11: 360° Abductive Root-Cause Diagnosis & Multi-Paragraph Discourse Synthesis
+            abd_dto = mlm.diagnose_abductive_360(
+                ["ECHOLOCATE", "OCEAN", "WARM_BLOOD"], max_hops=3, top_k=5
+            )
+            disc_dto = mlm.compose_discourse_360("ORCA", max_hops=3)
+            abductive_and_discourse_passed = bool(
+                abd_dto.get("best_explanation") == "ORCA"
+                and float(abd_dto.get("best_coverage_ratio", 0.0)) >= 0.99
+                and disc_dto.get("paragraph_count") == 3
+                and len(disc_dto.get("paragraphs", [])) == 3
+                and "cetacean" in str(disc_dto.get("full_discourse", "")).lower()
+            )
+
+            # Axis 12: Native Rust 360° beam latency (microseconds/query)
             iters = 25
             t0 = time.perf_counter()
             for _ in range(iters):
@@ -1919,6 +1962,7 @@ class SpiderWebMLM:
                 and comprehension_deliberation_passed
                 and goal_planning_passed
                 and order_and_summary_passed
+                and abductive_and_discourse_passed
             )
             return {
                 "all_passed": all_passed,
@@ -1932,6 +1976,7 @@ class SpiderWebMLM:
                 "comprehension_deliberation_passed": comprehension_deliberation_passed,
                 "goal_planning_passed": goal_planning_passed,
                 "order_and_summary_passed": order_and_summary_passed,
+                "abductive_and_discourse_passed": abductive_and_discourse_passed,
                 "rust_beam_avg_latency_us": avg_beam_us,
                 "verified_spokes_learned": rep1.relations_verified + comp_rep.relations_verified,
                 "telemetry": tel,

@@ -1407,6 +1407,56 @@ pub extern "C" fn little_core_mlu_arena_summarize_domain_360(
     to_c_string(&res)
 }
 
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_diagnose_abductive_360(
+    arena_ptr: *mut SpiderWebArena,
+    observations_ptr: *const c_char,
+    max_hops: usize,
+    top_k: usize,
+) -> *mut c_char {
+    let empty = mlu_arena::AbductiveDiagnosis360Dto {
+        observations: Vec::new(),
+        best_explanation: String::new(),
+        best_coverage_ratio: 0.0,
+        candidates: Vec::new(),
+        diagnostic_synthesis: String::new(),
+    };
+    if arena_ptr.is_null() || observations_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let Ok(observations) = (unsafe { CStr::from_ptr(observations_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let arena = unsafe { &*arena_ptr };
+    let res = arena.diagnose_abductive_360(observations, max_hops, top_k);
+    to_c_string(&res)
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_compose_discourse_360(
+    arena_ptr: *mut SpiderWebArena,
+    concept_ptr: *const c_char,
+    max_hops: usize,
+) -> *mut c_char {
+    let empty = mlu_arena::Discourse360Dto {
+        focal_concept: String::new(),
+        title: String::new(),
+        paragraph_count: 0,
+        paragraphs: Vec::new(),
+        full_discourse: String::new(),
+    };
+    if arena_ptr.is_null() || concept_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let Ok(concept) = (unsafe { CStr::from_ptr(concept_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let arena = unsafe { &mut *arena_ptr };
+    let res = arena.compose_discourse_360(concept, max_hops);
+    to_c_string(&res)
+}
+
+
 
 #[cfg(test)]
 mod tests {
