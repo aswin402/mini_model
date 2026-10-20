@@ -1087,6 +1087,27 @@ class SpiderWebMLM:
         active_subcore = focal_unit.parent_hub or "CORE_ROOT"
 
         if not preds:
+            plan_dto = self.plan_goal_360(focal_cid, max_steps=5)
+            if plan_dto.get("achievable") and plan_dto.get("plan_synthesis"):
+                p_synth = str(plan_dto["plan_synthesis"])
+                p_conf = float(plan_dto.get("plan_confidence", 0.75))
+                prereqs = plan_dto.get("root_prerequisites", [])
+                return MLMQueryResult(
+                    query=clean_q,
+                    focal_concept=focal_cid,
+                    status="VERIFIED",
+                    answer=p_synth,
+                    confidence=p_conf,
+                    epistemic_entropy=round(1.0 - p_conf, 4),
+                    active_subcore=active_subcore,
+                    activated_mlus=activated + [str(r) for r in prereqs],
+                    spoke_predictions=[],
+                    inspectable_trace=(
+                        f"[MLU-360-PLAN] goal={focal_cid} | "
+                        f"steps={plan_dto.get('total_steps', 0)} | prereqs={prereqs}"
+                    ),
+                    fluent_english=p_synth,
+                )
             return MLMQueryResult(
                 query=clean_q,
                 focal_concept=focal_cid,
@@ -1496,6 +1517,97 @@ class SpiderWebMLM:
             "deliberative_synthesis": "",
         }
 
+    def plan_goal_360(
+        self, goal_concept: str, start_concept: str = "", max_steps: int = 5
+    ) -> dict[str, Any]:
+        """Phase 32: Run native Rust 360° Goal-Directed Backward-Chaining & Action Planner."""
+        if self.rust_arena.is_native:
+            return self.rust_arena.plan_goal_360(
+                goal_concept, start_concept=start_concept, max_steps=max_steps
+            )
+        return {
+            "goal_concept": goal_concept.upper(),
+            "start_concept": start_concept.upper(),
+            "achievable": False,
+            "total_steps": 0,
+            "plan_confidence": 0.0,
+            "root_prerequisites": [],
+            "plan_steps": [],
+            "plan_synthesis": "",
+        }
+
+    def chat_turn_360(self, user_input: str, persist: bool = True) -> dict[str, Any]:
+        """Phase 34: Execute a unified 360° conversational turn (learning + deliberation or inquiry wave)."""
+        clean_in = user_input.strip()
+        if not clean_in:
+            return {
+                "mode": "NO_OP",
+                "reply": "",
+                "trace": "[MLU-360-CHAT] Empty input.",
+                "focal_concept": "CORE_ROOT",
+            }
+
+        tokens = _tokenize_words(clean_in)
+        op_tuples = {ptoks for ptoks, _, _ in self._operator_codebook}
+        has_leading_op = bool(
+            tokens
+            and any(
+                tuple(tokens[:k]) in op_tuples
+                for k in (1, 2, 3)
+                if k <= len(tokens)
+            )
+        )
+        has_interior_op = any(
+            tuple(tokens[i:j]) in op_tuples
+            or tuple(t for t in tokens[i:j] if t not in self.frame_policy.stop_determiners)
+            in op_tuples
+            for i in range(1, len(tokens))
+            for j in range(i + 1, min(len(tokens), i + 6))
+        )
+
+        is_question = clean_in.endswith("?") or has_leading_op or not has_interior_op
+        if is_question:
+            q_res = self.query_360(clean_in)
+            return {
+                "mode": "INQUIRY",
+                "status": q_res.status,
+                "focal_concept": q_res.focal_concept,
+                "reply": q_res.fluent_english or q_res.answer,
+                "trace": q_res.inspectable_trace,
+                "confidence": q_res.confidence,
+            }
+
+        rep = self.train_on_text(clean_in, persist=persist)
+        focal_cid = (
+            self.recent_focal_stack[0][0]
+            if self.recent_focal_stack
+            else "CORE_ROOT"
+        )
+        delib = self.deliberate_360(focal_cid, max_hops=3)
+        delib_synth = str(delib.get("deliberative_synthesis", "")).strip()
+        if rep.relations_refuted > 0 and rep.relations_verified == 0:
+            reply = (
+                f"Rejected {rep.relations_refuted} contradictory relation(s) via 360° invariant gates."
+            )
+        else:
+            reply = (
+                f"Learned {rep.relations_verified} verified 360° spoke relation(s) "
+                f"(surprise={rep.average_surprise:.3f}). {delib_synth}"
+            ).strip()
+        return {
+            "mode": "LEARN_AND_DELIBERATE",
+            "status": "VERIFIED" if rep.relations_verified > 0 else "REFUTED",
+            "focal_concept": focal_cid,
+            "relations_verified": rep.relations_verified,
+            "relations_refuted": rep.relations_refuted,
+            "reply": reply,
+            "trace": (
+                f"[MLU-360-CHAT] focal={focal_cid} | verified={rep.relations_verified} | "
+                f"refuted={rep.relations_refuted} | F={delib.get('free_energy', 0.0):.2f}"
+            ),
+            "follow_up_question": delib.get("follow_up_question", ""),
+        }
+
     def consolidate(
         self, min_transition_weight: float = 0.05, replay_lr: float = 0.15
     ) -> dict[str, Any]:
@@ -1720,7 +1832,21 @@ class SpiderWebMLM:
                 and "DOLPHIN" in delib_orca.get("cluster_peers", [])
             )
 
-            # Axis 9: Native Rust 360° beam latency (microseconds/query)
+            # Axis 9: 360° Goal-Directed Backward-Chaining & Conversational Turn Engine
+            plan_dto = mlm.plan_goal_360("FAMINE", max_steps=5)
+            q_famine = mlm.query_360("famine")
+            chat_learn = mlm.chat_turn_360("A peregrine is a bird, and can dive.", persist=False)
+            chat_ask = mlm.chat_turn_360("Can it dive?", persist=False)
+            goal_planning_passed = bool(
+                plan_dto.get("achievable") is True
+                and plan_dto.get("total_steps", 0) >= 2
+                and "DROUGHT" in plan_dto.get("root_prerequisites", [])
+                and "[MLU-360-PLAN]" in q_famine.inspectable_trace
+                and chat_learn.get("mode") == "LEARN_AND_DELIBERATE"
+                and chat_ask.get("status") == "VERIFIED"
+            )
+
+            # Axis 10: Native Rust 360° beam latency (microseconds/query)
             iters = 25
             t0 = time.perf_counter()
             for _ in range(iters):
@@ -1739,6 +1865,7 @@ class SpiderWebMLM:
                 and causal_counterfactual_passed
                 and bridge_cluster_revision_passed
                 and comprehension_deliberation_passed
+                and goal_planning_passed
             )
             return {
                 "all_passed": all_passed,
@@ -1750,6 +1877,7 @@ class SpiderWebMLM:
                 "causal_counterfactual_passed": causal_counterfactual_passed,
                 "bridge_cluster_revision_passed": bridge_cluster_revision_passed,
                 "comprehension_deliberation_passed": comprehension_deliberation_passed,
+                "goal_planning_passed": goal_planning_passed,
                 "rust_beam_avg_latency_us": avg_beam_us,
                 "verified_spokes_learned": rep1.relations_verified + comp_rep.relations_verified,
                 "telemetry": tel,

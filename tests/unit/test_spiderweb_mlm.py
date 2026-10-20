@@ -545,6 +545,56 @@ def test_spiderweb_mlm_phase29_to_31_multiclause_coreference_and_deliberation(tm
     assert bench["comprehension_deliberation_passed"] is True
 
 
+def test_spiderweb_mlm_phase32_to_34_goal_planning_and_conversational_chat_turn(tmp_path) -> None:
+    """Verify Phases 32-34: 360° backward-chaining goal planner, terminal goal query recovery, and conversational chat turn engine."""
+    db_file = str(tmp_path / "phase32_planning.db")
+    with MemoryStore(db_file) as mem:
+        mlm = SpiderWebMLM(mem)
+        mlm.train_on_text(
+            "Sunlight causes evaporation. Evaporation causes clouds. "
+            "Clouds cause rain. Rain causes harvest.",
+            persist=True,
+        )
+
+        # Phase 32: Multi-step backward-chaining goal plan from HARVEST back to SUNLIGHT
+        plan = mlm.plan_goal_360("HARVEST", max_steps=6)
+        assert plan["achievable"] is True
+        assert plan["total_steps"] == 4
+        assert plan["start_concept"] == "SUNLIGHT"
+        assert "SUNLIGHT" in plan["root_prerequisites"]
+        assert "Step 1: sunlight causes evaporation" in plan["plan_synthesis"]
+        assert "Step 4: rain causes harvest" in plan["plan_synthesis"]
+
+        # Targeted start-to-goal plan from EVAPORATION to HARVEST
+        sub_plan = mlm.plan_goal_360("HARVEST", start_concept="EVAPORATION", max_steps=6)
+        assert sub_plan["achievable"] is True
+        assert sub_plan["total_steps"] == 3
+        assert sub_plan["start_concept"] == "EVAPORATION"
+
+        # Phase 33: Querying terminal goal concept HARVEST recovers backward-chained plan via [MLU-360-PLAN]
+        q_harvest = mlm.query_360("harvest")
+        assert q_harvest.status == "VERIFIED"
+        assert "[MLU-360-PLAN]" in q_harvest.inspectable_trace
+        assert "sunlight causes evaporation" in q_harvest.fluent_english.lower()
+
+        # Phase 34: Unified conversational turn engine (teaching + deliberation + multi-turn coreference inquiry)
+        t1 = mlm.chat_turn_360("A cheetah is a mammal, has spots, and can sprint.", persist=True)
+        assert t1["mode"] == "LEARN_AND_DELIBERATE"
+        assert t1["status"] == "VERIFIED"
+        assert t1["relations_verified"] >= 3
+
+        t2 = mlm.chat_turn_360("Can it sprint?", persist=True)
+        assert t2["mode"] == "INQUIRY"
+        assert t2["status"] == "VERIFIED"
+        assert t2["focal_concept"] == "CHEETAH"
+        mlm.close()
+
+    bench = SpiderWebMLM.run_benchmark_suite()
+    assert bench["all_passed"] is True
+    assert bench["goal_planning_passed"] is True
+
+
+
 
 
 

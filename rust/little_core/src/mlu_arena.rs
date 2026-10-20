@@ -2457,6 +2457,237 @@ impl SpiderWebArena {
             deliberative_synthesis: sentences.join(" "),
         }
     }
+
+    /// Phase 32: Native Rust 360° Goal-Directed Backward-Chaining & Action Planner (`plan_goal_360`).
+    ///
+    /// Propagates a backward prerequisite/causal wave from `goal_concept` (optionally anchored at
+    /// `start_concept`) across verified 360° spoke synapses to synthesize a topologically ordered,
+    /// invariant-safe multi-step execution plan (`GoalPlan360Dto`).
+    pub fn plan_goal_360(
+        &self,
+        goal_concept: &str,
+        start_concept: &str,
+        max_steps: usize,
+    ) -> GoalPlan360Dto {
+        let clean_goal = goal_concept.trim().to_uppercase().replace(' ', "_");
+        let clean_start = start_concept.trim().to_uppercase().replace(' ', "_");
+        let limit = max_steps.clamp(1, 8);
+
+        if !self.name_to_id.contains_key(&clean_goal) {
+            return GoalPlan360Dto {
+                goal_concept: clean_goal.clone(),
+                start_concept: clean_start,
+                achievable: false,
+                total_steps: 0,
+                plan_confidence: 0.0,
+                root_prerequisites: Vec::new(),
+                plan_steps: Vec::new(),
+                plan_synthesis: format!(
+                    "No verified 360° goal plan found for {}.",
+                    clean_goal.to_lowercase().replace('_', " ")
+                ),
+            };
+        }
+
+        // Build incoming execution map: outcome -> Vec<(prereq, predicate, spoke, confidence)>
+        let mut incoming: std::collections::HashMap<
+            String,
+            Vec<(String, String, String, f32)>,
+        > = std::collections::HashMap::new();
+
+        for cell in &self.cells {
+            if cell.concept_id == "CORE_ROOT" || cell.concept_id.starts_with("SUBCORE_") {
+                continue;
+            }
+            for (s_idx, edges) in cell.spoke_synapses.iter().enumerate() {
+                for syn in edges {
+                    if syn.pos_evidence <= syn.neg_evidence
+                        || syn.predicate == "co_occurs_with"
+                        || syn.predicate == "disjoint_with"
+                        || syn.target_name == "CORE_ROOT"
+                        || syn.target_name.starts_with("SUBCORE_")
+                    {
+                        continue;
+                    }
+                    let total_ev = syn.pos_evidence + syn.neg_evidence;
+                    let conf = ((total_ev / (total_ev + 1.0)) * 10000.0).round() / 10000.0;
+                    let spoke_name = SPOKE_NAMES[s_idx].to_string();
+
+                    if syn.predicate == "requires" {
+                        // A requires B => B is the upstream prerequisite that unlocks A
+                        incoming.entry(cell.concept_id.clone()).or_default().push((
+                            syn.target_name.clone(),
+                            syn.predicate.clone(),
+                            spoke_name,
+                            conf,
+                        ));
+                    } else {
+                        // U causes/enables/is_a V => U leads to V
+                        incoming.entry(syn.target_name.clone()).or_default().push((
+                            cell.concept_id.clone(),
+                            syn.predicate.clone(),
+                            spoke_name,
+                            conf,
+                        ));
+                    }
+                }
+            }
+        }
+
+        for list in incoming.values_mut() {
+            list.sort_by(|a, b| {
+                b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+
+        // Backward BFS from clean_goal to discover upstream precondition chain
+        // parent_link maps upstream_node -> (outcome_node, predicate, spoke, conf, depth)
+        let mut parent_link: std::collections::HashMap<
+            String,
+            (String, String, String, f32, usize),
+        > = std::collections::HashMap::new();
+        let mut queue: std::collections::VecDeque<(String, usize)> =
+            std::collections::VecDeque::new();
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        queue.push_back((clean_goal.clone(), 0));
+        visited.insert(clean_goal.clone());
+
+        let mut deepest_node = clean_goal.clone();
+        let mut deepest_depth: usize = 0;
+        let mut found_start = false;
+
+        while let Some((curr, depth)) = queue.pop_front() {
+            if depth >= limit {
+                continue;
+            }
+            if let Some(preds) = incoming.get(&curr) {
+                for (prereq, pred, spoke, conf) in preds {
+                    if visited.insert(prereq.clone()) {
+                        let next_d = depth + 1;
+                        parent_link.insert(
+                            prereq.clone(),
+                            (curr.clone(), pred.clone(), spoke.clone(), *conf, next_d),
+                        );
+                        if !clean_start.is_empty() && prereq == &clean_start {
+                            deepest_node = prereq.clone();
+                            found_start = true;
+                            break;
+                        }
+                        if next_d > deepest_depth {
+                            deepest_depth = next_d;
+                            deepest_node = prereq.clone();
+                        }
+                        queue.push_back((prereq.clone(), next_d));
+                    }
+                }
+            }
+            if found_start {
+                break;
+            }
+        }
+
+        if (!clean_start.is_empty() && !found_start) || deepest_node == clean_goal {
+            return GoalPlan360Dto {
+                goal_concept: clean_goal.clone(),
+                start_concept: clean_start,
+                achievable: false,
+                total_steps: 0,
+                plan_confidence: 0.0,
+                root_prerequisites: Vec::new(),
+                plan_steps: Vec::new(),
+                plan_synthesis: format!(
+                    "No verified 360° execution chain found to achieve {}.",
+                    clean_goal.to_lowercase().replace('_', " ")
+                ),
+            };
+        }
+
+        // Reconstruct forward execution steps from deepest_node -> clean_goal
+        let mut plan_steps: Vec<PlanStepDto> = Vec::new();
+        let mut curr = deepest_node.clone();
+        let mut conf_sum = 0.0f32;
+        let mut step_num = 1usize;
+
+        while curr != clean_goal {
+            let Some((next_outcome, pred, spoke, conf, _d)) = parent_link.get(&curr) else {
+                break;
+            };
+            conf_sum += *conf;
+            plan_steps.push(PlanStepDto {
+                step_number: step_num,
+                prerequisite_concept: curr.clone(),
+                action_predicate: pred.clone(),
+                outcome_concept: next_outcome.clone(),
+                spoke: spoke.clone(),
+                confidence: *conf,
+            });
+            step_num += 1;
+            curr = next_outcome.clone();
+        }
+
+        // Collect all root prerequisites for the goal
+        let mut root_prerequisites: Vec<String> = vec![deepest_node.clone()];
+        if let Some(direct_reqs) = incoming.get(&clean_goal) {
+            for (prereq, _, _, _) in direct_reqs.iter().take(4) {
+                if !root_prerequisites.contains(prereq) {
+                    root_prerequisites.push(prereq.clone());
+                }
+            }
+        }
+
+        let plan_confidence = if plan_steps.is_empty() {
+            0.0
+        } else {
+            (((conf_sum / (plan_steps.len() as f32)) * 10000.0).round()) / 10000.0
+        };
+
+        let step_clauses: Vec<String> = plan_steps
+            .iter()
+            .map(|s| {
+                if s.action_predicate == "requires" {
+                    format!(
+                        "Step {}: satisfy {} (required by {})",
+                        s.step_number,
+                        s.prerequisite_concept.to_lowercase().replace('_', " "),
+                        s.outcome_concept.to_lowercase().replace('_', " ")
+                    )
+                } else {
+                    format!(
+                        "Step {}: {} {} {}",
+                        s.step_number,
+                        s.prerequisite_concept.to_lowercase().replace('_', " "),
+                        s.action_predicate.replace('_', " "),
+                        s.outcome_concept.to_lowercase().replace('_', " ")
+                    )
+                }
+            })
+            .collect();
+
+        let synthesis = format!(
+            "Goal plan for {} ({} step{}, confidence={:.2}): {}.",
+            clean_goal.to_lowercase().replace('_', " "),
+            plan_steps.len(),
+            if plan_steps.len() == 1 { "" } else { "s" },
+            plan_confidence,
+            step_clauses.join(" -> ")
+        );
+
+        GoalPlan360Dto {
+            goal_concept: clean_goal,
+            start_concept: if clean_start.is_empty() {
+                deepest_node
+            } else {
+                clean_start
+            },
+            achievable: !plan_steps.is_empty(),
+            total_steps: plan_steps.len(),
+            plan_confidence,
+            root_prerequisites,
+            plan_steps,
+            plan_synthesis: synthesis,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2644,5 +2875,28 @@ pub struct Deliberation360Dto {
     pub follow_up_question: String,
     pub deliberative_synthesis: String,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PlanStepDto {
+    pub step_number: usize,
+    pub prerequisite_concept: String,
+    pub action_predicate: String,
+    pub outcome_concept: String,
+    pub spoke: String,
+    pub confidence: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GoalPlan360Dto {
+    pub goal_concept: String,
+    pub start_concept: String,
+    pub achievable: bool,
+    pub total_steps: usize,
+    pub plan_confidence: f32,
+    pub root_prerequisites: Vec<String>,
+    pub plan_steps: Vec<PlanStepDto>,
+    pub plan_synthesis: String,
+}
+
 
 

@@ -949,6 +949,26 @@ def cmd_mlu(args: argparse.Namespace) -> None:
                 args.concept, max_hops=int(getattr(args, "hops", 3))
             )
             print(json.dumps(delib_dict, indent=2))
+        elif action == "plan":
+            plan_dict = kernel.mlm.plan_goal_360(
+                args.goal_concept,
+                start_concept=str(getattr(args, "start", "") or ""),
+                max_steps=int(getattr(args, "steps", 5)),
+            )
+            print(json.dumps(plan_dict, indent=2))
+        elif action == "chat":
+            print("🕸️  [360° Spider-Web MLU Interactive Chat] Type 'exit' or 'quit' to stop.\n")
+            while True:
+                try:
+                    user_in = input("You: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print()
+                    break
+                if not user_in or user_in.lower() in ("exit", "quit"):
+                    break
+                turn = kernel.mlm.chat_turn_360(user_in, persist=True)
+                print(f"MLU [{turn['mode']}]: {turn['reply']}")
+                print(f"  ↳ {turn['trace']}\n")
         else:
             tel = kernel.mlm.get_telemetry()
             print(json.dumps(tel, indent=2))
@@ -1328,6 +1348,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--hops", type=int, default=3, help="Maximum deliberation hops (default: 3)"
     )
     p_mlu_delib.set_defaults(func=cmd_mlu)
+    p_mlu_plan = p_mlu_subs.add_parser(
+        "plan",
+        parents=[db_parent],
+        help="Run native Rust 360° Goal-Directed Backward-Chaining & Action Planner",
+    )
+    p_mlu_plan.add_argument("goal_concept", help="Target goal concept to achieve")
+    p_mlu_plan.add_argument(
+        "--start", default="", help="Optional starting concept/resource"
+    )
+    p_mlu_plan.add_argument(
+        "--steps", type=int, default=5, help="Maximum planning steps (default: 5)"
+    )
+    p_mlu_plan.set_defaults(func=cmd_mlu)
+    p_mlu_chat = p_mlu_subs.add_parser(
+        "chat",
+        parents=[db_parent],
+        help="Interactive 360° Spider-Web MLU conversational REPL (live learning + deliberation + inquiry)",
+    )
+    p_mlu_chat.set_defaults(func=cmd_mlu)
 
     return parser
 

@@ -1311,6 +1311,39 @@ pub extern "C" fn little_core_mlu_arena_deliberate_360(
     to_c_string(&res)
 }
 
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_plan_goal_360(
+    arena_ptr: *mut SpiderWebArena,
+    goal_ptr: *const c_char,
+    start_ptr: *const c_char,
+    max_steps: usize,
+) -> *mut c_char {
+    let empty = mlu_arena::GoalPlan360Dto {
+        goal_concept: String::new(),
+        start_concept: String::new(),
+        achievable: false,
+        total_steps: 0,
+        plan_confidence: 0.0,
+        root_prerequisites: Vec::new(),
+        plan_steps: Vec::new(),
+        plan_synthesis: String::new(),
+    };
+    if arena_ptr.is_null() || goal_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let Ok(goal) = (unsafe { CStr::from_ptr(goal_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let start = if start_ptr.is_null() {
+        ""
+    } else {
+        (unsafe { CStr::from_ptr(start_ptr) }).to_str().unwrap_or("")
+    };
+    let arena = unsafe { &*arena_ptr };
+    let res = arena.plan_goal_360(goal, start, max_steps);
+    to_c_string(&res)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
