@@ -2734,6 +2734,25 @@ class SpiderWebMLM:
                 mlm.rust_arena.query_360_beam("ORCA", max_hops=3, top_k=10)
             avg_wave_us = round(((time.perf_counter() - t_wave0) * 1_000_000.0) / iters, 2)
 
+            # 8. True End-to-End Differentiable Neural MLU (Backprop + AdamW + T-Norm Logic Gates)
+            t_bprop0 = time.perf_counter()
+            neural_rep = mlm.train_neural_mlu(
+                "is an orca a mammal? yes an orca is a warm blooded mammal.\n"
+                "is an orca a reptile? no an orca is a mammal and not a reptile.\n"
+                "what causes harvest? sunlight and rain cause crop growth and harvest.\n",
+                epochs=45,
+                learning_rate=0.04,
+                persist=False,
+            )
+            bprop_ms = round((time.perf_counter() - t_bprop0) * 1000.0, 2)
+            g_yes = mlm.generate_neural_mlu("is an orca a mammal?", max_new_tokens=10)
+            g_no = mlm.generate_neural_mlu("is an orca a reptile?", max_new_tokens=10)
+            neural_backprop_passed = bool(
+                neural_rep.get("final_perplexity", 99.0) < 2.0
+                and "yes" in str(g_yes.get("generated_text", "")).lower()
+                and "no" in str(g_no.get("generated_text", "")).lower()
+            )
+
             snap_bytes = len(mlm.rust_arena.dump_json().encode("utf-8"))
             tel = mlm.get_telemetry()
             mlm.close()
@@ -2744,6 +2763,7 @@ class SpiderWebMLM:
                 and abductive_diagnosis
                 and zero_hallucination
                 and belief_revision
+                and neural_backprop_passed
             )
             return {
                 "all_passed": all_passed,
@@ -2757,6 +2777,10 @@ class SpiderWebMLM:
                     "conversational_abductive_diagnosis": abductive_diagnosis,
                     "zero_hallucination_abstention": zero_hallucination,
                     "instant_non_monotonic_belief_revision": belief_revision,
+                    "neural_backprop_passed": neural_backprop_passed,
+                    "neural_backprop_train_ms": bprop_ms,
+                    "neural_initial_perplexity": neural_rep.get("initial_perplexity", 0.0),
+                    "neural_final_perplexity": neural_rep.get("final_perplexity", 0.0),
                     "total_cells": tel["total_mlu_nodes"],
                     "subcore_hubs_mitosis": tel["subcore_hubs"],
                 },
