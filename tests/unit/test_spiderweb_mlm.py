@@ -702,5 +702,36 @@ def test_spiderweb_mlm_phase41_to_43_conversational_diagnosis_and_vs_llm_scoreca
     assert len(scorecard["vs_standard_llm_comparison"]) == 5
 
 
+def test_spiderweb_mlm_phase44_to_46_json_ontology_ingestion_and_everyday_english(tmp_path) -> None:
+    """Verify Phases 44-46: Structured JSON ontology ingestion, everyday English curriculum, and full conversational reasoning."""
+    db_file = str(tmp_path / "phase44_full_english.db")
+    with MemoryStore(db_file, seed_ontology=False) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+
+        # Phase 44: Ingest structured JSON ontology slice
+        ont_rep = mlm.ingest_json_ontology("data/knowledge/commonsense.json", max_triples=120)
+        assert ont_rep["triples_processed"] == 120
+        assert ont_rep["relations_verified"] >= 100
+
+        # Phase 45: Train on everyday English & human life corpora
+        mlm.ingest_corpus_path("data/knowledge/world_corpus/human_life_and_emotions.md", epochs=1)
+        mlm.ingest_corpus_path("data/knowledge/world_corpus/everyday_objects_and_actions.md", epochs=1)
+
+        # Phase 46: Verify conversational reasoning across taxonomy, goal-planning, and disjointness
+        t_human = mlm.chat_turn_360("Tell me about human", persist=False)
+        assert t_human["status"] == "VERIFIED"
+        assert "human" in t_human["reply"].lower()
+
+        t_wisdom = mlm.chat_turn_360("How to achieve wisdom?", persist=False)
+        assert t_wisdom["status"] == "VERIFIED"
+        assert "wisdom" in t_wisdom["reply"].lower()
+        assert "[MLU-360-PLAN]" in t_wisdom["trace"]
+
+        t_mutex = mlm.chat_turn_360("Is a tiger a vehicle?", persist=False)
+        assert t_mutex["status"] == "REFUTED"
+        assert "I_MUTEX" in t_mutex["trace"]
+        mlm.close()
+
+
 
 

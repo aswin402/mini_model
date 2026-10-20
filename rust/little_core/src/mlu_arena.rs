@@ -642,7 +642,8 @@ impl SpiderWebArena {
             let sub_in = concept_set.contains(&cell.concept_id);
             for edges in &cell.spoke_synapses {
                 for syn in edges {
-                    let is_disjoint_edge = (syn.predicate == "disjoint_with"
+                    let is_disjoint_edge = ((syn.predicate == "disjoint_with"
+                        || syn.predicate == "not_a")
                         && syn.pos_evidence > syn.neg_evidence)
                         || (syn.neg_evidence > syn.pos_evidence);
                     if !is_disjoint_edge {
@@ -707,7 +708,7 @@ impl SpiderWebArena {
         if sub_clean.is_empty() || obj_clean.is_empty() || sub_clean == obj_clean {
             return (false, "I_DAG");
         }
-        if pred_clean == "disjoint_with" {
+        if pred_clean == "disjoint_with" || pred_clean == "not_a" {
             let sub_anc = self.collect_positive_ancestors(&sub_clean);
             let obj_anc = self.collect_positive_ancestors(&obj_clean);
             if sub_anc.contains(&obj_clean) || obj_anc.contains(&sub_clean) {
@@ -1549,37 +1550,48 @@ impl SpiderWebArena {
             std::collections::HashSet::new();
 
         for i in 0..concept_edges.len() {
+            let (idx_a, ref cid_a, ref edges_a) = concept_edges[i];
+            // Fast pre-filter: cid_a must have at least one specific is_a parent (in_deg <= 4)
+            // and at least one non-taxonomic property to project analogically
+            if !edges_a
+                .iter()
+                .any(|(p, t, _)| p == "is_a" && *target_in_degree.get(t).unwrap_or(&999) <= 4)
+                || !edges_a.iter().any(|(p, _, _)| p != "is_a")
+            {
+                continue;
+            }
             for j in 0..concept_edges.len() {
                 if i == j {
                     continue;
                 }
-                let (idx_a, ref cid_a, ref edges_a) = concept_edges[i];
                 let (idx_b, ref cid_b, ref edges_b) = concept_edges[j];
 
-                // Check if cid_a and cid_b are mutually exclusive first
-                let (compat_ab, gate_ab) = self.verify_spoke_invariants(cid_a, "is_a", cid_b);
-                if !compat_ab && gate_ab == "I_MUTEX" {
-                    continue;
-                }
                 let targets_b: std::collections::HashMap<&str, &str> = edges_b
                     .iter()
                     .map(|(p, t, _)| (t.as_str(), p.as_str()))
                     .collect();
                 let Some((pred_shared_a, shared_target, _)) = edges_a
                     .iter()
-                    .filter(|(p, t, _)| p == "is_a" && targets_b.get(t.as_str()) == Some(&"is_a"))
+                    .filter(|(p, t, _)| {
+                        p == "is_a"
+                            && targets_b.get(t.as_str()) == Some(&"is_a")
+                            && *target_in_degree.get(t).unwrap_or(&999) <= 4
+                    })
                     .min_by_key(|(_, t, _)| *target_in_degree.get(t).unwrap_or(&999))
                 else {
                     continue;
                 };
 
+                // Check if cid_a and cid_b are mutually exclusive only for sibling pairs
+                let (compat_ab, gate_ab) = self.verify_spoke_invariants(cid_a, "is_a", cid_b);
+                if !compat_ab && gate_ab == "I_MUTEX" {
+                    continue;
+                }
+
                 let vec_a = self.get_anchor_array(idx_a as u32);
                 let vec_b = self.get_anchor_array(idx_b as u32);
                 let sim = dot_product(&vec_a, &vec_b).clamp(-1.0, 1.0);
                 let in_deg = (*target_in_degree.get(shared_target).unwrap_or(&2)).max(1);
-                if in_deg > 4 {
-                    continue;
-                }
                 let specificity_bonus = (1.0 / (in_deg as f32)).clamp(0.05, 0.50);
                 let same_pred_bonus = if targets_b.get(shared_target.as_str()) == Some(&pred_shared_a.as_str()) {
                     0.15
@@ -2544,10 +2556,14 @@ impl SpiderWebArena {
                 continue;
             }
             for (s_idx, edges) in cell.spoke_synapses.iter().enumerate() {
+                if s_idx == 1 || s_idx == 3 {
+                    continue;
+                }
                 for syn in edges {
                     if syn.pos_evidence <= syn.neg_evidence
                         || syn.predicate == "co_occurs_with"
                         || syn.predicate == "disjoint_with"
+                        || syn.predicate == "not_a"
                         || syn.target_name == "CORE_ROOT"
                         || syn.target_name.starts_with("SUBCORE_")
                     {

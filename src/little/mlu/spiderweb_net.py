@@ -793,6 +793,7 @@ class SpiderWebMLM:
 
                     # Commit verified symbolic fact into MemoryStore so symbolic & neural stay 100% unified
                     if pred != "co_occurs_with":
+                        obj_unit.verified_hits += 0.5
                         c_sub = self.memory.create_concept(subj.upper().replace(" ", "_"))
                         c_obj = self.memory.create_concept(obj.upper().replace(" ", "_"))
                         self.memory.add_relation(c_sub.id, pred, c_obj.id)
@@ -1074,10 +1075,9 @@ class SpiderWebMLM:
 
         op_tuples = {ptoks for ptoks, _, _ in self._operator_codebook}
         has_leading_operator = focal_pos > 0 and any(
-            tuple(tokens[idx : idx + k]) in op_tuples
-            for idx in range(focal_pos)
+            tuple(tokens[:k]) in op_tuples
             for k in (1, 2, 3)
-            if idx + k <= focal_pos
+            if k <= focal_pos
         )
 
         # Multi-Turn Liquid Context Resonance for elliptic / follow-up inquiries
@@ -1229,13 +1229,26 @@ class SpiderWebMLM:
                         fluent_english=fluent,
                     )
 
-                # Check if DeepSeekInvariantVerifier refutes the link via I_MUTEX / disjointness
+                # Check if DeepSeekInvariantVerifier or Rust Arena refutes the link via I_MUTEX / disjointness
                 gate_check = self.verifier.verify_relation(focal_cid, "is_a", target_cid)
-                if not gate_check.passed:
+                rust_inv = (
+                    self.rust_arena.verify_invariants(focal_cid, "is_a", target_cid)
+                    if self.rust_arena.is_native
+                    else {"passed": True, "gate": "OK"}
+                )
+                rust_passed = bool(rust_inv.get("passed", True))
+                rust_gate = str(rust_inv.get("gate", "I_MUTEX"))
+                if not gate_check.passed or not rust_passed:
+                    v_gate = gate_check.violated_gate if not gate_check.passed else rust_gate
+                    v_msg = (
+                        gate_check.error_message
+                        if not gate_check.passed
+                        else f"360° Arena {rust_gate} disjointness between {focal_cid} and {target_cid}"
+                    )
                     ans_ref = (
                         f"No — {focal_cid.lower().replace('_', ' ')} cannot be "
                         f"{target_cid.lower().replace('_', ' ')} "
-                        f"(Refuted by {gate_check.violated_gate}: {gate_check.error_message})."
+                        f"(Refuted by {v_gate}: {v_msg})."
                     )
                     return MLMQueryResult(
                         query=clean_q,
@@ -1247,7 +1260,7 @@ class SpiderWebMLM:
                         active_subcore=active_subcore,
                         activated_mlus=activated,
                         spoke_predictions=preds[:6],
-                        inspectable_trace=f"[MLU-360] Refuted by {gate_check.violated_gate}: {gate_check.error_message}",
+                        inspectable_trace=f"[MLU-360] Refuted by {v_gate}: {v_msg}",
                         fluent_english=ans_ref,
                     )
 
@@ -1374,6 +1387,21 @@ class SpiderWebMLM:
                     causal_suffix = f" {c_synth}"
                     causal_trace_tag = f" | [MLU-360-CAUSAL-WAVE] affected={affected_list}"
 
+        plan_suffix = ""
+        plan_trace_tag = ""
+        if self.rust_arena.is_native and any(p.predicate == "requires" for p in preds):
+            plan_dto = self.plan_goal_360(focal_cid, max_steps=5)
+            if (
+                plan_dto.get("achievable")
+                and int(plan_dto.get("total_steps", 0)) >= 2
+                and plan_dto.get("plan_synthesis")
+            ):
+                plan_suffix = f" {str(plan_dto['plan_synthesis']).strip()}"
+                plan_trace_tag = (
+                    f" | [MLU-360-PLAN] steps={plan_dto.get('total_steps', 0)} "
+                    f"prereqs={plan_dto.get('root_prerequisites', [])}"
+                )
+
         delib_suffix = ""
         delib_trace_tag = ""
         if self.rust_arena.is_native:
@@ -1428,10 +1456,10 @@ class SpiderWebMLM:
         base_fluent = rust_fluent or self._synthesize_fluent_english(
             focal_cid, preds, continuation_text
         )
-        fluent_eng = (base_fluent + causal_suffix + delib_suffix).strip()
+        fluent_eng = (base_fluent + causal_suffix + plan_suffix + delib_suffix).strip()
         trace = (
             f"[MLU-360] Activated {len(activated)} units ({' -> '.join(activated)}) | "
-            f"top_conf={top_conf:.2f} | entropy={avg_entropy:.2f}{causal_trace_tag}{delib_trace_tag}"
+            f"top_conf={top_conf:.2f} | entropy={avg_entropy:.2f}{causal_trace_tag}{plan_trace_tag}{delib_trace_tag}"
         )
         return MLMQueryResult(
             query=clean_q,
@@ -1810,19 +1838,120 @@ class SpiderWebMLM:
             "rust_arena_nodes": self.rust_arena.node_count,
         }
 
-    def ingest_corpus_path(
-        self, target_path: str, epochs: int = 2
+    def ingest_json_ontology(
+        self, json_path: str, persist: bool = False, max_triples: int | None = None
     ) -> dict[str, Any]:
-        """Phase 3: Stream-train the 360° Spider-Web MLM on a file or directory of text/markdown files."""
+        """Phase 44: Ingest structured JSON knowledge triples (e.g., commonsense.json, extended_ontology.json) into the 360° Spider-Web MLM & Rust Arena."""
+        import json
+        from pathlib import Path
+
+        fpath = Path(json_path)
+        if not fpath.is_file():
+            return {"triples_processed": 0, "relations_verified": 0, "relations_refuted": 0}
+
+        try:
+            payload = json.loads(fpath.read_text(encoding="utf-8", errors="ignore"))
+        except (OSError, ValueError):
+            return {"triples_processed": 0, "relations_verified": 0, "relations_refuted": 0}
+
+        raw_triples = payload.get("triples") or payload.get("seed_triples") or []
+        if max_triples is not None and max_triples > 0:
+            raw_triples = raw_triples[:max_triples]
+        triples_processed = 0
+        relations_verified = 0
+        relations_refuted = 0
+        synthesized_sentences: list[str] = []
+
+        for item in raw_triples:
+            if not isinstance(item, list) or len(item) < 3:
+                continue
+            subj = str(item[0]).strip().lower().replace(" ", "_")
+            pred = str(item[1]).strip().lower().replace(" ", "_")
+            obj = str(item[2]).strip().lower().replace(" ", "_")
+            verified_flag = bool(item[4]) if len(item) >= 5 else True
+            if not subj or not pred or not obj or subj == obj:
+                continue
+
+            triples_processed += 1
+            spoke = map_predicate_to_spoke(pred)
+            subj_unit = self.get_or_create_mlu(subj, preferred_spoke=spoke)
+            obj_unit = self.get_or_create_mlu(obj, preferred_spoke=spoke)
+
+            if self.rust_arena.is_native:
+                inv_dto = self.rust_arena.verify_invariants(
+                    subj_unit.concept_id,
+                    "disjoint_with" if pred == "not_a" else pred,
+                    obj_unit.concept_id,
+                )
+                passed = bool(inv_dto.get("passed", True))
+            else:
+                passed = self.verifier.verify_relation(subj, pred, obj).passed
+
+            if passed and verified_flag:
+                relations_verified += 1
+                rust_pred = "disjoint_with" if pred == "not_a" else pred
+                if self.rust_arena.is_native:
+                    self.rust_arena.learn_spoke(
+                        subj_unit.concept_id,
+                        rust_pred,
+                        obj_unit.concept_id,
+                        learning_rate=0.20,
+                        verified=True,
+                    )
+                subj_unit.learn_spoke_relation(
+                    predicate=pred,
+                    target_concept=obj_unit.concept_id,
+                    target_vec=obj_unit.anchor_vec,
+                    learning_rate=0.20,
+                    verified=True,
+                )
+                obj_unit.verified_hits += 0.5
+                if pred not in ("disjoint_with", "not_a"):
+                    s_clean = subj.replace("_", " ")
+                    p_clean = pred.replace("_", " ")
+                    o_clean = obj.replace("_", " ")
+                    synthesized_sentences.append(f"{s_clean} {p_clean} {o_clean}.")
+            else:
+                relations_refuted += 1
+
+        if synthesized_sentences:
+            stream_blob = " ".join(synthesized_sentences)
+            if self.rust_arena.is_native:
+                self.rust_arena.train_stream(stream_blob, learning_rate=0.12)
+            core_unit = self.nodes["CORE_ROOT"]
+            for s_line in synthesized_sentences[:400]:
+                toks = _tokenize_words(s_line)
+                if len(toks) >= 2:
+                    core_unit.learn_token_sequence(toks, learning_rate=0.12)
+
+        self._dirty_since_save = True
+        if persist:
+            self.save_nodes()
+
+        return {
+            "triples_processed": triples_processed,
+            "relations_verified": relations_verified,
+            "relations_refuted": relations_refuted,
+        }
+
+    def ingest_corpus_path(
+        self, target_path: str, epochs: int = 2, consolidate_on_finish: bool = True
+    ) -> dict[str, Any]:
+        """Phase 3 & 44: Stream-train the 360° Spider-Web MLM on a file or directory of .md/.txt/.json files."""
         from pathlib import Path
 
         root = Path(target_path)
-        files: list[Path] = []
+        text_files: list[Path] = []
+        json_files: list[Path] = []
         if root.is_file():
-            files.append(root)
+            if root.suffix.lower() == ".json":
+                json_files.append(root)
+            else:
+                text_files.append(root)
         elif root.is_dir():
             for ext in ("*.md", "*.txt"):
-                files.extend(sorted(root.rglob(ext)))
+                text_files.extend(sorted(root.rglob(ext)))
+            json_files.extend(sorted(root.rglob("*.json")))
 
         total_sentences = 0
         total_verified = 0
@@ -1831,9 +1960,15 @@ class SpiderWebMLM:
         epoch_surprises: list[float] = []
         all_promotions: list[str] = []
 
+        for jfile in json_files:
+            jrep = self.ingest_json_ontology(str(jfile), persist=False)
+            total_sentences += jrep["triples_processed"]
+            total_verified += jrep["relations_verified"]
+            total_refuted += jrep["relations_refuted"]
+
         for _ep in range(max(1, epochs)):
             ep_surprises: list[float] = []
-            for fpath in files:
+            for fpath in text_files:
                 try:
                     content = fpath.read_text(encoding="utf-8", errors="ignore")
                 except OSError:
@@ -1852,9 +1987,9 @@ class SpiderWebMLM:
             if ep_surprises:
                 epoch_surprises.append(round(sum(ep_surprises) / len(ep_surprises), 4))
 
-        cons = self.consolidate()
+        cons = self.consolidate() if consolidate_on_finish else {}
         return {
-            "files_processed": len(files),
+            "files_processed": len(text_files) + len(json_files),
             "epochs": max(1, epochs),
             "sentences_processed": total_sentences,
             "relations_verified": total_verified,
@@ -1866,8 +2001,10 @@ class SpiderWebMLM:
             "telemetry": self.get_telemetry(),
         }
 
-    def bootstrap_curriculum(self, epochs: int = 2) -> dict[str, Any]:
-        """Phase 12: Pre-train the 360° Spider-Web MLM on the foundational world corpus directory."""
+    def bootstrap_curriculum(
+        self, epochs: int = 2, include_ontologies: bool = True
+    ) -> dict[str, Any]:
+        """Phase 12 & 44: Pre-train the 360° Spider-Web MLM on the foundational world corpus and optional JSON ontologies."""
         from pathlib import Path
 
         from little.core.runtime_paths import RuntimePaths
@@ -1878,7 +2015,24 @@ class SpiderWebMLM:
         ]
         target_dir = next((d for d in candidate_dirs if d.exists() and d.is_dir()), None)
         if target_dir is not None:
-            return self.ingest_corpus_path(str(target_dir), epochs=epochs)
+            rep = self.ingest_corpus_path(
+                str(target_dir),
+                epochs=epochs,
+                consolidate_on_finish=not include_ontologies,
+            )
+            if include_ontologies:
+                knowledge_root = target_dir.parent
+                for jname in ("commonsense.json", "extended_ontology.json"):
+                    jpath = knowledge_root / jname
+                    if jpath.is_file():
+                        jrep = self.ingest_json_ontology(str(jpath), persist=False)
+                        rep["files_processed"] += 1
+                        rep["sentences_processed"] += jrep["triples_processed"]
+                        rep["relations_verified"] += jrep["relations_verified"]
+                        rep["relations_refuted"] += jrep["relations_refuted"]
+                rep["consolidation"] = self.consolidate()
+                rep["telemetry"] = self.get_telemetry()
+            return rep
 
         synced = self.sync_from_symbolic_memory()
         cons = self.consolidate()
