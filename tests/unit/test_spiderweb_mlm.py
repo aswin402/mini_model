@@ -594,9 +594,52 @@ def test_spiderweb_mlm_phase32_to_34_goal_planning_and_conversational_chat_turn(
     assert bench["goal_planning_passed"] is True
 
 
+def test_spiderweb_mlm_phase35_to_37_order_poset_and_domain_summary(tmp_path) -> None:
+    """Verify Phases 35-37: Native Rust 360° Transitive Poset Ordering (I_SORT), Domain Summarizer, and 11-axis benchmark."""
+    db_file = str(tmp_path / "phase35_order_summary.db")
+    with MemoryStore(db_file) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+        mlm.train_on_text(
+            "Sunlight causes evaporation. Evaporation causes clouds. "
+            "Clouds cause rain. Rain causes harvest. "
+            "An orca is a cetacean. A dolphin is a cetacean. "
+            "An orca lives in the ocean. An orca can echolocate.",
+            persist=True,
+        )
 
+        # Phase 35a: Transitive poset ordering along 'causes' starting from SUNLIGHT
+        order = mlm.evaluate_order_360("causes", start_concept="SUNLIGHT", max_hops=6)
+        assert order["poset_consistent"] is True
+        assert order["element_count"] == 5
+        assert order["ordered_chain"] == [
+            "SUNLIGHT",
+            "EVAPORATION",
+            "CLOUDS",
+            "RAIN",
+            "HARVEST",
+        ]
+        assert "SUNLIGHT -> HARVEST" in order["transitive_pairs"]
+        assert "SUNLIGHT -> CLOUDS" in order["transitive_pairs"]
+        assert "Transitive order" in order["order_synthesis"]
 
+        # Phase 35b: I_SORT poset antisymmetry gate rejects cyclic ordering (HARVEST causes SUNLIGHT)
+        inv_sort = mlm.rust_arena.verify_invariants("HARVEST", "causes", "SUNLIGHT")
+        assert inv_sort["passed"] is False
+        assert inv_sort["gate"] == "I_SORT"
 
+        # Phase 36: Native Rust 360° Domain & Sub-Core Knowledge Summarizer
+        summary = mlm.summarize_domain_360("", max_items=6)
+        assert summary["domain_name"] == "ALL_DOMAINS"
+        assert summary["active_concepts_count"] >= 8
+        assert summary["verified_synapses_count"] >= 8
+        assert len(summary["central_hubs"]) >= 2
+        assert len(summary["key_principles"]) >= 3
+        assert "Domain ALL_DOMAINS encompasses" in summary["domain_synthesis"]
+        mlm.close()
 
+    # Phase 37: Verify 11-axis benchmark suite including order_and_summary_passed
+    bench = SpiderWebMLM.run_benchmark_suite()
+    assert bench["all_passed"] is True
+    assert bench["order_and_summary_passed"] is True
 
 

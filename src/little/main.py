@@ -956,6 +956,19 @@ def cmd_mlu(args: argparse.Namespace) -> None:
                 max_steps=int(getattr(args, "steps", 5)),
             )
             print(json.dumps(plan_dict, indent=2))
+        elif action == "order":
+            order_dict = kernel.mlm.evaluate_order_360(
+                args.predicate,
+                start_concept=str(getattr(args, "start", "") or ""),
+                max_hops=int(getattr(args, "hops", 6)),
+            )
+            print(json.dumps(order_dict, indent=2))
+        elif action == "summary":
+            sum_dict = kernel.mlm.summarize_domain_360(
+                domain_concept=str(getattr(args, "domain", "") or ""),
+                max_items=int(getattr(args, "top", 8)),
+            )
+            print(json.dumps(sum_dict, indent=2))
         elif action == "chat":
             print("🕸️  [360° Spider-Web MLU Interactive Chat] Type 'exit' or 'quit' to stop.\n")
             while True:
@@ -1361,6 +1374,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--steps", type=int, default=5, help="Maximum planning steps (default: 5)"
     )
     p_mlu_plan.set_defaults(func=cmd_mlu)
+    p_mlu_order = p_mlu_subs.add_parser(
+        "order",
+        parents=[db_parent],
+        help="Run native Rust 360° Transitive Poset & Quantitative Order Wave",
+    )
+    p_mlu_order.add_argument("predicate", help="Relational predicate to order along")
+    p_mlu_order.add_argument(
+        "--start", default="", help="Optional starting concept"
+    )
+    p_mlu_order.add_argument(
+        "--hops", type=int, default=6, help="Maximum chain hops (default: 6)"
+    )
+    p_mlu_order.set_defaults(func=cmd_mlu)
+    p_mlu_summary = p_mlu_subs.add_parser(
+        "summary",
+        parents=[db_parent],
+        help="Run native Rust 360° Domain & Sub-Core Knowledge Summarizer",
+    )
+    p_mlu_summary.add_argument(
+        "domain", nargs="?", default="", help="Optional sub-core or concept domain"
+    )
+    p_mlu_summary.add_argument(
+        "--top", type=int, default=8, help="Maximum items per section (default: 8)"
+    )
+    p_mlu_summary.set_defaults(func=cmd_mlu)
     p_mlu_chat = p_mlu_subs.add_parser(
         "chat",
         parents=[db_parent],

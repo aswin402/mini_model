@@ -1344,6 +1344,70 @@ pub extern "C" fn little_core_mlu_arena_plan_goal_360(
     to_c_string(&res)
 }
 
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_evaluate_order_360(
+    arena_ptr: *mut SpiderWebArena,
+    predicate_ptr: *const c_char,
+    start_ptr: *const c_char,
+    max_hops: usize,
+) -> *mut c_char {
+    let empty = mlu_arena::OrderWave360Dto {
+        predicate: String::new(),
+        start_concept: String::new(),
+        poset_consistent: true,
+        element_count: 0,
+        ordered_chain: Vec::new(),
+        transitive_pairs: Vec::new(),
+        order_synthesis: String::new(),
+    };
+    if arena_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let predicate = if predicate_ptr.is_null() {
+        ""
+    } else {
+        (unsafe { CStr::from_ptr(predicate_ptr) }).to_str().unwrap_or("")
+    };
+    let start = if start_ptr.is_null() {
+        ""
+    } else {
+        (unsafe { CStr::from_ptr(start_ptr) }).to_str().unwrap_or("")
+    };
+    let arena = unsafe { &*arena_ptr };
+    let res = arena.evaluate_order_wave_360(predicate, start, max_hops);
+    to_c_string(&res)
+}
+
+#[no_mangle]
+pub extern "C" fn little_core_mlu_arena_summarize_domain_360(
+    arena_ptr: *mut SpiderWebArena,
+    domain_ptr: *const c_char,
+    max_items: usize,
+) -> *mut c_char {
+    let empty = mlu_arena::DomainSummary360Dto {
+        domain_name: String::new(),
+        active_concepts_count: 0,
+        verified_synapses_count: 0,
+        central_hubs: Vec::new(),
+        key_principles: Vec::new(),
+        emergent_clusters: Vec::new(),
+        open_curiosity_questions: Vec::new(),
+        domain_synthesis: String::new(),
+    };
+    if arena_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let domain = if domain_ptr.is_null() {
+        ""
+    } else {
+        (unsafe { CStr::from_ptr(domain_ptr) }).to_str().unwrap_or("")
+    };
+    let arena = unsafe { &*arena_ptr };
+    let res = arena.summarize_domain_360(domain, max_items);
+    to_c_string(&res)
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

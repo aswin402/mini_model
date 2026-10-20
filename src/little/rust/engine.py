@@ -366,6 +366,23 @@ class RustAccelerationCore:
                 ]
                 lib.little_core_mlu_arena_plan_goal_360.restype = ctypes.c_void_p
 
+            if hasattr(lib, "little_core_mlu_arena_evaluate_order_360"):
+                lib.little_core_mlu_arena_evaluate_order_360.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_size_t,
+                ]
+                lib.little_core_mlu_arena_evaluate_order_360.restype = ctypes.c_void_p
+
+            if hasattr(lib, "little_core_mlu_arena_summarize_domain_360"):
+                lib.little_core_mlu_arena_summarize_domain_360.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_size_t,
+                ]
+                lib.little_core_mlu_arena_summarize_domain_360.restype = ctypes.c_void_p
+
     # -------------------------------------------------------------------------
     # Public Accelerated Graph API
     # -------------------------------------------------------------------------
@@ -1309,6 +1326,49 @@ class RustMluArena:
             goal_concept.encode("utf-8"),
             start_concept.encode("utf-8"),
             max(1, int(max_steps)),
+        )
+        if not ptr:
+            return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def evaluate_order_360(
+        self, predicate: str, start_concept: str = "", max_hops: int = 6
+    ) -> dict[str, Any]:
+        """Run native Rust 360° Transitive Poset & Quantitative Order Wave."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_evaluate_order_360")
+        ):
+            return {}
+        ptr = self._lib.little_core_mlu_arena_evaluate_order_360(
+            self._handle,
+            predicate.encode("utf-8"),
+            start_concept.encode("utf-8"),
+            max(1, int(max_hops)),
+        )
+        if not ptr:
+            return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def summarize_domain_360(
+        self, domain_concept: str = "", max_items: int = 8
+    ) -> dict[str, Any]:
+        """Run native Rust 360° Domain & Sub-Core Knowledge Summarizer."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_mlu_arena_summarize_domain_360")
+        ):
+            return {}
+        ptr = self._lib.little_core_mlu_arena_summarize_domain_360(
+            self._handle,
+            domain_concept.encode("utf-8"),
+            max(1, int(max_items)),
         )
         if not ptr:
             return {}

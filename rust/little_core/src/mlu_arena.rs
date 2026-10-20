@@ -659,7 +659,41 @@ impl SpiderWebArena {
         disjoints
     }
 
-    /// Phase 11: Native Rust Invariant Gate Verifier (`I_DAG` Acyclicity + `I_MUTEX` Mutual Exclusion).
+    /// Phase 35: Collect all concepts reachable from `start_concept` along a specific verified `predicate`.
+    pub fn collect_predicate_reachability(
+        &self,
+        start_concept: &str,
+        predicate: &str,
+    ) -> std::collections::HashSet<String> {
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        let clean = start_concept.trim().to_uppercase().replace(' ', "_");
+        let pred_clean = predicate.trim().to_lowercase();
+        queue.push_back(clean.clone());
+        visited.insert(clean);
+
+        while let Some(curr) = queue.pop_front() {
+            let Some(&cid) = self.name_to_id.get(&curr) else {
+                continue;
+            };
+            let Some(cell) = self.cells.get(cid as usize) else {
+                continue;
+            };
+            for edges in &cell.spoke_synapses {
+                for syn in edges {
+                    if syn.pos_evidence > syn.neg_evidence
+                        && syn.predicate == pred_clean
+                        && visited.insert(syn.target_name.clone())
+                    {
+                        queue.push_back(syn.target_name.clone());
+                    }
+                }
+            }
+        }
+        visited
+    }
+
+    /// Phase 11 & 35: Native Rust Invariant Gate Verifier (`I_DAG` Acyclicity + `I_MUTEX` Mutual Exclusion + `I_SORT` Poset Antisymmetry).
     pub fn verify_spoke_invariants(
         &self,
         subject: &str,
@@ -682,13 +716,21 @@ impl SpiderWebArena {
             return (true, "PASSED");
         }
 
-        // Gate 1: I_DAG (check if object already reaches subject)
+        // Gate 1: I_DAG (check if object already reaches subject via is_a)
         let obj_anc = self.collect_positive_ancestors(&obj_clean);
         if obj_anc.contains(&sub_clean) {
             return (false, "I_DAG");
         }
 
-        // Gate 2: I_MUTEX (check if subject's ancestor closure is disjoint with object's ancestor closure)
+        // Gate 2: I_SORT (check if object already reaches subject along the same relational poset predicate)
+        if pred_clean != "is_a" && pred_clean != "co_occurs_with" {
+            let obj_pred_reach = self.collect_predicate_reachability(&obj_clean, &pred_clean);
+            if obj_pred_reach.contains(&sub_clean) {
+                return (false, "I_SORT");
+            }
+        }
+
+        // Gate 3: I_MUTEX (check if subject's ancestor closure is disjoint with object's ancestor closure)
         let sub_anc = self.collect_positive_ancestors(&sub_clean);
         let sub_disjoints = self.collect_disjoint_peers(&sub_anc);
         if !sub_disjoints.is_disjoint(&obj_anc) {
@@ -2688,6 +2730,331 @@ impl SpiderWebArena {
             plan_synthesis: synthesis,
         }
     }
+
+    /// Phase 35: Native Rust 360° Transitive Poset & Quantitative Order Wave (`evaluate_order_wave_360`).
+    ///
+    /// Computes the topological poset ordering (`ordered_chain`), transitive reachability closure,
+    /// and strict antisymmetry consistency (`poset_consistent`) along `predicate` (optionally
+    /// anchored at `start_concept`).
+    pub fn evaluate_order_wave_360(
+        &self,
+        predicate: &str,
+        start_concept: &str,
+        max_hops: usize,
+    ) -> OrderWave360Dto {
+        let pred_clean = predicate.trim().to_lowercase();
+        let clean_start = start_concept.trim().to_uppercase().replace(' ', "_");
+        let limit = max_hops.clamp(1, 10);
+
+        // Collect all verified edges matching pred_clean
+        let mut adj: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        let mut in_deg: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let mut nodes_set: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
+        for cell in &self.cells {
+            if cell.concept_id == "CORE_ROOT" || cell.concept_id.starts_with("SUBCORE_") {
+                continue;
+            }
+            for edges in &cell.spoke_synapses {
+                for syn in edges {
+                    if syn.pos_evidence > syn.neg_evidence && syn.predicate == pred_clean {
+                        nodes_set.insert(cell.concept_id.clone());
+                        nodes_set.insert(syn.target_name.clone());
+                        in_deg.entry(cell.concept_id.clone()).or_insert(0);
+                        let list = adj.entry(cell.concept_id.clone()).or_default();
+                        if !list.contains(&syn.target_name) {
+                            list.push(syn.target_name.clone());
+                            *in_deg.entry(syn.target_name.clone()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // If start_concept is specified, restrict or trace forward from start_concept up to limit hops
+        let mut reachable_chain: Vec<String> = Vec::new();
+        if !clean_start.is_empty() {
+            let mut q = std::collections::VecDeque::new();
+            let mut vis = std::collections::HashSet::new();
+            q.push_back((clean_start.clone(), 0usize));
+            vis.insert(clean_start.clone());
+            while let Some((curr, d)) = q.pop_front() {
+                reachable_chain.push(curr.clone());
+                if d >= limit {
+                    continue;
+                }
+                if let Some(neighbors) = adj.get(&curr) {
+                    for nxt in neighbors {
+                        if vis.insert(nxt.clone()) {
+                            q.push_back((nxt.clone(), d + 1));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Kahn's topological sort over nodes_set to verify I_SORT poset antisymmetry
+        let mut queue: std::collections::VecDeque<String> = in_deg
+            .iter()
+            .filter(|(_, &deg)| deg == 0)
+            .map(|(n, _)| n.clone())
+            .collect();
+        // Sort initial queue deterministically
+        let mut init_vec: Vec<String> = queue.drain(..).collect();
+        init_vec.sort();
+        queue.extend(init_vec);
+
+        let mut topo_order: Vec<String> = Vec::new();
+        let mut deg_work = in_deg.clone();
+        while let Some(u) = queue.pop_front() {
+            topo_order.push(u.clone());
+            if let Some(neighbors) = adj.get(&u) {
+                for v in neighbors {
+                    if let Some(d) = deg_work.get_mut(v) {
+                        *d = d.saturating_sub(1);
+                        if *d == 0 {
+                            queue.push_back(v.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        let poset_consistent = topo_order.len() == nodes_set.len();
+        let ordered_chain = if !clean_start.is_empty() && reachable_chain.len() > 1 {
+            reachable_chain
+        } else {
+            topo_order
+        };
+
+        let mut transitive_pairs: Vec<String> = Vec::new();
+        for i in 0..ordered_chain.len() {
+            let u = &ordered_chain[i];
+            let reach = self.collect_predicate_reachability(u, &pred_clean);
+            for j in (i + 1)..ordered_chain.len() {
+                let v = &ordered_chain[j];
+                if reach.contains(v) {
+                    transitive_pairs.push(format!("{} -> {}", u, v));
+                }
+            }
+        }
+
+        let pred_human = pred_clean.replace('_', " ");
+        let synthesis = if ordered_chain.is_empty() {
+            format!("No verified 360° order chain recorded for {}.", pred_human)
+        } else {
+            let names: Vec<String> = ordered_chain
+                .iter()
+                .map(|c| c.to_lowercase().replace('_', " "))
+                .collect();
+            format!(
+                "Transitive order for {} ({} elements, I_SORT consistent={}): {}.",
+                pred_human,
+                ordered_chain.len(),
+                poset_consistent,
+                names.join(" > ")
+            )
+        };
+
+        OrderWave360Dto {
+            predicate: pred_clean,
+            start_concept: clean_start,
+            poset_consistent,
+            element_count: ordered_chain.len(),
+            ordered_chain,
+            transitive_pairs,
+            order_synthesis: synthesis,
+        }
+    }
+
+    /// Phase 36: Native Rust 360° Domain & Sub-Core Knowledge Summarizer (`summarize_domain_360`).
+    ///
+    /// Synthesizes an executive domain summary across `domain_filter` (or the entire 360° Arena
+    /// when `domain_filter` is empty or `"ALL"`), ranking central hub concepts by epistemic
+    /// centrality, extracting top verified principles, emergent clusters, and open curiosity questions.
+    pub fn summarize_domain_360(
+        &self,
+        domain_filter: &str,
+        max_concepts: usize,
+    ) -> DomainSummary360Dto {
+        let clean_dom = domain_filter.trim().to_uppercase().replace(' ', "_");
+        let is_all = clean_dom.is_empty() || clean_dom == "ALL" || clean_dom == "CORE_ROOT";
+        let top_n = max_concepts.clamp(1, 15);
+
+        // Compute in-degrees for centrality scoring
+        let mut in_degree: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for cell in &self.cells {
+            if cell.concept_id == "CORE_ROOT" || cell.concept_id.starts_with("SUBCORE_") {
+                continue;
+            }
+            for edges in &cell.spoke_synapses {
+                for syn in edges {
+                    if syn.pos_evidence > syn.neg_evidence && syn.predicate != "co_occurs_with" {
+                        *in_degree.entry(syn.target_name.clone()).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+
+        let mut candidate_hubs: Vec<(String, f32)> = Vec::new();
+        let mut principles: Vec<(f32, String)> = Vec::new();
+        let mut verified_synapses_count = 0usize;
+
+        for cell in &self.cells {
+            if cell.concept_id == "CORE_ROOT" || cell.concept_id.starts_with("SUBCORE_") {
+                continue;
+            }
+            let matches_domain = if is_all {
+                true
+            } else if cell.parent_hub.as_deref() == Some(clean_dom.as_str())
+                || cell.concept_id == clean_dom
+            {
+                true
+            } else {
+                cell.spoke_synapses.iter().any(|edges| {
+                    edges.iter().any(|syn| {
+                        syn.pos_evidence > syn.neg_evidence && syn.target_name == clean_dom
+                    })
+                })
+            };
+
+            if !matches_domain {
+                continue;
+            }
+
+            let mut out_deg = 0usize;
+            let mut conf_sum = 0.0f32;
+            for edges in &cell.spoke_synapses {
+                for syn in edges {
+                    if syn.pos_evidence > syn.neg_evidence
+                        && syn.predicate != "co_occurs_with"
+                        && syn.predicate != "disjoint_with"
+                    {
+                        out_deg += 1;
+                        verified_synapses_count += 1;
+                        let total_ev = syn.pos_evidence + syn.neg_evidence;
+                        let conf = total_ev / (total_ev + 1.0);
+                        conf_sum += conf;
+                        principles.push((
+                            conf,
+                            format!(
+                                "{} {} {}",
+                                cell.concept_id.to_lowercase().replace('_', " "),
+                                syn.predicate.replace('_', " "),
+                                syn.target_name.to_lowercase().replace('_', " ")
+                            ),
+                        ));
+                    }
+                }
+            }
+
+            let in_deg = *in_degree.get(&cell.concept_id).unwrap_or(&0);
+            if out_deg + in_deg > 0 {
+                let centrality = (out_deg as f32) + (in_deg as f32) + 0.5 * conf_sum;
+                candidate_hubs.push((cell.concept_id.clone(), centrality));
+            }
+        }
+
+        candidate_hubs.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        principles.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let active_concepts_count = candidate_hubs.len();
+        let central_hubs: Vec<String> = candidate_hubs
+            .into_iter()
+            .take(top_n)
+            .map(|(cid, _)| cid)
+            .collect();
+        let key_principles: Vec<String> = principles
+            .into_iter()
+            .take(top_n)
+            .map(|(_, s)| s)
+            .collect();
+
+        let clusters = self.discover_latent_clusters_360(2);
+        let emergent_clusters: Vec<String> = clusters
+            .iter()
+            .filter(|cl| {
+                is_all
+                    || cl.shared_attractor == clean_dom
+                    || cl.member_concepts.iter().any(|m| central_hubs.contains(m))
+            })
+            .take(5)
+            .map(|cl| {
+                format!(
+                    "{} ({}: {})",
+                    cl.emergent_abstraction_id,
+                    cl.shared_predicate,
+                    cl.member_concepts.join(", ")
+                )
+            })
+            .collect();
+
+        let curiosity = self.discover_epistemic_hypotheses(10);
+        let open_curiosity_questions: Vec<String> = curiosity
+            .curiosity_gaps
+            .iter()
+            .filter(|g| is_all || central_hubs.contains(&g.concept_id))
+            .take(3)
+            .filter_map(|g| {
+                g.missing_spokes.first().map(|spoke| {
+                    format!(
+                        "What are the {} characteristics of {}?",
+                        spoke,
+                        g.concept_id.to_lowercase().replace('_', " ")
+                    )
+                })
+            })
+            .collect();
+
+        let dom_label = if is_all {
+            "ALL_DOMAINS".to_string()
+        } else {
+            clean_dom
+        };
+
+        let synthesis = if central_hubs.is_empty() {
+            format!("No verified 360° concepts recorded yet for domain {}.", dom_label)
+        } else {
+            let hubs_human: Vec<String> = central_hubs
+                .iter()
+                .take(4)
+                .map(|h| h.to_lowercase().replace('_', " "))
+                .collect();
+            let princ_str = key_principles
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<String>>()
+                .join("; ");
+            format!(
+                "Domain {} encompasses {} active concepts and {} verified 360° synapses (central hubs: {}). Key verified principles: {}.",
+                dom_label,
+                active_concepts_count,
+                verified_synapses_count,
+                hubs_human.join(", "),
+                princ_str
+            )
+        };
+
+        DomainSummary360Dto {
+            domain_name: dom_label,
+            active_concepts_count,
+            verified_synapses_count,
+            central_hubs,
+            key_principles,
+            emergent_clusters,
+            open_curiosity_questions,
+            domain_synthesis: synthesis,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2898,5 +3265,26 @@ pub struct GoalPlan360Dto {
     pub plan_synthesis: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OrderWave360Dto {
+    pub predicate: String,
+    pub start_concept: String,
+    pub poset_consistent: bool,
+    pub element_count: usize,
+    pub ordered_chain: Vec<String>,
+    pub transitive_pairs: Vec<String>,
+    pub order_synthesis: String,
+}
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DomainSummary360Dto {
+    pub domain_name: String,
+    pub active_concepts_count: usize,
+    pub verified_synapses_count: usize,
+    pub central_hubs: Vec<String>,
+    pub key_principles: Vec<String>,
+    pub emergent_clusters: Vec<String>,
+    pub open_curiosity_questions: Vec<String>,
+    pub domain_synthesis: String,
+}
 

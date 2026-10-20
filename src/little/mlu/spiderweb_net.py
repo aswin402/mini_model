@@ -1536,6 +1536,43 @@ class SpiderWebMLM:
             "plan_synthesis": "",
         }
 
+    def evaluate_order_360(
+        self, predicate: str, start_concept: str = "", max_hops: int = 6
+    ) -> dict[str, Any]:
+        """Phase 35: Run native Rust 360° Transitive Poset & Quantitative Order Wave."""
+        if self.rust_arena.is_native:
+            return self.rust_arena.evaluate_order_360(
+                predicate, start_concept=start_concept, max_hops=max_hops
+            )
+        return {
+            "predicate": predicate.lower().strip(),
+            "start_concept": start_concept.upper().strip(),
+            "poset_consistent": True,
+            "element_count": 0,
+            "ordered_chain": [],
+            "transitive_pairs": [],
+            "order_synthesis": "",
+        }
+
+    def summarize_domain_360(
+        self, domain_concept: str = "", max_items: int = 8
+    ) -> dict[str, Any]:
+        """Phase 36: Run native Rust 360° Domain & Sub-Core Knowledge Summarizer."""
+        if self.rust_arena.is_native:
+            return self.rust_arena.summarize_domain_360(
+                domain_concept=domain_concept, max_items=max_items
+            )
+        return {
+            "domain_name": domain_concept.upper().strip() or "ARENA_GLOBAL",
+            "active_concepts_count": len(self.nodes),
+            "verified_synapses_count": 0,
+            "central_hubs": [],
+            "key_principles": [],
+            "emergent_clusters": [],
+            "open_curiosity_questions": [],
+            "domain_synthesis": "",
+        }
+
     def chat_turn_360(self, user_input: str, persist: bool = True) -> dict[str, Any]:
         """Phase 34: Execute a unified 360° conversational turn (learning + deliberation or inquiry wave)."""
         clean_in = user_input.strip()
@@ -1846,7 +1883,22 @@ class SpiderWebMLM:
                 and chat_ask.get("status") == "VERIFIED"
             )
 
-            # Axis 10: Native Rust 360° beam latency (microseconds/query)
+            # Axis 10: 360° Transitive Poset Ordering (I_SORT) & Domain Knowledge Summarizer
+            order_dto = mlm.evaluate_order_360("causes", start_concept="DROUGHT", max_hops=4)
+            rust_sort = mlm.rust_arena.verify_invariants("FAMINE", "causes", "DROUGHT")
+            dom_dto = mlm.summarize_domain_360("", max_items=6)
+            order_and_summary_passed = bool(
+                order_dto.get("poset_consistent") is True
+                and order_dto.get("element_count", 0) >= 3
+                and "DROUGHT -> FAMINE" in order_dto.get("transitive_pairs", [])
+                and not rust_sort["passed"]
+                and rust_sort["gate"] == "I_SORT"
+                and dom_dto.get("active_concepts_count", 0) >= 10
+                and len(dom_dto.get("central_hubs", [])) > 0
+                and bool(dom_dto.get("domain_synthesis"))
+            )
+
+            # Axis 11: Native Rust 360° beam latency (microseconds/query)
             iters = 25
             t0 = time.perf_counter()
             for _ in range(iters):
@@ -1866,6 +1918,7 @@ class SpiderWebMLM:
                 and bridge_cluster_revision_passed
                 and comprehension_deliberation_passed
                 and goal_planning_passed
+                and order_and_summary_passed
             )
             return {
                 "all_passed": all_passed,
@@ -1878,6 +1931,7 @@ class SpiderWebMLM:
                 "bridge_cluster_revision_passed": bridge_cluster_revision_passed,
                 "comprehension_deliberation_passed": comprehension_deliberation_passed,
                 "goal_planning_passed": goal_planning_passed,
+                "order_and_summary_passed": order_and_summary_passed,
                 "rust_beam_avg_latency_us": avg_beam_us,
                 "verified_spokes_learned": rep1.relations_verified + comp_rep.relations_verified,
                 "telemetry": tel,
