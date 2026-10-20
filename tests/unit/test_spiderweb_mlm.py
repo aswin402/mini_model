@@ -733,5 +733,47 @@ def test_spiderweb_mlm_phase44_to_46_json_ontology_ingestion_and_everyday_englis
         mlm.close()
 
 
+def test_spiderweb_mlm_phase47_to_49_multiformat_ebooks_pdfs_csvs_and_hf_datasets(tmp_path) -> None:
+    """Verify Phases 47-49: Multi-format document/dataset ingestion (.epub, .docx, .pdf, .csv, .jsonl) and cross-format reasoning."""
+    db_file = str(tmp_path / "phase47_multiformat.db")
+    with MemoryStore(db_file, seed_ontology=False) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+
+        # Phase 47a: Ingest EPUB, DOCX, PDF, and CSV in data/knowledge/ebooks
+        eb_rep = mlm.ingest_corpus_path("data/knowledge/ebooks", epochs=1)
+        assert eb_rep["files_processed"] == 4
+        assert eb_rep["relations_verified"] >= 25
+
+        # Phase 47b: Ingest HuggingFace JSONL science facts
+        hf_rep = mlm.ingest_jsonl_dataset(
+            "data/knowledge/hf_datasets/openbookqa_science_facts.jsonl", max_rows=20
+        )
+        assert hf_rep["rows_processed"] == 20
+        assert hf_rep["relations_verified"] >= 10
+
+        # Phase 49: Verify reasoning learned from EPUB, DOCX, PDF, and CSV
+        q_epub = mlm.chat_turn_360("What explains dizziness and fatigue?", persist=False)
+        assert q_epub["status"] == "VERIFIED"
+        assert "dehydration" in q_epub["reply"].lower()
+
+        q_docx = mlm.chat_turn_360("How to achieve happiness?", persist=False)
+        assert q_docx["status"] == "VERIFIED"
+        assert "empathy" in q_docx["reply"].lower()
+        assert "[MLU-360-PLAN]" in q_docx["trace"]
+
+        q_pdf = mlm.chat_turn_360("What explains power_outage and blown_fuse?", persist=False)
+        assert q_pdf["status"] == "VERIFIED"
+        assert "short circuit" in q_pdf["reply"].lower()
+
+        q_csv_cmp = mlm.chat_turn_360("diamond and ruby", persist=False)
+        assert q_csv_cmp["status"] == "VERIFIED"
+        assert "mineral" in q_csv_cmp["reply"].lower()
+
+        q_csv_mutex = mlm.chat_turn_360("Is a diamond a living_thing?", persist=False)
+        assert q_csv_mutex["status"] == "REFUTED"
+        assert "I_MUTEX" in q_csv_mutex["trace"]
+        mlm.close()
+
+
 
 

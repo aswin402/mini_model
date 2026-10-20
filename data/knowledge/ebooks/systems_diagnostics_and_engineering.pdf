@@ -1,0 +1,19 @@
+%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /Contents 4 0 R >> endobj
+4 0 obj << /Length 414 >>
+stream
+BT
+/F1 12 Tf
+72 720 Td
+(Overheating causes thermal_throttling.Overheating causes hardware_damage.) Tj T*
+(Short_circuit causes power_outage.Short_circuit causes blown_fuse.) Tj T*
+(Sensor_drift causes calibration_error.Calibration_error causes measurement_noise.) Tj T*
+(A turbine is a machine.A generator is a machine.A transformer is a device.) Tj T*
+(Mechanical_kinetic_energy causes electrical_power.) Tj T*
+ET
+endstream
+endobj
+trailer << /Root 1 0 R >>
+%%EOF

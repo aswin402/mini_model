@@ -1,0 +1,16 @@
+subject,predicate,object
+diamond,is_a,mineral
+emerald,is_a,mineral
+ruby,is_a,mineral
+mineral,is_a,solid
+mineral,not_a,living_thing
+diamond,has_part,carbon_lattice
+ruby,has_part,crystalline_lattice
+telescope,used_for,astronomy
+microscope,used_for,biology
+stethoscope,used_for,medicine
+seismograph,used_for,geology
+earthquake,causes,tsunami
+earthquake,causes,ground_shaking
+volcanic_eruption,causes,lava_flow
+volcanic_eruption,causes,ash_cloud

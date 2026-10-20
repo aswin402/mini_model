@@ -890,13 +890,23 @@ def cmd_mlu(args: argparse.Namespace) -> None:
                 )
         elif action == "bootstrap":
             rep_dict = kernel.mlm.bootstrap_curriculum(
-                epochs=int(getattr(args, "epochs", 2))
+                epochs=int(getattr(args, "epochs", 2)),
+                include_hf_datasets=bool(getattr(args, "hf", False)),
             )
             print(
                 f"🌍 [360° Spider-Web Curriculum Bootstrap] {rep_dict['files_processed']} file(s) x {rep_dict['epochs']} epoch(s) | "
                 f"{rep_dict['relations_verified']} verified spoke links | "
                 f"MLUs={rep_dict['telemetry']['total_mlu_nodes']}"
             )
+        elif action == "fetch-hf":
+            hf_dict = kernel.mlm.fetch_huggingface_dataset(
+                dataset=args.dataset,
+                config=str(getattr(args, "config", "default")),
+                split=str(getattr(args, "split", "train")),
+                limit=int(getattr(args, "limit", 50)),
+                persist=True,
+            )
+            print(json.dumps(hf_dict, indent=2))
         elif action == "consolidate":
             cons_dict = kernel.mlm.consolidate()
             rc = cons_dict["rust_consolidation"]
@@ -1284,7 +1294,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_mlu_bootstrap.add_argument(
         "--epochs", type=int, default=2, help="Number of training epochs (default: 2)"
     )
+    p_mlu_bootstrap.add_argument(
+        "--hf",
+        action="store_true",
+        help="Include downloaded HuggingFace JSONL datasets during bootstrap",
+    )
     p_mlu_bootstrap.set_defaults(func=cmd_mlu)
+    p_mlu_fetch_hf = p_mlu_subs.add_parser(
+        "fetch-hf",
+        parents=[db_parent],
+        help="Download rows from HuggingFace Datasets Server API and train the 360° Spider-Web MLM",
+    )
+    p_mlu_fetch_hf.add_argument(
+        "dataset", help="HuggingFace dataset ID (e.g., allenai/sciq or allenai/openbookqa)"
+    )
+    p_mlu_fetch_hf.add_argument(
+        "--config", default="default", help="Dataset config name (default: default)"
+    )
+    p_mlu_fetch_hf.add_argument(
+        "--split", default="train", help="Dataset split name (default: train)"
+    )
+    p_mlu_fetch_hf.add_argument(
+        "--limit", type=int, default=50, help="Number of rows to download and train on (default: 50)"
+    )
+    p_mlu_fetch_hf.set_defaults(func=cmd_mlu)
     p_mlu_benchmark = p_mlu_subs.add_parser(
         "benchmark",
         parents=[db_parent],

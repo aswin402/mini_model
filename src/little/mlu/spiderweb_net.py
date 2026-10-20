@@ -658,34 +658,12 @@ class SpiderWebMLM:
             if extracted:
                 return extracted
 
-        # Open-vocabulary SVO projection: rank tokens by Shannon salience and project interior bridge
+        # Open-vocabulary fallback: link high-information concepts via related_to when no explicit operator matched
         salient = [
             (idx, tok, self._token_salience(tok))
             for idx, tok in enumerate(tokens)
-            if self._token_salience(tok) > 0.5
+            if self._token_salience(tok) >= 2.25
         ]
-        if len(salient) >= 3:
-            subj_tok = salient[0][1]
-            if (
-                salient[0][0] == 0
-                and self._token_salience(subj_tok) < 2.25
-                and subj_tok.upper() not in self.nodes
-                and active_subject_fallback
-            ):
-                subj_tok = active_subject_fallback.lower()
-            bridge_tok = salient[1][1]
-            obj_tok = salient[-1][1]
-            if subj_tok != obj_tok:
-                bridge_vec = deterministic_seed_vector(bridge_tok, self.dim)
-                best_pred = "causes"
-                best_sim = -1e9
-                for _ptoks, canonical_pred, proto_vec in self._operator_codebook:
-                    sim = sum(a * b for a, b in zip(bridge_vec, proto_vec, strict=False))
-                    if sim > best_sim:
-                        best_sim = sim
-                        best_pred = canonical_pred
-                return [(subj_tok, best_pred, obj_tok)]
-
         if len(salient) >= 2:
             anchor = salient[0][1]
             if (
@@ -1033,6 +1011,7 @@ class SpiderWebMLM:
                 single_cid in self.nodes
                 and single_cid != "CORE_ROOT"
                 and single_cid not in DEFAULT_SUBCORES
+                and (len(tokens) == 1 or self._token_salience(tokens[i]) >= 2.25)
             ):
                 if single_cid not in matched_cids and not any(
                     single_cid in m.split("_") for m in matched_cids
@@ -1195,7 +1174,12 @@ class SpiderWebMLM:
         # Case A: Targeted relational verification or 360° Comparative Wave Intersection
         if target_cid is not None:
             if has_leading_operator:
-                matching = [p for p in preds if p.target_concept == target_cid]
+                matching = [
+                    p
+                    for p in preds
+                    if p.target_concept == target_cid
+                    and p.predicate not in self.verifier.disjoint_predicates
+                ]
                 if matching:
                     best = matching[0]
                     verb = best.predicate.replace("_", " ")
@@ -1899,7 +1883,7 @@ class SpiderWebMLM:
                         verified=True,
                     )
                 subj_unit.learn_spoke_relation(
-                    predicate=pred,
+                    predicate=rust_pred,
                     target_concept=obj_unit.concept_id,
                     target_vec=obj_unit.anchor_vec,
                     learning_rate=0.20,
@@ -1934,24 +1918,363 @@ class SpiderWebMLM:
             "relations_refuted": relations_refuted,
         }
 
+    @staticmethod
+    def extract_text_from_document(file_path: str) -> str:
+        """Phase 47: Pure-algorithmic text extractor for .epub, .docx, .pdf, .md, and .txt files (zero regexes)."""
+        import xml.etree.ElementTree as ET
+        import zipfile
+        import zlib
+        from pathlib import Path
+
+        fpath = Path(file_path)
+        if not fpath.is_file():
+            return ""
+        ext = fpath.suffix.lower()
+
+        if ext in (".epub", ".docx"):
+            chunks: list[str] = []
+            try:
+                with zipfile.ZipFile(fpath, "r") as zf:
+                    for name in sorted(zf.namelist()):
+                        low_name = name.lower()
+                        if low_name.endswith(("container.xml", ".opf")):
+                            continue
+                        if low_name.endswith((".xhtml", ".html", ".xml")):
+                            try:
+                                raw_xml = zf.read(name)
+                                root_el = ET.fromstring(raw_xml)
+                                for piece in root_el.itertext():
+                                    clean_piece = piece.strip()
+                                    if clean_piece:
+                                        chunks.append(clean_piece)
+                            except (ET.ParseError, KeyError, OSError, ValueError):
+                                pass
+            except (OSError, zipfile.BadZipFile, ValueError):
+                return ""
+            return " ".join(chunks)
+
+        if ext == ".pdf":
+            try:
+                raw_bytes = fpath.read_bytes()
+            except OSError:
+                return ""
+            extracted_blocks: list[str] = []
+            pos = 0
+            n_bytes = len(raw_bytes)
+            while pos < n_bytes:
+                s_idx = raw_bytes.find(b"stream", pos)
+                if s_idx < 0:
+                    break
+                e_idx = raw_bytes.find(b"endstream", s_idx + 6)
+                if e_idx < 0:
+                    break
+                body = raw_bytes[s_idx + 6 : e_idx].strip(b"\r\n ")
+                pos = e_idx + 9
+                decoded_str = ""
+                for candidate_bytes in (body,):
+                    try:
+                        decomp = zlib.decompress(candidate_bytes)
+                        decoded_str = decomp.decode("latin-1", errors="ignore")
+                    except (zlib.error, ValueError):
+                        decoded_str = candidate_bytes.decode("latin-1", errors="ignore")
+                if not decoded_str:
+                    continue
+                # Character-state automaton to extract parenthesized text literals ( ... )
+                depth = 0
+                escaped = False
+                buf: list[str] = []
+                for ch in decoded_str:
+                    if escaped:
+                        buf.append(ch)
+                        escaped = False
+                        continue
+                    if ch == "\\":
+                        escaped = True
+                        continue
+                    if ch == "(":
+                        if depth > 0:
+                            buf.append(ch)
+                        depth += 1
+                    elif ch == ")":
+                        if depth > 0:
+                            depth -= 1
+                            if depth == 0 and buf:
+                                span = "".join(buf).strip()
+                                if span:
+                                    extracted_blocks.append(span)
+                                buf.clear()
+                            elif depth > 0:
+                                buf.append(ch)
+                    elif depth > 0:
+                        buf.append(ch)
+            return " ".join(extracted_blocks)
+
+        try:
+            return fpath.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            return ""
+
+    def ingest_csv_dataset(
+        self, csv_path: str, max_rows: int | None = None, persist: bool = False
+    ) -> dict[str, Any]:
+        """Phase 47: Ingest tabular CSV/TSV datasets (structured triples or text rows) into the 360° Spider-Web MLM."""
+        import csv
+        from pathlib import Path
+
+        fpath = Path(csv_path)
+        if not fpath.is_file():
+            return {"rows_processed": 0, "relations_verified": 0, "relations_refuted": 0}
+
+        delim = "\t" if fpath.suffix.lower() == ".tsv" else ","
+        rows_processed = 0
+        relations_verified = 0
+        relations_refuted = 0
+        text_passages: list[str] = []
+        synth_sentences: list[str] = []
+
+        try:
+            with fpath.open("r", encoding="utf-8", errors="ignore", newline="") as f:
+                reader = csv.reader(f, delimiter=delim)
+                for row_idx, row in enumerate(reader):
+                    if max_rows is not None and rows_processed >= max_rows:
+                        break
+                    cells = [c.strip() for c in row if c.strip()]
+                    if not cells:
+                        continue
+                    if len(cells) >= 3:
+                        cand_pred = cells[1].lower().replace(" ", "_")
+                        if (
+                            self.verifier.registry.relation(cand_pred) is not None
+                            or cand_pred in ("not_a", "disjoint_with")
+                        ):
+                            subj = cells[0].lower().replace(" ", "_")
+                            obj = cells[2].lower().replace(" ", "_")
+                            if subj and obj and subj != obj:
+                                rows_processed += 1
+                                spoke = map_predicate_to_spoke(cand_pred)
+                                subj_u = self.get_or_create_mlu(subj, preferred_spoke=spoke)
+                                obj_u = self.get_or_create_mlu(obj, preferred_spoke=spoke)
+                                rust_p = "disjoint_with" if cand_pred == "not_a" else cand_pred
+                                if self.rust_arena.is_native:
+                                    inv = self.rust_arena.verify_invariants(
+                                        subj_u.concept_id, rust_p, obj_u.concept_id
+                                    )
+                                    passed = bool(inv.get("passed", True))
+                                else:
+                                    passed = self.verifier.verify_relation(
+                                        subj, cand_pred, obj
+                                    ).passed
+                                if passed:
+                                    relations_verified += 1
+                                    if self.rust_arena.is_native:
+                                        self.rust_arena.learn_spoke(
+                                            subj_u.concept_id,
+                                            rust_p,
+                                            obj_u.concept_id,
+                                            learning_rate=0.20,
+                                            verified=True,
+                                        )
+                                    subj_u.learn_spoke_relation(
+                                        predicate=rust_p,
+                                        target_concept=obj_u.concept_id,
+                                        target_vec=obj_u.anchor_vec,
+                                        learning_rate=0.20,
+                                        verified=True,
+                                    )
+                                    obj_u.verified_hits += 0.5
+                                    if cand_pred not in ("disjoint_with", "not_a"):
+                                        synth_sentences.append(
+                                            f"{subj.replace('_', ' ')} {cand_pred.replace('_', ' ')} {obj.replace('_', ' ')}."
+                                        )
+                                else:
+                                    relations_refuted += 1
+                                continue
+                    # Skip single-word header row
+                    if row_idx == 0 and all(" " not in c for c in cells):
+                        continue
+                    salient_cells = [
+                        c
+                        for c in cells
+                        if " " in c
+                        and _shannon_char_entropy(c) * math.log(1.0 + len(c)) >= 4.0
+                    ]
+                    if salient_cells:
+                        rows_processed += 1
+                        text_passages.append(" ".join(salient_cells))
+        except OSError:
+            return {"rows_processed": 0, "relations_verified": 0, "relations_refuted": 0}
+
+        if synth_sentences and self.rust_arena.is_native:
+            self.rust_arena.train_stream(" ".join(synth_sentences), learning_rate=0.12)
+
+        if text_passages:
+            rep = self.train_on_text(" ".join(text_passages), persist=False)
+            relations_verified += rep.relations_verified
+            relations_refuted += rep.relations_refuted
+
+        self._dirty_since_save = True
+        if persist:
+            self.save_nodes()
+        return {
+            "rows_processed": rows_processed,
+            "relations_verified": relations_verified,
+            "relations_refuted": relations_refuted,
+        }
+
+    def ingest_jsonl_dataset(
+        self, jsonl_path: str, max_rows: int | None = None, persist: bool = False
+    ) -> dict[str, Any]:
+        """Phase 47: Ingest JSONL datasets (HuggingFace OpenBookQA, SciQ, Simple Wikipedia, GenericsKB, or triple streams) into the 360° MLM."""
+        import json
+        from pathlib import Path
+
+        fpath = Path(jsonl_path)
+        if not fpath.is_file():
+            return {"rows_processed": 0, "relations_verified": 0, "relations_refuted": 0}
+
+        rows_processed = 0
+        relations_verified = 0
+        relations_refuted = 0
+        passages: list[str] = []
+
+        try:
+            lines = fpath.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except OSError:
+            return {"rows_processed": 0, "relations_verified": 0, "relations_refuted": 0}
+
+        for raw_line in lines:
+            if max_rows is not None and rows_processed >= max_rows:
+                break
+            clean_line = raw_line.strip()
+            if not clean_line:
+                continue
+            try:
+                obj = json.loads(clean_line)
+            except ValueError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+
+            rows_processed += 1
+            for val in obj.values():
+                if not isinstance(val, str):
+                    continue
+                s_val = val.strip()
+                # Select high-information natural-language strings purely by Shannon character-entropy & token count
+                if (
+                    " " in s_val
+                    and not s_val.startswith("http")
+                    and not s_val.endswith("?")
+                    and _shannon_char_entropy(s_val) * math.log(1.0 + len(s_val)) >= 6.0
+                ):
+                    if not s_val.endswith((".", "!", "?")):
+                        s_val = s_val + "."
+                    passages.append(s_val)
+
+        if passages:
+            rep = self.train_on_text(" ".join(passages), persist=False)
+            relations_verified += rep.relations_verified
+            relations_refuted += rep.relations_refuted
+
+        self._dirty_since_save = True
+        if persist:
+            self.save_nodes()
+        return {
+            "rows_processed": rows_processed,
+            "relations_verified": relations_verified,
+            "relations_refuted": relations_refuted,
+        }
+
+    def fetch_huggingface_dataset(
+        self,
+        dataset: str,
+        config: str = "default",
+        split: str = "train",
+        limit: int = 50,
+        save_dir: str = "data/knowledge/hf_datasets",
+        persist: bool = False,
+    ) -> dict[str, Any]:
+        """Phase 48: Download dataset rows directly from HuggingFace Datasets Server API, save to JSONL, and train the 360° Spider-Web MLM."""
+        import json
+        import urllib.parse
+        import urllib.request
+        from pathlib import Path
+
+        safe_len = max(1, min(limit, 100))
+        q_ds = urllib.parse.quote(dataset, safe="")
+        q_cfg = urllib.parse.quote(config, safe="")
+        q_sp = urllib.parse.quote(split, safe="")
+        url = (
+            f"https://datasets-server.huggingface.co/rows?"
+            f"dataset={q_ds}&config={q_cfg}&split={q_sp}&offset=0&length={safe_len}"
+        )
+        out_folder = Path(save_dir)
+        out_folder.mkdir(parents=True, exist_ok=True)
+        slug = dataset.replace("/", "_") + f"_{config}.jsonl"
+        out_path = out_folder / slug
+
+        rows_saved = 0
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                payload = json.loads(resp.read().decode("utf-8", errors="ignore"))
+                raw_rows = payload.get("rows", [])
+                with out_path.open("w", encoding="utf-8") as f:
+                    for item in raw_rows:
+                        r_dict = item.get("row", {})
+                        if isinstance(r_dict, dict):
+                            f.write(json.dumps(r_dict) + "\n")
+                            rows_saved += 1
+        except (OSError, ValueError) as exc:
+            return {
+                "dataset": dataset,
+                "config": config,
+                "rows_downloaded": 0,
+                "saved_path": str(out_path),
+                "error": str(exc),
+                "relations_verified": 0,
+                "relations_refuted": 0,
+            }
+
+        ing = self.ingest_jsonl_dataset(str(out_path), max_rows=safe_len, persist=persist)
+        return {
+            "dataset": dataset,
+            "config": config,
+            "rows_downloaded": rows_saved,
+            "saved_path": str(out_path),
+            "relations_verified": ing["relations_verified"],
+            "relations_refuted": ing["relations_refuted"],
+        }
+
     def ingest_corpus_path(
         self, target_path: str, epochs: int = 2, consolidate_on_finish: bool = True
     ) -> dict[str, Any]:
-        """Phase 3 & 44: Stream-train the 360° Spider-Web MLM on a file or directory of .md/.txt/.json files."""
+        """Phase 3, 44 & 47: Stream-train the 360° Spider-Web MLM on a file or directory of .md/.txt/.epub/.docx/.pdf/.json/.jsonl/.csv/.tsv files."""
         from pathlib import Path
 
         root = Path(target_path)
         text_files: list[Path] = []
         json_files: list[Path] = []
+        jsonl_files: list[Path] = []
+        csv_files: list[Path] = []
         if root.is_file():
-            if root.suffix.lower() == ".json":
+            ext = root.suffix.lower()
+            if ext == ".json":
                 json_files.append(root)
+            elif ext in (".jsonl", ".ndjson"):
+                jsonl_files.append(root)
+            elif ext in (".csv", ".tsv"):
+                csv_files.append(root)
             else:
                 text_files.append(root)
         elif root.is_dir():
-            for ext in ("*.md", "*.txt"):
+            for ext in ("*.md", "*.txt", "*.epub", "*.docx", "*.pdf"):
                 text_files.extend(sorted(root.rglob(ext)))
             json_files.extend(sorted(root.rglob("*.json")))
+            for ext in ("*.jsonl", "*.ndjson"):
+                jsonl_files.extend(sorted(root.rglob(ext)))
+            for ext in ("*.csv", "*.tsv"):
+                csv_files.extend(sorted(root.rglob(ext)))
 
         total_sentences = 0
         total_verified = 0
@@ -1966,13 +2289,22 @@ class SpiderWebMLM:
             total_verified += jrep["relations_verified"]
             total_refuted += jrep["relations_refuted"]
 
+        for jlfile in jsonl_files:
+            jlrep = self.ingest_jsonl_dataset(str(jlfile), persist=False)
+            total_sentences += jlrep["rows_processed"]
+            total_verified += jlrep["relations_verified"]
+            total_refuted += jlrep["relations_refuted"]
+
+        for cfile in csv_files:
+            crep = self.ingest_csv_dataset(str(cfile), persist=False)
+            total_sentences += crep["rows_processed"]
+            total_verified += crep["relations_verified"]
+            total_refuted += crep["relations_refuted"]
+
         for _ep in range(max(1, epochs)):
             ep_surprises: list[float] = []
             for fpath in text_files:
-                try:
-                    content = fpath.read_text(encoding="utf-8", errors="ignore")
-                except OSError:
-                    continue
+                content = self.extract_text_from_document(str(fpath))
                 if not content.strip():
                     continue
                 rep = self.train_on_text(content, persist=False)
@@ -1989,7 +2321,10 @@ class SpiderWebMLM:
 
         cons = self.consolidate() if consolidate_on_finish else {}
         return {
-            "files_processed": len(text_files) + len(json_files),
+            "files_processed": len(text_files)
+            + len(json_files)
+            + len(jsonl_files)
+            + len(csv_files),
             "epochs": max(1, epochs),
             "sentences_processed": total_sentences,
             "relations_verified": total_verified,
@@ -2002,9 +2337,14 @@ class SpiderWebMLM:
         }
 
     def bootstrap_curriculum(
-        self, epochs: int = 2, include_ontologies: bool = True
+        self,
+        epochs: int = 2,
+        include_ontologies: bool = True,
+        include_ebooks: bool = True,
+        include_hf_datasets: bool = False,
+        hf_max_rows_per_file: int = 35,
     ) -> dict[str, Any]:
-        """Phase 12 & 44: Pre-train the 360° Spider-Web MLM on the foundational world corpus and optional JSON ontologies."""
+        """Phase 12, 44 & 48: Pre-train the 360° Spider-Web MLM on world_corpus, JSON ontologies, ebooks/PDFs/CSVs, and HuggingFace JSONL datasets."""
         from pathlib import Path
 
         from little.core.runtime_paths import RuntimePaths
@@ -2015,13 +2355,14 @@ class SpiderWebMLM:
         ]
         target_dir = next((d for d in candidate_dirs if d.exists() and d.is_dir()), None)
         if target_dir is not None:
+            has_extra = include_ontologies or include_ebooks or include_hf_datasets
             rep = self.ingest_corpus_path(
                 str(target_dir),
                 epochs=epochs,
-                consolidate_on_finish=not include_ontologies,
+                consolidate_on_finish=not has_extra,
             )
+            knowledge_root = target_dir.parent
             if include_ontologies:
-                knowledge_root = target_dir.parent
                 for jname in ("commonsense.json", "extended_ontology.json"):
                     jpath = knowledge_root / jname
                     if jpath.is_file():
@@ -2030,6 +2371,28 @@ class SpiderWebMLM:
                         rep["sentences_processed"] += jrep["triples_processed"]
                         rep["relations_verified"] += jrep["relations_verified"]
                         rep["relations_refuted"] += jrep["relations_refuted"]
+            if include_ebooks:
+                ebooks_dir = knowledge_root / "ebooks"
+                if ebooks_dir.is_dir():
+                    eb_rep = self.ingest_corpus_path(
+                        str(ebooks_dir), epochs=1, consolidate_on_finish=False
+                    )
+                    rep["files_processed"] += eb_rep["files_processed"]
+                    rep["sentences_processed"] += eb_rep["sentences_processed"]
+                    rep["relations_verified"] += eb_rep["relations_verified"]
+                    rep["relations_refuted"] += eb_rep["relations_refuted"]
+            if include_hf_datasets:
+                hf_dir = knowledge_root / "hf_datasets"
+                if hf_dir.is_dir():
+                    for jl_path in sorted(hf_dir.glob("*.jsonl")):
+                        jl_rep = self.ingest_jsonl_dataset(
+                            str(jl_path), max_rows=hf_max_rows_per_file, persist=False
+                        )
+                        rep["files_processed"] += 1
+                        rep["sentences_processed"] += jl_rep["rows_processed"]
+                        rep["relations_verified"] += jl_rep["relations_verified"]
+                        rep["relations_refuted"] += jl_rep["relations_refuted"]
+            if has_extra:
                 rep["consolidation"] = self.consolidate()
                 rep["telemetry"] = self.get_telemetry()
             return rep

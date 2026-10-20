@@ -31,5 +31,7 @@ source-include = [
     "data/schemas/*.json",
     "data/knowledge/*.json",
     "data/knowledge/world_corpus/*.md",
+    "data/knowledge/ebooks/*",
+    "data/knowledge/hf_datasets/*.jsonl",
     "data/fixtures/concept_knots/*.json",
 ]
