@@ -999,6 +999,15 @@ def cmd_mlu(args: argparse.Namespace) -> None:
             )
             print(json.dumps(essay_dict, indent=2))
         elif action == "chat":
+            if len(kernel.mlm.nodes) <= 7:
+                print("🌍 Initializing 360° Spider-Web MLU curriculum on fresh database...")
+                kernel.mlm.bootstrap_curriculum(epochs=1)
+            inline_prompt = " ".join(getattr(args, "prompt", []) or []).strip()
+            if inline_prompt:
+                turn = kernel.mlm.chat_turn_360(inline_prompt, persist=True)
+                print(f"MLU [{turn['mode']} / {turn.get('status', 'OK')}]: {turn['reply']}")
+                print(f"  ↳ {turn['trace']}")
+                return
             print("🕸️  [360° Spider-Web MLU Interactive Chat] Type 'exit' or 'quit' to stop.\n")
             while True:
                 try:
@@ -1009,7 +1018,7 @@ def cmd_mlu(args: argparse.Namespace) -> None:
                 if not user_in or user_in.lower() in ("exit", "quit"):
                     break
                 turn = kernel.mlm.chat_turn_360(user_in, persist=True)
-                print(f"MLU [{turn['mode']}]: {turn['reply']}")
+                print(f"MLU [{turn['mode']} / {turn.get('status', 'OK')}]: {turn['reply']}")
                 print(f"  ↳ {turn['trace']}\n")
         else:
             tel = kernel.mlm.get_telemetry()
@@ -1485,7 +1494,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_mlu_chat = p_mlu_subs.add_parser(
         "chat",
         parents=[db_parent],
-        help="Interactive 360° Spider-Web MLU conversational REPL (live learning + deliberation + inquiry)",
+        help="Interactive 360° Spider-Web MLU conversational REPL (or one-shot chat turn)",
+    )
+    p_mlu_chat.add_argument(
+        "prompt", nargs="*", help="Optional one-shot message or question"
     )
     p_mlu_chat.set_defaults(func=cmd_mlu)
 
