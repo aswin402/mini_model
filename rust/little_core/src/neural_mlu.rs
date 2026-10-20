@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub const D_MODEL: usize = 48;
-pub const MAX_SEQ_LEN: usize = 64;
+pub const MAX_SEQ_LEN: usize = 80;
 pub const NUM_LOGIC_CELLS: usize = 6;
 pub const NUM_LOGIC_GATES: usize = 4; // 0: AND, 1: OR, 2: IMPLIES, 3: XOR
 
@@ -250,8 +250,12 @@ pub struct NeuralTrainReportDto {
 pub struct NeuralGenerationDto {
     pub prompt: String,
     pub generated_text: String,
+    pub neural_thinking: String,
+    pub neural_answer: String,
     pub generated_tokens: Vec<String>,
     pub mean_token_confidence: f32,
+    pub known_prompt_tokens: usize,
+    pub total_prompt_tokens: usize,
     pub active_spoke_weights: Vec<(String, f32)>,
     pub dominant_logic_gates: Vec<(String, String, f32)>,
 }
@@ -427,7 +431,8 @@ impl NeuralSpiderWebMlu {
 
         let mut all_k: Vec<Vec<f32>> = Vec::with_capacity(len);
         let mut all_v: Vec<Vec<f32>> = Vec::with_capacity(len);
-        let mut liquid_state = vec![0.0f32; D_MODEL];
+        let mut fast_liquid = vec![0.0f32; D_MODEL];
+        let mut slow_liquid = vec![0.0f32; D_MODEL];
 
         for t in 0..len {
             let tok_id = seq[t];
@@ -437,12 +442,14 @@ impl NeuralSpiderWebMlu {
             let pos_off = pos_idx * D_MODEL;
             let prev1_off = if t >= 1 { Some(seq[t - 1] * D_MODEL) } else { None };
             for d in 0..D_MODEL {
-                let mut inp = self.token_emb.w[emb_off + d] + self.pos_emb.w[pos_off + d];
+                let e_cur = self.token_emb.w[emb_off + d];
+                let mut fast_inp = e_cur;
                 if let Some(p1) = prev1_off {
-                    inp += 0.50 * self.token_emb.w[p1 + d];
+                    fast_inp += 0.50 * self.token_emb.w[p1 + d];
                 }
-                liquid_state[d] = 0.78 * liquid_state[d] + inp;
-                x0[d] = liquid_state[d];
+                fast_liquid[d] = 0.75 * fast_liquid[d] + fast_inp;
+                slow_liquid[d] = 0.96 * slow_liquid[d] + 0.35 * e_cur;
+                x0[d] = fast_liquid[d] + slow_liquid[d] + self.pos_emb.w[pos_off + d];
             }
 
             let q = matvec(&self.w_q.w, D_MODEL, D_MODEL, &x0, None);
@@ -584,7 +591,18 @@ impl NeuralSpiderWebMlu {
         let caches = self.forward_sequence(&seq[..len]);
         let v_size = self.id_to_vocab.len();
         let scale_qk = 1.0 / (D_MODEL as f32).sqrt();
-        let inv_steps = 1.0 / ((len - 1) as f32);
+        let qmark_id = self.vocab_to_id.get("?").copied();
+        let qmark_pos = qmark_id.and_then(|qid| seq[..len].iter().position(|&id| id == qid));
+
+        let mut weight_sum = 0.0f32;
+        for t in 0..(len - 1) {
+            let w_t = match qmark_pos {
+                Some(qp) if t < qp => 0.20,
+                _ => 1.0,
+            };
+            weight_sum += w_t;
+        }
+        let inv_steps = 1.0 / weight_sum.max(1.0);
 
         let mut total_loss = 0.0f32;
         let mut d_all_k = vec![vec![0.0f32; D_MODEL]; len];
@@ -593,19 +611,24 @@ impl NeuralSpiderWebMlu {
         let mut d_q_list = vec![vec![0.0f32; D_MODEL]; len];
 
         for t in 0..(len - 1) {
+            let w_t = match qmark_pos {
+                Some(qp) if t < qp => 0.20,
+                _ => 1.0,
+            };
+            let step_scale = w_t * inv_steps;
             let target_id = seq[t + 1];
             let cache = &caches[t];
             let p_target = cache.probs[target_id].max(1e-12);
-            total_loss += -p_target.ln();
+            total_loss += -p_target.ln() * w_t;
 
-            // 1. dL / d_logits = (probs - one_hot(target)) * inv_steps
+            // 1. dL / d_logits = (probs - one_hot(target)) * step_scale
             let mut d_o = vec![0.0f32; D_MODEL];
             for v in 0..v_size {
                 let mut dl = cache.probs[v];
                 if v == target_id {
                     dl -= 1.0;
                 }
-                dl *= inv_steps;
+                dl *= step_scale;
                 if dl.abs() < 1e-9 {
                     continue;
                 }
@@ -770,7 +793,8 @@ impl NeuralSpiderWebMlu {
         }
 
         // Accumulate Q, K, V gradients into W_Q, W_K, W_V and backpropagate through time (BPTT) into token_emb / pos_emb
-        let mut d_liquid_next = vec![0.0f32; D_MODEL];
+        let mut d_fast_next = vec![0.0f32; D_MODEL];
+        let mut d_slow_next = vec![0.0f32; D_MODEL];
         for t in (0..len).rev() {
             let cache = &caches[t];
             let mut d_x0 = d_x0_list[t].clone();
@@ -790,19 +814,19 @@ impl NeuralSpiderWebMlu {
                 }
             }
 
-            for d in 0..D_MODEL {
-                d_x0[d] += d_liquid_next[d];
-                d_liquid_next[d] = 0.78 * d_x0[d];
-            }
-
             let emb_off = cache.tok_id * D_MODEL;
             let pos_off = cache.pos_idx * D_MODEL;
             let prev1_off = if t >= 1 { Some(seq[t - 1] * D_MODEL) } else { None };
             for d in 0..D_MODEL {
-                self.token_emb.grad[emb_off + d] += d_x0[d];
+                let d_fast = d_x0[d] + d_fast_next[d];
+                let d_slow = d_x0[d] + d_slow_next[d];
+                d_fast_next[d] = 0.75 * d_fast;
+                d_slow_next[d] = 0.96 * d_slow;
+
                 self.pos_emb.grad[pos_off + d] += d_x0[d];
+                self.token_emb.grad[emb_off + d] += d_fast + 0.35 * d_slow;
                 if let Some(p1) = prev1_off {
-                    self.token_emb.grad[p1 + d] += 0.50 * d_x0[d];
+                    self.token_emb.grad[p1 + d] += 0.50 * d_fast;
                 }
             }
         }
@@ -919,13 +943,21 @@ impl NeuralSpiderWebMlu {
         let pad_id = *self.vocab_to_id.get("<pad>").unwrap_or(&0);
 
         let mut seq: Vec<usize> = vec![bos_id];
+        let mut known_prompt_tokens = 0usize;
+        let mut total_prompt_tokens = 0usize;
         for tok in &prompt_toks {
+            if tok != "?" && tok != "." {
+                total_prompt_tokens += 1;
+                if self.vocab_to_id.contains_key(tok) {
+                    known_prompt_tokens += 1;
+                }
+            }
             if let Some(&id) = self.vocab_to_id.get(tok) {
                 seq.push(id);
             }
         }
 
-        let limit = max_new_tokens.clamp(1, 32);
+        let limit = max_new_tokens.clamp(1, 48);
         let mut generated_tokens: Vec<String> = Vec::new();
         let mut conf_sum = 0.0f32;
         let mut route_accum = [0.0f32; NUM_LOGIC_CELLS];
@@ -992,6 +1024,41 @@ impl NeuralSpiderWebMlu {
             first.make_ascii_uppercase();
         }
 
+        let format_span = |slice: &[String]| -> String {
+            let mut s = String::new();
+            for tok in slice {
+                if tok == "." || tok == "?" {
+                    s.push_str(tok);
+                } else {
+                    if !s.is_empty() {
+                        s.push(' ');
+                    }
+                    s.push_str(tok);
+                }
+            }
+            if !s.is_empty() && !s.ends_with('.') && !s.ends_with('?') {
+                s.push('.');
+            }
+            if let Some(f) = s.get_mut(0..1) {
+                f.make_ascii_uppercase();
+            }
+            s
+        };
+
+        let ans_pos = generated_tokens.iter().position(|t| t == "answer");
+        let think_pos = generated_tokens.iter().position(|t| t == "think");
+        let (neural_thinking, neural_answer) = match (think_pos, ans_pos) {
+            (Some(tp), Some(ap)) if tp < ap => (
+                format_span(&generated_tokens[(tp + 1)..ap]),
+                format_span(&generated_tokens[(ap + 1)..]),
+            ),
+            (None, Some(ap)) if ap > 0 => (
+                format_span(&generated_tokens[..ap]),
+                format_span(&generated_tokens[(ap + 1)..]),
+            ),
+            _ => (String::new(), out_str.clone()),
+        };
+
         let mut active_spoke_weights = Vec::with_capacity(NUM_LOGIC_CELLS);
         let denom = (steps_done.max(1)) as f32;
         for k in 0..NUM_LOGIC_CELLS {
@@ -1027,8 +1094,12 @@ impl NeuralSpiderWebMlu {
         NeuralGenerationDto {
             prompt: prompt.to_string(),
             generated_text: out_str,
+            neural_thinking,
+            neural_answer,
             generated_tokens,
             mean_token_confidence: mean_conf,
+            known_prompt_tokens,
+            total_prompt_tokens,
             active_spoke_weights,
             dominant_logic_gates,
         }

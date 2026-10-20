@@ -812,6 +812,15 @@ def test_spiderweb_mlm_phase50_to_52_true_differentiable_neural_mlu_backprop(tmp
         mlm2 = SpiderWebMLM(mem2, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
         gen_restored = mlm2.generate_neural_mlu("how to achieve wisdom?", max_new_tokens=8)
         assert "wisdom" in gen_restored["generated_text"].lower()
+
+        # Verify full English + Chain-of-Thought Thinking Curriculum training & chat_turn_360 integration
+        cur_rep = mlm2.train_neural_curriculum(epochs=55, learning_rate=0.04, persist=False)
+        assert cur_rep["final_perplexity"] < 1.25
+        chat_hello = mlm2.chat_turn_360("hello how are you?", persist=False)
+        assert chat_hello["status"] == "VERIFIED"
+        assert "greeting" in chat_hello["neural_thinking"].lower()
+        assert "hello" in chat_hello["neural_answer"].lower()
+        assert "[NEURAL-THINK]" in chat_hello["trace"]
         mlm2.close()
 
 

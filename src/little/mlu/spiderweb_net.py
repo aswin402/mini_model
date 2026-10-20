@@ -1762,13 +1762,39 @@ class SpiderWebMLM:
     def generate_neural_mlu(
         self,
         prompt: str,
-        max_new_tokens: int = 12,
+        max_new_tokens: int = 28,
     ) -> dict[str, Any]:
         """Phase 51: Autoregressively generate response tokens purely from Neural Spider-Web MLU hidden states."""
         return self.neural_mlu.generate(prompt, max_new_tokens=max_new_tokens)
 
+    def train_neural_curriculum(
+        self,
+        epochs: int = 55,
+        learning_rate: float = 0.04,
+        persist: bool = True,
+    ) -> dict[str, Any]:
+        """Phase 52: Train the Differentiable 360° Neural Spider-Web MLU on the English + Chain-of-Thought Thinking Curriculum."""
+        from pathlib import Path
+
+        from little.core.runtime_paths import RuntimePaths
+
+        candidates = [
+            RuntimePaths.default().database.parent
+            / "knowledge"
+            / "neural_curriculum"
+            / "english_thinking_curriculum.txt",
+            Path("data/knowledge/neural_curriculum/english_thinking_curriculum.txt"),
+        ]
+        cpath = next((p for p in candidates if p.is_file()), None)
+        if cpath is None:
+            return {"epochs": 0, "sequences_trained": 0}
+        text = cpath.read_text(encoding="utf-8", errors="ignore")
+        return self.train_neural_mlu(
+            text, epochs=epochs, learning_rate=learning_rate, persist=persist
+        )
+
     def chat_turn_360(self, user_input: str, persist: bool = True) -> dict[str, Any]:
-        """Phase 34: Execute a unified 360° conversational turn (learning + deliberation or inquiry wave)."""
+        """Phase 34 & 52: Execute a unified 360° conversational turn combining Differentiable Neural Thinking + 360° Spider-Web Arena."""
         clean_in = user_input.strip()
         if not clean_in:
             return {
@@ -1799,13 +1825,43 @@ class SpiderWebMLM:
         is_question = clean_in.endswith("?") or has_leading_op or not has_interior_op
         if is_question:
             q_res = self.query_360(clean_in)
+            neural_gen = self.generate_neural_mlu(clean_in, max_new_tokens=30)
+            total_ptoks = int(neural_gen.get("total_prompt_tokens", 0))
+            known_ptoks = int(neural_gen.get("known_prompt_tokens", 0))
+            n_conf = float(neural_gen.get("mean_token_confidence", 0.0))
+            n_think = str(neural_gen.get("neural_thinking", "")).strip()
+            n_ans = str(neural_gen.get("neural_answer", "")).strip()
+            neural_grounded = bool(
+                total_ptoks > 0
+                and known_ptoks == total_ptoks
+                and n_conf >= 0.85
+                and n_ans
+            )
+
+            status = q_res.status
+            reply = q_res.fluent_english or q_res.answer
+            trace = q_res.inspectable_trace
+            conf = q_res.confidence
+
+            if neural_grounded:
+                if n_think:
+                    trace = f"{trace} | [NEURAL-THINK] {n_think}"
+                if status == "UNKNOWN":
+                    status = "VERIFIED"
+                    reply = f"{n_ans} ( Thought: {n_think} )" if n_think else n_ans
+                    conf = n_conf
+                elif n_think and "Thought:" not in reply:
+                    reply = f"{reply} [Neural Thought: {n_think}]"
+
             return {
                 "mode": "INQUIRY",
-                "status": q_res.status,
+                "status": status,
                 "focal_concept": q_res.focal_concept,
-                "reply": q_res.fluent_english or q_res.answer,
-                "trace": q_res.inspectable_trace,
-                "confidence": q_res.confidence,
+                "reply": reply,
+                "neural_thinking": n_think if neural_grounded else "",
+                "neural_answer": n_ans if neural_grounded else "",
+                "trace": trace,
+                "confidence": conf,
             }
 
         rep = self.train_on_text(clean_in, persist=persist)
@@ -2395,8 +2451,9 @@ class SpiderWebMLM:
         include_ebooks: bool = True,
         include_hf_datasets: bool = False,
         hf_max_rows_per_file: int = 35,
+        include_neural_thinking: bool = True,
     ) -> dict[str, Any]:
-        """Phase 12, 44 & 48: Pre-train the 360° Spider-Web MLM on world_corpus, JSON ontologies, ebooks/PDFs/CSVs, and HuggingFace JSONL datasets."""
+        """Phase 12, 44, 48 & 52: Pre-train the 360° Spider-Web MLM & Differentiable Neural MLU on world_corpus, ontologies, ebooks, HF datasets, and Neural Thinking curriculum."""
         from pathlib import Path
 
         from little.core.runtime_paths import RuntimePaths
@@ -2444,7 +2501,11 @@ class SpiderWebMLM:
                         rep["sentences_processed"] += jl_rep["rows_processed"]
                         rep["relations_verified"] += jl_rep["relations_verified"]
                         rep["relations_refuted"] += jl_rep["relations_refuted"]
-            if has_extra:
+            if include_neural_thinking:
+                rep["neural_thinking_training"] = self.train_neural_curriculum(
+                    epochs=55, learning_rate=0.04, persist=False
+                )
+            if has_extra or include_neural_thinking:
                 rep["consolidation"] = self.consolidate()
                 rep["telemetry"] = self.get_telemetry()
             return rep

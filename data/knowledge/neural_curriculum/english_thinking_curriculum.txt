@@ -1,0 +1,27 @@
+hello how are you? think greeting from user requires a warm polite conversational reply answer hello i am doing well and ready to think and chat with you.
+who are you? think user asks about my identity and neural architecture answer i am a 360 degree spider web neural mlu model with differentiable logic gates and liquid attention.
+thank you for your help? think user expresses gratitude in conversation answer you are very welcome i am always happy to reason and help you.
+can you help me think? think user wants step by step logical deliberation and problem solving answer yes i can analyze causes categories contradictions and goals step by step with you.
+is a tiger a mammal? think a tiger is a feline vertebrate with warm blood that nurses its young answer yes a tiger is a warm blooded mammal that hunts prey.
+is an eagle a bird? think an eagle has feathers wings and talons and lays eggs answer yes an eagle is a bird of prey that can soar high in the sky.
+is a whale a mammal? think a whale lives in the ocean but breathes air and has warm blood answer yes a whale is a marine mammal and not a fish.
+is a cobra a reptile? think a cobra is a cold blooded scaly snake that lays eggs answer yes a cobra is a venomous reptile.
+is an oak a plant? think an oak is a tree with roots bark and leaves that uses photosynthesis answer yes an oak is a woody plant that grows from an acorn.
+is a tiger a vehicle? think a tiger is a living biological animal whereas a vehicle is a mechanical machine answer no a tiger is a living animal and not a vehicle.
+is a diamond a living thing? think a diamond is a crystalline carbon mineral without cells or metabolism answer no a diamond is a nonliving mineral and not a living thing.
+is an orca a reptile? think an orca is a warm blooded cetacean mammal whereas reptiles are cold blooded answer no an orca is a marine mammal and not a reptile.
+can a penguin fly? think a penguin is a bird with flippers adapted for swimming in cold water instead of flight answer no a penguin cannot fly in the air but it swims expertly in the ocean.
+what causes rain? think sunlight heats water into vapor which rises cools and condenses into clouds answer sunlight causes evaporation and clouds which condense and cause rain.
+what happens in a drought? think lack of rainfall dries the soil and deprives crops of water answer a drought causes soil dryness crop failure and water scarcity.
+why does ice melt? think heat energy raises the temperature of frozen water above its melting point answer thermal heat energy causes solid ice to melt into liquid water.
+how do plants make food? think leaves absorb sunlight water and carbon dioxide for photosynthesis answer plants use sunlight water and carbon dioxide to produce glucose and oxygen.
+what causes thunder? think lightning superheats the air creating a rapid acoustic shockwave answer lightning rapidly heats the air and causes the sound wave of thunder.
+what explains fever and inflammation? think immune response to pathogens raises body temperature and swells tissue answer an infection causes both fever and inflammation in the body.
+what explains dizziness and fatigue? think low fluid volume reduces blood pressure and cellular energy answer dehydration explains both dizziness and fatigue.
+what explains a power outage and blown fuse? think excess electrical current trips the protective fuse and cuts power answer a short circuit explains both a blown fuse and a power outage.
+what explains rust on iron? think iron reacts with oxygen and moisture in the air over time answer oxidation from water and oxygen causes rust on iron.
+how to achieve wisdom? think curiosity drives study and experience which build deep understanding answer curiosity and study lead to knowledge reflection and wisdom.
+how to achieve happiness? think empathy builds trust and deep friendships that nurture wellbeing answer practicing empathy and gratitude builds trust friendship and lasting happiness.
+how to build trust? think honesty and consistent actions prove reliability over time answer honest communication and keeping promises build strong trust.
+how to master a skill? think focused practice and feedback correct mistakes and strengthen neural pathways answer deliberate practice patience and learning from feedback lead to mastery.
+how to solve a hard problem? think breaking a complex problem into smaller parts reveals the root cause answer decompose the problem test hypotheses and verify each logical step.

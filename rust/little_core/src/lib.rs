@@ -1518,8 +1518,12 @@ pub unsafe extern "C" fn little_core_neural_mlu_generate(
     let empty = neural_mlu::NeuralGenerationDto {
         prompt: String::new(),
         generated_text: String::new(),
+        neural_thinking: String::new(),
+        neural_answer: String::new(),
         generated_tokens: Vec::new(),
         mean_token_confidence: 0.0,
+        known_prompt_tokens: 0,
+        total_prompt_tokens: 0,
         active_spoke_weights: Vec::new(),
         dominant_logic_gates: Vec::new(),
     };

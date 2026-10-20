@@ -999,19 +999,23 @@ def cmd_mlu(args: argparse.Namespace) -> None:
             )
             print(json.dumps(essay_dict, indent=2))
         elif action == "neural-train":
-            text = " ".join(args.text)
-            rep_dict = kernel.mlm.train_neural_mlu(
-                text,
-                epochs=int(getattr(args, "epochs", 35)),
-                learning_rate=float(getattr(args, "lr", 0.035)),
-                persist=True,
-            )
+            text = " ".join(getattr(args, "text", []) or []).strip()
+            epochs = int(getattr(args, "epochs", 60))
+            lr = float(getattr(args, "lr", 0.04))
+            if not text or bool(getattr(args, "curriculum", False)):
+                rep_dict = kernel.mlm.train_neural_curriculum(
+                    epochs=epochs, learning_rate=lr, persist=True
+                )
+            else:
+                rep_dict = kernel.mlm.train_neural_mlu(
+                    text, epochs=epochs, learning_rate=lr, persist=True
+                )
             print(json.dumps(rep_dict, indent=2))
         elif action == "neural-ask":
             prompt = " ".join(args.prompt)
             gen_dict = kernel.mlm.generate_neural_mlu(
                 prompt,
-                max_new_tokens=int(getattr(args, "max_tokens", 12)),
+                max_new_tokens=int(getattr(args, "max_tokens", 30)),
             )
             print(json.dumps(gen_dict, indent=2))
         elif action == "chat":
@@ -1021,6 +1025,8 @@ def cmd_mlu(args: argparse.Namespace) -> None:
             inline_prompt = " ".join(getattr(args, "prompt", []) or []).strip()
             if inline_prompt:
                 turn = kernel.mlm.chat_turn_360(inline_prompt, persist=True)
+                if turn.get("neural_thinking"):
+                    print(f"🧠 [Neural Thought]: {turn['neural_thinking']}")
                 print(f"MLU [{turn['mode']} / {turn.get('status', 'OK')}]: {turn['reply']}")
                 print(f"  ↳ {turn['trace']}")
                 return
@@ -1034,6 +1040,8 @@ def cmd_mlu(args: argparse.Namespace) -> None:
                 if not user_in or user_in.lower() in ("exit", "quit"):
                     break
                 turn = kernel.mlm.chat_turn_360(user_in, persist=True)
+                if turn.get("neural_thinking"):
+                    print(f"🧠 [Neural Thought]: {turn['neural_thinking']}")
                 print(f"MLU [{turn['mode']} / {turn.get('status', 'OK')}]: {turn['reply']}")
                 print(f"  ↳ {turn['trace']}\n")
         else:
@@ -1512,12 +1520,17 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[db_parent],
         help="Train the True Differentiable 360° Spider-Web Neural MLU via Backpropagation + AdamW",
     )
-    p_mlu_neural_train.add_argument("text", nargs="+", help="Training corpus text or Q&A pairs")
     p_mlu_neural_train.add_argument(
-        "--epochs", type=int, default=35, help="Backpropagation epochs (default: 35)"
+        "text", nargs="*", help="Training corpus text or Q&A pairs (omit to train built-in English+Thinking curriculum)"
     )
     p_mlu_neural_train.add_argument(
-        "--lr", type=float, default=0.035, help="AdamW learning rate (default: 0.035)"
+        "--curriculum", action="store_true", help="Train on the built-in English + Chain-of-Thought Thinking curriculum"
+    )
+    p_mlu_neural_train.add_argument(
+        "--epochs", type=int, default=60, help="Backpropagation epochs (default: 60)"
+    )
+    p_mlu_neural_train.add_argument(
+        "--lr", type=float, default=0.04, help="AdamW learning rate (default: 0.04)"
     )
     p_mlu_neural_train.set_defaults(func=cmd_mlu)
     p_mlu_neural_ask = p_mlu_subs.add_parser(
@@ -1527,7 +1540,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_mlu_neural_ask.add_argument("prompt", nargs="+", help="Prompt or question")
     p_mlu_neural_ask.add_argument(
-        "--max-tokens", type=int, default=12, help="Maximum tokens to generate (default: 12)"
+        "--max-tokens", type=int, default=30, help="Maximum tokens to generate (default: 30)"
     )
     p_mlu_neural_ask.set_defaults(func=cmd_mlu)
     p_mlu_chat = p_mlu_subs.add_parser(
