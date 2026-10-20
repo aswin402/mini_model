@@ -422,12 +422,97 @@ impl NeuralSpiderWebMlu {
         sentences
     }
 
+    /// Resolve a token via exact vocabulary lookup or continuous character n-gram / subword similarity.
+    pub fn resolve_subword_token_id(&self, tok: &str) -> Option<usize> {
+        if let Some(&id) = self.vocab_to_id.get(tok) {
+            return Some(id);
+        }
+        if tok.is_empty() {
+            return None;
+        }
+        let collapse_runs = |s: &str| -> String {
+            let mut out = String::new();
+            let mut prev = '\0';
+            for ch in s.chars() {
+                if ch != prev {
+                    out.push(ch);
+                    prev = ch;
+                }
+            }
+            out
+        };
+        let tok_collapsed = collapse_runs(tok);
+        for (v_word, &vid) in &self.vocab_to_id {
+            if v_word.starts_with('<') || v_word == "." || v_word == "?" {
+                continue;
+            }
+            if collapse_runs(v_word) == tok_collapsed {
+                return Some(vid);
+            }
+        }
+        let char_ngrams = |s: &str| -> Vec<String> {
+            let padded = format!("^{}$", s);
+            let chars: Vec<char> = padded.chars().collect();
+            let mut grams = Vec::new();
+            for w in 2..=3 {
+                if chars.len() >= w {
+                    for i in 0..=(chars.len() - w) {
+                        grams.push(chars[i..(i + w)].iter().collect::<String>());
+                    }
+                }
+            }
+            grams
+        };
+        let g_tok = char_ngrams(&tok_collapsed);
+        if g_tok.is_empty() {
+            return None;
+        }
+        let mut best_id = None;
+        let mut best_sim = 0.64f32;
+        for (v_word, &vid) in &self.vocab_to_id {
+            if v_word.len() < 2 || v_word.starts_with('<') {
+                continue;
+            }
+            let g_voc = char_ngrams(&collapse_runs(v_word));
+            if g_voc.is_empty() {
+                continue;
+            }
+            let mut inter = 0usize;
+            for g in &g_tok {
+                if g_voc.contains(g) {
+                    inter += 1;
+                }
+            }
+            let sim = (2.0 * (inter as f32)) / ((g_tok.len() + g_voc.len()) as f32);
+            if sim > best_sim {
+                best_sim = sim;
+                best_id = Some(vid);
+            }
+        }
+        best_id
+    }
+
     /// Forward pass over a sequence of token IDs `seq`, returning cached activations for backprop.
     fn forward_sequence(&self, seq: &[usize]) -> Vec<StepCache> {
         let len = seq.len().min(MAX_SEQ_LEN);
         let v_size = self.id_to_vocab.len();
         let mut caches: Vec<StepCache> = Vec::with_capacity(len);
         let scale_qk = 1.0 / (D_MODEL as f32).sqrt();
+
+        let qmark_id = self.vocab_to_id.get("?").copied();
+        let qmark_pos = qmark_id.and_then(|qid| seq[..len].iter().position(|&id| id == qid));
+        let mut c_prompt = vec![0.0f32; D_MODEL];
+        if let Some(qp) = qmark_pos {
+            if qp > 1 {
+                let inv_p = 1.0 / ((qp - 1) as f32);
+                for j in 1..qp {
+                    let off = seq[j] * D_MODEL;
+                    for d in 0..D_MODEL {
+                        c_prompt[d] += self.token_emb.w[off + d] * inv_p;
+                    }
+                }
+            }
+        }
 
         let mut all_k: Vec<Vec<f32>> = Vec::with_capacity(len);
         let mut all_v: Vec<Vec<f32>> = Vec::with_capacity(len);
@@ -436,11 +521,16 @@ impl NeuralSpiderWebMlu {
 
         for t in 0..len {
             let tok_id = seq[t];
-            let pos_idx = t;
+            let pos_idx = match qmark_pos {
+                Some(qp) if t < qp => t.min(15),
+                Some(qp) => (16 + (t - qp)).min(MAX_SEQ_LEN - 1),
+                None => t,
+            };
             let mut x0 = vec![0.0f32; D_MODEL];
             let emb_off = tok_id * D_MODEL;
             let pos_off = pos_idx * D_MODEL;
             let prev1_off = if t >= 1 { Some(seq[t - 1] * D_MODEL) } else { None };
+            let in_response = qmark_pos.map_or(false, |qp| t >= qp);
             for d in 0..D_MODEL {
                 let e_cur = self.token_emb.w[emb_off + d];
                 let mut fast_inp = e_cur;
@@ -449,7 +539,8 @@ impl NeuralSpiderWebMlu {
                 }
                 fast_liquid[d] = 0.75 * fast_liquid[d] + fast_inp;
                 slow_liquid[d] = 0.96 * slow_liquid[d] + 0.35 * e_cur;
-                x0[d] = fast_liquid[d] + slow_liquid[d] + self.pos_emb.w[pos_off + d];
+                let ctx_bonus = if in_response { 0.90 * c_prompt[d] } else { 0.0 };
+                x0[d] = fast_liquid[d] + slow_liquid[d] + ctx_bonus + self.pos_emb.w[pos_off + d];
             }
 
             let q = matvec(&self.w_q.w, D_MODEL, D_MODEL, &x0, None);
@@ -795,6 +886,7 @@ impl NeuralSpiderWebMlu {
         // Accumulate Q, K, V gradients into W_Q, W_K, W_V and backpropagate through time (BPTT) into token_emb / pos_emb
         let mut d_fast_next = vec![0.0f32; D_MODEL];
         let mut d_slow_next = vec![0.0f32; D_MODEL];
+        let mut d_c_prompt = vec![0.0f32; D_MODEL];
         for t in (0..len).rev() {
             let cache = &caches[t];
             let mut d_x0 = d_x0_list[t].clone();
@@ -817,16 +909,31 @@ impl NeuralSpiderWebMlu {
             let emb_off = cache.tok_id * D_MODEL;
             let pos_off = cache.pos_idx * D_MODEL;
             let prev1_off = if t >= 1 { Some(seq[t - 1] * D_MODEL) } else { None };
+            let in_response = qmark_pos.map_or(false, |qp| t >= qp);
             for d in 0..D_MODEL {
                 let d_fast = d_x0[d] + d_fast_next[d];
                 let d_slow = d_x0[d] + d_slow_next[d];
                 d_fast_next[d] = 0.75 * d_fast;
                 d_slow_next[d] = 0.96 * d_slow;
+                if in_response {
+                    d_c_prompt[d] += 0.90 * d_x0[d];
+                }
 
                 self.pos_emb.grad[pos_off + d] += d_x0[d];
                 self.token_emb.grad[emb_off + d] += d_fast + 0.35 * d_slow;
                 if let Some(p1) = prev1_off {
                     self.token_emb.grad[p1 + d] += 0.50 * d_fast;
+                }
+            }
+        }
+        if let Some(qp) = qmark_pos {
+            if qp > 1 {
+                let inv_p = 1.0 / ((qp - 1) as f32);
+                for j in 1..qp {
+                    let off = seq[j] * D_MODEL;
+                    for d in 0..D_MODEL {
+                        self.token_emb.grad[off + d] += d_c_prompt[d] * inv_p;
+                    }
                 }
             }
         }
@@ -948,12 +1055,17 @@ impl NeuralSpiderWebMlu {
         for tok in &prompt_toks {
             if tok != "?" && tok != "." {
                 total_prompt_tokens += 1;
-                if self.vocab_to_id.contains_key(tok) {
+                if let Some(id) = self.resolve_subword_token_id(tok) {
                     known_prompt_tokens += 1;
+                    seq.push(id);
                 }
-            }
-            if let Some(&id) = self.vocab_to_id.get(tok) {
+            } else if let Some(&id) = self.vocab_to_id.get(tok) {
                 seq.push(id);
+            }
+        }
+        if let Some(&qid) = self.vocab_to_id.get("?") {
+            if seq.len() > 1 && seq.last() != Some(&qid) {
+                seq.push(qid);
             }
         }
 

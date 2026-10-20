@@ -1823,21 +1823,21 @@ class SpiderWebMLM:
         )
 
         is_question = clean_in.endswith("?") or has_leading_op or not has_interior_op
-        if is_question:
-            q_res = self.query_360(clean_in)
-            neural_gen = self.generate_neural_mlu(clean_in, max_new_tokens=30)
-            total_ptoks = int(neural_gen.get("total_prompt_tokens", 0))
-            known_ptoks = int(neural_gen.get("known_prompt_tokens", 0))
-            n_conf = float(neural_gen.get("mean_token_confidence", 0.0))
-            n_think = str(neural_gen.get("neural_thinking", "")).strip()
-            n_ans = str(neural_gen.get("neural_answer", "")).strip()
-            neural_grounded = bool(
-                total_ptoks > 0
-                and known_ptoks == total_ptoks
-                and n_conf >= 0.85
-                and n_ans
-            )
+        neural_gen = self.generate_neural_mlu(clean_in, max_new_tokens=42)
+        total_ptoks = int(neural_gen.get("total_prompt_tokens", 0))
+        known_ptoks = int(neural_gen.get("known_prompt_tokens", 0))
+        n_conf = float(neural_gen.get("mean_token_confidence", 0.0))
+        n_think = str(neural_gen.get("neural_thinking", "")).strip()
+        n_ans = str(neural_gen.get("neural_answer", "")).strip()
+        neural_grounded = bool(
+            total_ptoks > 0
+            and known_ptoks == total_ptoks
+            and n_conf >= 0.85
+            and n_ans
+        )
 
+        if is_question or (neural_grounded and not clean_in.endswith(".")):
+            q_res = self.query_360(clean_in)
             status = q_res.status
             reply = q_res.fluent_english or q_res.answer
             trace = q_res.inspectable_trace
@@ -1846,9 +1846,9 @@ class SpiderWebMLM:
             if neural_grounded:
                 if n_think:
                     trace = f"{trace} | [NEURAL-THINK] {n_think}"
-                if status == "UNKNOWN":
+                if status == "UNKNOWN" or not is_question:
                     status = "VERIFIED"
-                    reply = f"{n_ans} ( Thought: {n_think} )" if n_think else n_ans
+                    reply = n_ans
                     conf = n_conf
                 elif n_think and "Thought:" not in reply:
                     reply = f"{reply} [Neural Thought: {n_think}]"

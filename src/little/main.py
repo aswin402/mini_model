@@ -1022,6 +1022,10 @@ def cmd_mlu(args: argparse.Namespace) -> None:
             if len(kernel.mlm.nodes) <= 7:
                 print("🌍 Initializing 360° Spider-Web MLU curriculum on fresh database...")
                 kernel.mlm.bootstrap_curriculum(epochs=1)
+            probe = kernel.mlm.generate_neural_mlu("hello who are you?", max_new_tokens=4)
+            if int(probe.get("known_prompt_tokens", 0)) < int(probe.get("total_prompt_tokens", 1)):
+                print("🧠 Training Differentiable 360° Neural MLU on English + Thinking curriculum...")
+                kernel.mlm.train_neural_curriculum(epochs=60, learning_rate=0.04, persist=True)
             inline_prompt = " ".join(getattr(args, "prompt", []) or []).strip()
             if inline_prompt:
                 turn = kernel.mlm.chat_turn_360(inline_prompt, persist=True)
