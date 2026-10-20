@@ -612,10 +612,14 @@ class SpiderWebMLM:
             extracted: list[tuple[str, str, str]] = []
             i0 = op_spans[0][0]
             subj_concept, subj_sal = self._extract_salient_concept(tokens[:i0])
-            # Phase 29: Liquid Coreference Binding for low-information anaphoric subjects
+            # Phase 29: Liquid Coreference Binding for single-token low-information anaphoric subjects (e.g. "It")
             if (
                 not subj_concept
-                or (subj_sal < 2.25 and subj_concept.upper() not in self.nodes)
+                or (
+                    i0 == 1
+                    and subj_sal < 2.25
+                    and subj_concept.upper() not in self.nodes
+                )
             ) and active_subject_fallback:
                 subj_concept = active_subject_fallback.lower()
 
@@ -663,7 +667,8 @@ class SpiderWebMLM:
         if len(salient) >= 3:
             subj_tok = salient[0][1]
             if (
-                self._token_salience(subj_tok) < 2.25
+                salient[0][0] == 0
+                and self._token_salience(subj_tok) < 2.25
                 and subj_tok.upper() not in self.nodes
                 and active_subject_fallback
             ):

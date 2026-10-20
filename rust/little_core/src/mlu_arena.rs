@@ -814,7 +814,7 @@ impl SpiderWebArena {
                     } else {
                         active_discourse_focus = Some(tokens[first_idx].clone());
                     }
-                } else if first_idx >= 2 {
+                } else if first_idx >= 2 && anchor_indices.len() == 1 {
                     if let Some(ref focus) = active_discourse_focus {
                         let target_tok = &tokens[first_idx];
                         if focus != target_tok {
@@ -833,6 +833,8 @@ impl SpiderWebArena {
                             spoke_updates += 1;
                         }
                     }
+                } else {
+                    active_discourse_focus = Some(tokens[first_idx].clone());
                 }
             }
 
@@ -863,20 +865,13 @@ impl SpiderWebArena {
                 if idx + 1 < anchor_indices.len() {
                     let next_tok_idx = anchor_indices[idx + 1];
                     let next_tok = &tokens[next_tok_idx];
-                    if next_tok != curr_tok {
-                        let intervening_pred = if next_tok_idx > tok_idx + 1 {
-                            tokens[tok_idx + 1..next_tok_idx].join("_")
-                        } else {
-                            "co_occurs_with".to_string()
-                        };
-                        let (passed, _gate) =
-                            self.verify_spoke_invariants(curr_tok, &intervening_pred, next_tok);
+                    if next_tok != curr_tok && next_tok_idx == tok_idx + 1 {
                         let s = self.learn_spoke_relation(
                             curr_tok,
-                            &intervening_pred,
+                            "co_occurs_with",
                             next_tok,
-                            learning_rate * 0.5,
-                            passed,
+                            learning_rate * 0.4,
+                            true,
                         );
                         total_surprise += s;
                         surprise_count += 1;
@@ -932,7 +927,7 @@ impl SpiderWebArena {
             let mut best_weight: f32 = 0.0;
 
             let check_ids = if focal_cell_id != 0 {
-                vec![focal_cell_id, 0usize]
+                vec![focal_cell_id]
             } else {
                 vec![0usize]
             };
@@ -1067,7 +1062,12 @@ impl SpiderWebArena {
         // Multi-hop confidence-guided beam expansion across the 360° Spider-Web
         let mut frontier: Vec<String> = all_preds
             .iter()
-            .filter(|p| p.verified && p.predicate != "disjoint_with" && p.nars_confidence >= 0.45)
+            .filter(|p| {
+                p.verified
+                    && p.predicate != "disjoint_with"
+                    && p.predicate != "co_occurs_with"
+                    && p.nars_confidence >= 0.45
+            })
             .map(|p| p.target_concept.clone())
             .collect();
 
@@ -1099,6 +1099,7 @@ impl SpiderWebArena {
                         if pp.target_concept == clean
                             || !pp.verified
                             || pp.predicate == "disjoint_with"
+                            || pp.predicate == "co_occurs_with"
                         {
                             continue;
                         }
@@ -1560,15 +1561,13 @@ impl SpiderWebArena {
                 if !compat_ab && gate_ab == "I_MUTEX" {
                     continue;
                 }
-
-                // Find the most specific shared positive target between A and B (lowest in-degree)
                 let targets_b: std::collections::HashMap<&str, &str> = edges_b
                     .iter()
                     .map(|(p, t, _)| (t.as_str(), p.as_str()))
                     .collect();
                 let Some((pred_shared_a, shared_target, _)) = edges_a
                     .iter()
-                    .filter(|(_, t, _)| targets_b.contains_key(t.as_str()))
+                    .filter(|(p, t, _)| p == "is_a" && targets_b.get(t.as_str()) == Some(&"is_a"))
                     .min_by_key(|(_, t, _)| *target_in_degree.get(t).unwrap_or(&999))
                 else {
                     continue;
@@ -1577,8 +1576,11 @@ impl SpiderWebArena {
                 let vec_a = self.get_anchor_array(idx_a as u32);
                 let vec_b = self.get_anchor_array(idx_b as u32);
                 let sim = dot_product(&vec_a, &vec_b).clamp(-1.0, 1.0);
-                let in_deg = (*target_in_degree.get(shared_target).unwrap_or(&2)).max(1) as f32;
-                let specificity_bonus = (1.0 / in_deg).clamp(0.05, 0.50);
+                let in_deg = (*target_in_degree.get(shared_target).unwrap_or(&2)).max(1);
+                if in_deg > 4 {
+                    continue;
+                }
+                let specificity_bonus = (1.0 / (in_deg as f32)).clamp(0.05, 0.50);
                 let same_pred_bonus = if targets_b.get(shared_target.as_str()) == Some(&pred_shared_a.as_str()) {
                     0.15
                 } else {
@@ -2220,7 +2222,7 @@ impl SpiderWebArena {
 
         let mut clusters: Vec<LatentClusterDto> = Vec::new();
         for ((attractor, predicate, spoke), members) in hub_to_members {
-            if members.len() < req_members {
+            if members.len() < req_members || members.len() > 8 {
                 continue;
             }
             // Compute centroid in 64-D space and mean cosine coherence
