@@ -998,6 +998,22 @@ def cmd_mlu(args: argparse.Namespace) -> None:
                 max_hops=int(getattr(args, "hops", 3)),
             )
             print(json.dumps(essay_dict, indent=2))
+        elif action == "neural-train":
+            text = " ".join(args.text)
+            rep_dict = kernel.mlm.train_neural_mlu(
+                text,
+                epochs=int(getattr(args, "epochs", 35)),
+                learning_rate=float(getattr(args, "lr", 0.035)),
+                persist=True,
+            )
+            print(json.dumps(rep_dict, indent=2))
+        elif action == "neural-ask":
+            prompt = " ".join(args.prompt)
+            gen_dict = kernel.mlm.generate_neural_mlu(
+                prompt,
+                max_new_tokens=int(getattr(args, "max_tokens", 12)),
+            )
+            print(json.dumps(gen_dict, indent=2))
         elif action == "chat":
             if len(kernel.mlm.nodes) <= 7:
                 print("🌍 Initializing 360° Spider-Web MLU curriculum on fresh database...")
@@ -1491,6 +1507,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run the head-to-head 360° Spider-Web MLU vs. Standard LLM / Transformer real-world scorecard",
     )
     p_mlu_vs_llm.set_defaults(func=cmd_mlu)
+    p_mlu_neural_train = p_mlu_subs.add_parser(
+        "neural-train",
+        parents=[db_parent],
+        help="Train the True Differentiable 360° Spider-Web Neural MLU via Backpropagation + AdamW",
+    )
+    p_mlu_neural_train.add_argument("text", nargs="+", help="Training corpus text or Q&A pairs")
+    p_mlu_neural_train.add_argument(
+        "--epochs", type=int, default=35, help="Backpropagation epochs (default: 35)"
+    )
+    p_mlu_neural_train.add_argument(
+        "--lr", type=float, default=0.035, help="AdamW learning rate (default: 0.035)"
+    )
+    p_mlu_neural_train.set_defaults(func=cmd_mlu)
+    p_mlu_neural_ask = p_mlu_subs.add_parser(
+        "neural-ask",
+        parents=[db_parent],
+        help="Autoregressively generate tokens from the True Differentiable Neural MLU",
+    )
+    p_mlu_neural_ask.add_argument("prompt", nargs="+", help="Prompt or question")
+    p_mlu_neural_ask.add_argument(
+        "--max-tokens", type=int, default=12, help="Maximum tokens to generate (default: 12)"
+    )
+    p_mlu_neural_ask.set_defaults(func=cmd_mlu)
     p_mlu_chat = p_mlu_subs.add_parser(
         "chat",
         parents=[db_parent],

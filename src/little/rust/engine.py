@@ -400,6 +400,42 @@ class RustAccelerationCore:
                 ]
                 lib.little_core_mlu_arena_compose_discourse_360.restype = ctypes.c_void_p
 
+            if hasattr(lib, "little_core_neural_mlu_create"):
+                lib.little_core_neural_mlu_create.argtypes = [ctypes.c_uint64]
+                lib.little_core_neural_mlu_create.restype = ctypes.c_void_p
+
+            if hasattr(lib, "little_core_neural_mlu_free"):
+                lib.little_core_neural_mlu_free.argtypes = [ctypes.c_void_p]
+                lib.little_core_neural_mlu_free.restype = None
+
+            if hasattr(lib, "little_core_neural_mlu_train"):
+                lib.little_core_neural_mlu_train.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_size_t,
+                    ctypes.c_float,
+                ]
+                lib.little_core_neural_mlu_train.restype = ctypes.c_void_p
+
+            if hasattr(lib, "little_core_neural_mlu_generate"):
+                lib.little_core_neural_mlu_generate.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_size_t,
+                ]
+                lib.little_core_neural_mlu_generate.restype = ctypes.c_void_p
+
+            if hasattr(lib, "little_core_neural_mlu_dump_json"):
+                lib.little_core_neural_mlu_dump_json.argtypes = [ctypes.c_void_p]
+                lib.little_core_neural_mlu_dump_json.restype = ctypes.c_void_p
+
+            if hasattr(lib, "little_core_neural_mlu_restore_json"):
+                lib.little_core_neural_mlu_restore_json.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                ]
+                lib.little_core_neural_mlu_restore_json.restype = ctypes.c_int
+
     # -------------------------------------------------------------------------
     # Public Accelerated Graph API
     # -------------------------------------------------------------------------
@@ -1442,6 +1478,132 @@ class RustMluArena:
     def close(self) -> None:
         if self._lib is not None and self._handle is not None:
             self._lib.little_core_mlu_arena_destroy(self._handle)
+            self._handle = None
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        self.close()
+
+
+class RustNeuralMlu:
+    """True End-to-End Differentiable 360° Spider-Web Neural MLU Engine (`NeuralSpiderWebMlu` in Rust).
+
+    Trains continuous Token + Positional Embeddings, Causal Liquid Time-Constant Self-Attention,
+    a 360° Softmax Spoke Router over 6 Differentiable Logic MLU Cells (with continuous AND, OR,
+    IMPLIES, XOR T-norm logic gates), and an Autoregressive Vocabulary Head via analytical
+    Backpropagation Through Time (BPTT) + AdamW in Rust.
+    """
+
+    def __init__(
+        self,
+        seed: int = 42,
+        core: RustAccelerationCore | None = None,
+    ) -> None:
+        self.core = core or RustAccelerationCore.get()
+        self._lib = self.core._lib
+        self._handle: Any = None
+        if self._lib is not None and hasattr(self._lib, "little_core_neural_mlu_create"):
+            self._handle = self._lib.little_core_neural_mlu_create(int(seed))
+
+    @property
+    def is_native(self) -> bool:
+        return self._handle is not None
+
+    def train(self, text: str, epochs: int = 30, learning_rate: float = 0.035) -> dict[str, Any]:
+        """Train the end-to-end differentiable Neural Spider-Web MLU via backpropagation + AdamW."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_neural_mlu_train")
+        ):
+            return {
+                "epochs": 0,
+                "sequences_trained": 0,
+                "tokens_trained": 0,
+                "vocab_size": 0,
+                "initial_loss": 0.0,
+                "final_loss": 0.0,
+                "initial_perplexity": 0.0,
+                "final_perplexity": 0.0,
+                "spoke_usage_distribution": [0.0] * 6,
+                "total_steps": 0,
+            }
+        ptr = self._lib.little_core_neural_mlu_train(
+            self._handle,
+            text.encode("utf-8"),
+            max(1, int(epochs)),
+            float(learning_rate),
+        )
+        if not ptr:
+            return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def generate(self, prompt: str, max_new_tokens: int = 12) -> dict[str, Any]:
+        """Autoregressively generate response tokens purely from neural hidden states."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_neural_mlu_generate")
+        ):
+            return {
+                "prompt": prompt,
+                "generated_text": "",
+                "generated_tokens": [],
+                "average_confidence": 0.0,
+                "dominant_spoke": "taxonomy",
+                "spoke_routing_probs": [0.0] * 6,
+                "logic_gate_profile": [],
+            }
+        ptr = self._lib.little_core_neural_mlu_generate(
+            self._handle,
+            prompt.encode("utf-8"),
+            max(1, int(max_new_tokens)),
+        )
+        if not ptr:
+            return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def dump_json(self) -> str:
+        """Serialize all neural weights and AdamW optimizer buffers to JSON."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_neural_mlu_dump_json")
+        ):
+            return "{}"
+        ptr = self._lib.little_core_neural_mlu_dump_json(self._handle)
+        if not ptr:
+            return "{}"
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return res_str
+
+    def restore_json(self, payload: str) -> bool:
+        """Restore all neural weights and AdamW optimizer buffers from JSON."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_neural_mlu_restore_json")
+        ):
+            return False
+        res = self._lib.little_core_neural_mlu_restore_json(
+            self._handle,
+            payload.encode("utf-8"),
+        )
+        return bool(res == 1)
+
+    def close(self) -> None:
+        if self._lib is not None and self._handle is not None:
+            self._lib.little_core_neural_mlu_free(self._handle)
             self._handle = None
 
     def __enter__(self) -> Self:

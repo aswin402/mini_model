@@ -163,12 +163,13 @@ class SpiderWebMLM:
         self._operator_token_mass: dict[str, float] = {}
         self._build_operator_codebook()
 
-        from little.rust.engine import RustMluArena
+        from little.rust.engine import RustMluArena, RustNeuralMlu
 
         self.rust_arena = RustMluArena(
             mitosis_min_activations=self.mitosis_min_activations,
             mitosis_min_verified_spokes=self.mitosis_min_verified_spokes,
         )
+        self.neural_mlu = RustNeuralMlu(seed=42)
 
         self._dirty_since_save: bool = False
         self._ensure_persistence_table()
@@ -183,6 +184,8 @@ class SpiderWebMLM:
             self.save_nodes()
         if hasattr(self, "rust_arena") and self.rust_arena is not None:
             self.rust_arena.close()
+        if hasattr(self, "neural_mlu") and self.neural_mlu is not None:
+            self.neural_mlu.close()
         if hasattr(self.verifier, "_rust_graph") and self.verifier._rust_graph is not None:
             self.verifier._rust_graph.close()
 
@@ -208,6 +211,15 @@ class SpiderWebMLM:
                 CREATE TABLE IF NOT EXISTS mlu_arena_snapshots (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     snapshot_json TEXT NOT NULL,
+                    updated_step INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            self.memory.transaction().execute(
+                """
+                CREATE TABLE IF NOT EXISTS mlu_neural_weights (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    weights_json TEXT NOT NULL,
                     updated_step INTEGER NOT NULL DEFAULT 0
                 )
                 """
@@ -251,6 +263,12 @@ class SpiderWebMLM:
                 self.rust_arena.restore_json(str(row[0]))
                 self.cycle_step = max(self.cycle_step, int(row[1] or 0))
 
+        if self.neural_mlu.is_native:
+            cursor.execute("SELECT weights_json FROM mlu_neural_weights WHERE id = 1")
+            nrow = cursor.fetchone()
+            if nrow and nrow[0]:
+                self.neural_mlu.restore_json(str(nrow[0]))
+
     def save_nodes(self, concept_ids: list[str] | None = None) -> None:
         """Persist modified MLU nodes and the native Rust 360° Arena snapshot to SQLite."""
         ids_to_save = concept_ids if concept_ids is not None else list(self.nodes.keys())
@@ -293,6 +311,18 @@ class SpiderWebMLM:
                         updated_step = excluded.updated_step
                     """,
                     (snap_json, self.cycle_step),
+                )
+            if self.neural_mlu.is_native:
+                weights_json = self.neural_mlu.dump_json()
+                self.memory.transaction().execute(
+                    """
+                    INSERT INTO mlu_neural_weights (id, weights_json, updated_step)
+                    VALUES (1, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        weights_json = excluded.weights_json,
+                        updated_step = excluded.updated_step
+                    """,
+                    (weights_json, self.cycle_step),
                 )
         self._dirty_since_save = False
 
@@ -1714,6 +1744,28 @@ class SpiderWebMLM:
             "paragraphs": [],
             "full_discourse": "",
         }
+
+    def train_neural_mlu(
+        self,
+        text: str,
+        epochs: int = 30,
+        learning_rate: float = 0.035,
+        persist: bool = True,
+    ) -> dict[str, Any]:
+        """Phase 50: Train the True End-to-End Differentiable 360° Spider-Web Neural MLU via Backpropagation + AdamW."""
+        report = self.neural_mlu.train(text, epochs=epochs, learning_rate=learning_rate)
+        self._dirty_since_save = True
+        if persist:
+            self.save_nodes([])
+        return report
+
+    def generate_neural_mlu(
+        self,
+        prompt: str,
+        max_new_tokens: int = 12,
+    ) -> dict[str, Any]:
+        """Phase 51: Autoregressively generate response tokens purely from Neural Spider-Web MLU hidden states."""
+        return self.neural_mlu.generate(prompt, max_new_tokens=max_new_tokens)
 
     def chat_turn_360(self, user_input: str, persist: bool = True) -> dict[str, Any]:
         """Phase 34: Execute a unified 360° conversational turn (learning + deliberation or inquiry wave)."""

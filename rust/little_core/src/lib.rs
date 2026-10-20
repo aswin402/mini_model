@@ -6,7 +6,9 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
 pub mod mlu_arena;
+pub mod neural_mlu;
 use mlu_arena::SpiderWebArena;
+use neural_mlu::NeuralSpiderWebMlu;
 
 // ---------------------------------------------------------------------------
 // Pure Rust Graph Algorithms
@@ -1456,6 +1458,119 @@ pub extern "C" fn little_core_mlu_arena_compose_discourse_360(
     to_c_string(&res)
 }
 
+// ---------------------------------------------------------------------------
+// True End-to-End Differentiable Neural 360° Spider-Web MLU FFI
+// ---------------------------------------------------------------------------
+
+#[no_mangle]
+pub extern "C" fn little_core_neural_mlu_create(seed: u64) -> *mut NeuralSpiderWebMlu {
+    Box::into_raw(Box::new(NeuralSpiderWebMlu::new(seed)))
+}
+
+/// # Safety
+/// `ptr` must be a valid pointer returned by `little_core_neural_mlu_create`.
+#[no_mangle]
+pub unsafe extern "C" fn little_core_neural_mlu_free(ptr: *mut NeuralSpiderWebMlu) {
+    if !ptr.is_null() {
+        drop(unsafe { Box::from_raw(ptr) });
+    }
+}
+
+/// # Safety
+/// `ptr` must be valid, `text_ptr` must be a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn little_core_neural_mlu_train(
+    ptr: *mut NeuralSpiderWebMlu,
+    text_ptr: *const c_char,
+    epochs: usize,
+    lr: f32,
+) -> *mut c_char {
+    let empty = neural_mlu::NeuralTrainReportDto {
+        epochs: 0,
+        sequences_trained: 0,
+        total_tokens: 0,
+        vocab_size: 0,
+        initial_loss: 0.0,
+        final_loss: 0.0,
+        initial_perplexity: 1.0,
+        final_perplexity: 1.0,
+        optimizer_steps: 0,
+    };
+    if ptr.is_null() || text_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let Ok(text) = (unsafe { CStr::from_ptr(text_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let model = unsafe { &mut *ptr };
+    let rep = model.train_text_corpus(text, epochs, lr);
+    to_c_string(&rep)
+}
+
+/// # Safety
+/// `ptr` must be valid, `prompt_ptr` must be a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn little_core_neural_mlu_generate(
+    ptr: *mut NeuralSpiderWebMlu,
+    prompt_ptr: *const c_char,
+    max_new_tokens: usize,
+) -> *mut c_char {
+    let empty = neural_mlu::NeuralGenerationDto {
+        prompt: String::new(),
+        generated_text: String::new(),
+        generated_tokens: Vec::new(),
+        mean_token_confidence: 0.0,
+        active_spoke_weights: Vec::new(),
+        dominant_logic_gates: Vec::new(),
+    };
+    if ptr.is_null() || prompt_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let Ok(prompt) = (unsafe { CStr::from_ptr(prompt_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let model = unsafe { &*ptr };
+    let res = model.generate_response(prompt, max_new_tokens);
+    to_c_string(&res)
+}
+
+/// # Safety
+/// `ptr` must be a valid pointer returned by `little_core_neural_mlu_create`.
+#[no_mangle]
+pub unsafe extern "C" fn little_core_neural_mlu_dump_json(
+    ptr: *mut NeuralSpiderWebMlu,
+) -> *mut c_char {
+    if ptr.is_null() {
+        return CString::new("{}").unwrap().into_raw();
+    }
+    let model = unsafe { &*ptr };
+    let s = serde_json::to_string(model).unwrap_or_else(|_| "{}".to_string());
+    CString::new(s)
+        .unwrap_or_else(|_| CString::new("{}").unwrap())
+        .into_raw()
+}
+
+/// # Safety
+/// `ptr` must be valid, `json_ptr` must be a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn little_core_neural_mlu_restore_json(
+    ptr: *mut NeuralSpiderWebMlu,
+    json_ptr: *const c_char,
+) -> bool {
+    if ptr.is_null() || json_ptr.is_null() {
+        return false;
+    }
+    let Ok(json_str) = (unsafe { CStr::from_ptr(json_ptr) }).to_str() else {
+        return false;
+    };
+    let Ok(restored) = serde_json::from_str::<NeuralSpiderWebMlu>(json_str) else {
+        return false;
+    };
+    let model = unsafe { &mut *ptr };
+    *model = restored;
+    true
+}
+
 
 
 #[cfg(test)]
@@ -1595,6 +1710,28 @@ mod tests {
         let mut arena2 = SpiderWebArena::new(3, 2);
         assert!(arena2.restore_snapshot_json(&snap_json));
         assert_eq!(arena2.cells.len(), arena.cells.len());
+    }
+
+    #[test]
+    fn test_true_differentiable_neural_mlu_backprop_and_generation() {
+        let mut model = NeuralSpiderWebMlu::new(42);
+        let corpus = "is a tiger a mammal? yes a tiger is a warm blooded mammal. \
+                      is a tiger a vehicle? no a tiger is a living animal not a vehicle. \
+                      what causes crop failure? drought causes crop failure and famine. \
+                      how to achieve wisdom? curiosity and study lead to knowledge and wisdom.";
+        let rep = model.train_text_corpus(corpus, 35, 0.035);
+        assert!(rep.final_loss < rep.initial_loss * 0.25);
+        assert!(rep.final_loss < 0.35);
+
+        let gen1 = model.generate_response("is a tiger a mammal?", 10);
+        assert!(gen1.generated_text.to_lowercase().contains("yes"));
+        assert!(gen1.generated_text.to_lowercase().contains("mammal"));
+
+        let gen2 = model.generate_response("is a tiger a vehicle?", 12);
+        assert!(gen2.generated_text.to_lowercase().contains("no"));
+
+        let gen3 = model.generate_response("what causes crop failure?", 10);
+        assert!(gen3.generated_text.to_lowercase().contains("drought"));
     }
 }
 

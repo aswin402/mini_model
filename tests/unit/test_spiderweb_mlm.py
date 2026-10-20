@@ -775,5 +775,46 @@ def test_spiderweb_mlm_phase47_to_49_multiformat_ebooks_pdfs_csvs_and_hf_dataset
         mlm.close()
 
 
+def test_spiderweb_mlm_phase50_to_52_true_differentiable_neural_mlu_backprop(tmp_path) -> None:
+    """Verify Phases 50-52: True end-to-end differentiable 360° Neural Spider-Web MLU trained via Backpropagation + AdamW."""
+    db_file = str(tmp_path / "phase50_neural_mlu.db")
+    corpus = (
+        "is a tiger a mammal? yes a tiger is a warm blooded mammal.\n"
+        "is a tiger a vehicle? no a tiger is a living animal not a vehicle.\n"
+        "what causes rain? evaporation and clouds cause rain.\n"
+        "how to achieve wisdom? curiosity and study lead to wisdom.\n"
+    )
+    with MemoryStore(db_file, seed_ontology=False) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+        assert mlm.neural_mlu.is_native is True
+
+        rep = mlm.train_neural_mlu(corpus, epochs=45, learning_rate=0.04, persist=True)
+        assert rep["sequences_trained"] == 180
+        assert rep["final_loss"] < rep["initial_loss"] * 0.25
+        assert rep["final_perplexity"] < rep["initial_perplexity"] * 0.35
+
+        gen1 = mlm.generate_neural_mlu("is a tiger a mammal?", max_new_tokens=10)
+        assert "yes" in gen1["generated_text"].lower()
+        assert "mammal" in gen1["generated_text"].lower()
+        assert len(gen1["active_spoke_weights"]) == 6
+        assert len(gen1["dominant_logic_gates"]) == 6
+
+        gen2 = mlm.generate_neural_mlu("is a tiger a vehicle?", max_new_tokens=10)
+        assert "no" in gen2["generated_text"].lower()
+        assert "vehicle" in gen2["generated_text"].lower()
+
+        gen3 = mlm.generate_neural_mlu("what causes rain?", max_new_tokens=8)
+        assert "rain" in gen3["generated_text"].lower()
+        mlm.close()
+
+    # Verify SQLite persistence and restoration of learned neural weights
+    with MemoryStore(db_file, seed_ontology=False) as mem2:
+        mlm2 = SpiderWebMLM(mem2, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+        gen_restored = mlm2.generate_neural_mlu("how to achieve wisdom?", max_new_tokens=8)
+        assert "wisdom" in gen_restored["generated_text"].lower()
+        mlm2.close()
+
+
+
 
 
