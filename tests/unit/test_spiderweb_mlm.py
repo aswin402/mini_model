@@ -689,4 +689,18 @@ def test_spiderweb_mlm_phase38_to_40_abductive_diagnosis_and_discourse(tmp_path)
     assert bench["abductive_and_discourse_passed"] is True
 
 
+def test_spiderweb_mlm_phase41_to_43_conversational_diagnosis_and_vs_llm_scorecard() -> None:
+    """Verify Phases 41-43: Natural-language abductive diagnosis routing in query_360 and head-to-head vs-LLM scorecard."""
+    scorecard = SpiderWebMLM.run_vs_llm_scorecard()
+    assert scorecard["all_passed"] is True
+    metrics = scorecard["mlu_360_metrics"]
+    assert metrics["contradiction_trap_immunity"] is True
+    assert metrics["six_step_goal_planning_and_counterfactual"] is True
+    assert metrics["conversational_abductive_diagnosis"] is True
+    assert metrics["zero_hallucination_abstention"] is True
+    assert metrics["instant_non_monotonic_belief_revision"] is True
+    assert len(scorecard["vs_standard_llm_comparison"]) == 5
+
+
+
 

@@ -850,6 +850,12 @@ def cmd_mlu(args: argparse.Namespace) -> None:
         bench = SpiderWebMLM.run_benchmark_suite()
         print(json.dumps(bench, indent=2))
         return
+    if action == "vs-llm":
+        from little.mlu.spiderweb_net import SpiderWebMLM
+
+        scorecard = SpiderWebMLM.run_vs_llm_scorecard()
+        print(json.dumps(scorecard, indent=2))
+        return
 
     store, kernel = get_kernel(Path(args.db), seed_ontology=False)
     try:
@@ -1437,6 +1443,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--hops", type=int, default=3, help="Maximum 360° wave hops (default: 3)"
     )
     p_mlu_essay.set_defaults(func=cmd_mlu)
+    p_mlu_vs_llm = p_mlu_subs.add_parser(
+        "vs-llm",
+        parents=[db_parent],
+        help="Run the head-to-head 360° Spider-Web MLU vs. Standard LLM / Transformer real-world scorecard",
+    )
+    p_mlu_vs_llm.set_defaults(func=cmd_mlu)
     p_mlu_chat = p_mlu_subs.add_parser(
         "chat",
         parents=[db_parent],
