@@ -161,6 +161,7 @@ class SpiderWebMLM:
         self.conversation_liquid_state: list[float] = [0.0] * dim
         self.recent_focal_stack: list[tuple[str, float]] = []
         self.episodic_working_memory: list[dict[str, Any]] = []
+        self.pending_curiosity_slot: dict[str, Any] | None = None
         self._operator_codebook: list[tuple[tuple[str, ...], str, list[float]]] = []
         self._operator_token_mass: dict[str, float] = {}
         self._build_operator_codebook()
@@ -2309,8 +2310,270 @@ class SpiderWebMLM:
         gen["arena_cot_sequence"] = arena_cot
         return gen
 
+    def ask_curiosity_question_360(
+        self,
+        focal_concept: str | None = None,
+        expected_spoke: str | None = None,
+        persist: bool = False,
+    ) -> dict[str, Any]:
+        """Phase 58: Active Epistemic Self-Questioning — formulate a targeted 360° curiosity question and register a pending slot for elliptic user replies."""
+        cur_dto = self.discover_curiosity(max_items=20)
+        hyps = list(cur_dto.get("analogical_hypotheses", []))
+        gaps = list(cur_dto.get("curiosity_gaps", []))
+
+        target_focal = (
+            focal_concept.strip().upper().replace(" ", "_")
+            if focal_concept and focal_concept.strip()
+            else None
+        )
+
+        chosen_hyp: dict[str, Any] | None = None
+        if expected_spoke is None:
+            for h in hyps:
+                if target_focal is None or str(h.get("subject_concept", "")).upper() == target_focal:
+                    chosen_hyp = h
+                    break
+
+        spoke_to_cell_idx = {
+            "taxonomy": 0,
+            "mereology": 1,
+            "dynamics": 2,
+            "attributes": 3,
+            "procedural": 4,
+            "episodic": 5,
+        }
+
+        if chosen_hyp is not None:
+            subj_cid = str(chosen_hyp.get("subject_concept", "ENTITY")).upper()
+            pred = str(chosen_hyp.get("predicate", "can")).lower()
+            tgt_cid = str(chosen_hyp.get("target_concept", "")).upper()
+            spoke = str(chosen_hyp.get("spoke", map_predicate_to_spoke(pred)))
+            src_cid = str(chosen_hyp.get("analog_source", "PEER")).upper()
+            hub_cid = str(chosen_hyp.get("shared_attractor", "SUBCORE")).upper()
+            s_w = subj_cid.lower().replace("_", " ")
+            t_w = tgt_cid.lower().replace("_", " ")
+            src_w = src_cid.lower().replace("_", " ")
+            hub_w = hub_cid.lower().replace("_", " ")
+            sa = "an" if s_w and s_w[0] in "aeiou" else "a"
+            src_a = "an" if src_w and src_w[0] in "aeiou" else "a"
+            if pred in ("can", "capable_of"):
+                question = f"Since both {s_w} and {src_w} are {hub_w}, can {sa} {s_w} also {t_w} like {src_a} {src_w}?"
+                q_short = f"can {sa} {s_w} also {t_w} like {src_a} {src_w}"
+            elif pred in ("has_part", "has_property", "has"):
+                question = f"Since both {s_w} and {src_w} are {hub_w}, does {sa} {s_w} also have {t_w} like {src_a} {src_w}?"
+                q_short = f"does {sa} {s_w} also have {t_w} like {src_a} {src_w}"
+            elif pred in ("located_in", "lives_in", "orbits"):
+                question = f"Since both {s_w} and {src_w} are {hub_w}, does {sa} {s_w} also live in {t_w} like {src_a} {src_w}?"
+                q_short = f"does {sa} {s_w} also live in {t_w} like {src_a} {src_w}"
+            else:
+                question = f"Since both {s_w} and {src_w} are {hub_w}, does {sa} {s_w} also {pred.replace('_', ' ')} {t_w}?"
+                q_short = f"does {sa} {s_w} also {pred.replace('_', ' ')} {t_w}"
+            slot_type = "ANALOGICAL_HYPOTHESIS"
+            sparsity = 0.5
+        else:
+            subj_cid = target_focal or (
+                str(gaps[0]["concept_id"]).upper()
+                if gaps
+                else (self.recent_focal_stack[0][0] if self.recent_focal_stack else "CORE_ROOT")
+            )
+            gap_rec = next((g for g in gaps if str(g.get("concept_id", "")).upper() == subj_cid), None)
+            sparsity = float(gap_rec.get("spoke_sparsity", 0.67)) if gap_rec else 0.67
+            missing_list: list[str] = (
+                [str(m) for m in gap_rec.get("missing_spokes", [])] if gap_rec else []
+            )
+            if not missing_list and subj_cid in self.nodes:
+                u = self.nodes[subj_cid]
+                missing_list = [
+                    sp_name
+                    for sp_name, head in u.spokes.items()
+                    if not any(
+                        isinstance(r, list) and len(r) >= 2 and float(r[0]) > float(r[1])
+                        for r in head.target_affinities.values()
+                    )
+                ]
+            priority_spokes = ("mereology", "procedural", "dynamics", "attributes", "taxonomy")
+            spoke = expected_spoke or next(
+                (sp for sp in priority_spokes if sp in missing_list),
+                missing_list[0] if missing_list else "mereology",
+            )
+            s_w = subj_cid.lower().replace("_", " ")
+            sa = "an" if s_w and s_w[0] in "aeiou" else "a"
+            spoke_prompts = {
+                "mereology": ("has_part", f"What parts or properties does {sa} {s_w} have?"),
+                "procedural": ("can", f"What actions or capabilities can {sa} {s_w} perform?"),
+                "dynamics": ("causes", f"What effects does {sa} {s_w} cause?"),
+                "attributes": ("located_in", f"Where does {sa} {s_w} live?"),
+                "taxonomy": ("is_a", f"What category is {sa} {s_w}?"),
+            }
+            pred, question = spoke_prompts.get(
+                spoke, ("has_part", f"What properties does {sa} {s_w} have?")
+            )
+            q_short = " ".join(_tokenize_words(question))
+            tgt_cid = ""
+            src_cid = ""
+            hub_cid = ""
+            slot_type = "MISSING_SPOKE"
+
+        self.pending_curiosity_slot = {
+            "slot_type": slot_type,
+            "focal_concept": subj_cid,
+            "expected_spoke": spoke,
+            "default_predicate": pred,
+            "candidate_target": tgt_cid or None,
+            "analog_source": src_cid or None,
+            "shared_attractor": hub_cid or None,
+            "question": question,
+        }
+        if subj_cid in self.nodes:
+            self._update_conversation_context(subj_cid)
+
+        raw_prior = [0.02] * 6
+        raw_prior[spoke_to_cell_idx.get(spoke, 0)] += 3.0
+        p_sum = sum(raw_prior) or 1.0
+        spoke_prior = [round(v / p_sum, 4) for v in raw_prior]
+        s_w = subj_cid.lower().replace("_", " ")
+        prompt_q = f"what curiosity question should i ask about {s_w}?"
+        cot_seq = (
+            f"{prompt_q} think 360 epistemic curiosity detects high entropy on {spoke} spoke for {s_w} "
+            f"answer {q_short}."
+        )
+        gen = self.neural_mlu.generate_arena_conditioned(
+            prompt_q,
+            arena_cot_sequence=cot_seq,
+            spoke_prior=spoke_prior,
+            adapt_epochs=18,
+            adapt_lr=0.045,
+            max_new_tokens=36,
+        )
+        if persist:
+            self.save_nodes([])
+
+        return {
+            "mode": "CURIOSITY_INQUIRY",
+            "slot_type": slot_type,
+            "focal_concept": subj_cid,
+            "expected_spoke": spoke,
+            "default_predicate": pred,
+            "candidate_target": tgt_cid or None,
+            "question": question,
+            "neural_thinking": str(gen.get("neural_thinking", "")).strip(),
+            "neural_answer": str(gen.get("neural_answer", "")).strip(),
+            "active_spoke_weights": gen.get("active_spoke_weights", []),
+            "spoke_sparsity": sparsity,
+            "trace": (
+                f"[MLU-360-CURIOSITY] slot={slot_type} | focal={subj_cid} | "
+                f"spoke={spoke}({pred}) | target={tgt_cid or 'OPEN'}"
+            ),
+        }
+
+    def _resolve_pending_curiosity_slot(
+        self,
+        clean_in: str,
+        tokens: list[str],
+        has_leading_op: bool,
+        has_interior_op: bool,
+        persist: bool,
+    ) -> dict[str, Any] | None:
+        """Phase 58: Bind an elliptic user answer ('Yes', 'No', or bare concept phrase) to an active pending_curiosity_slot."""
+        slot = self.pending_curiosity_slot
+        if slot is None or not tokens or clean_in.endswith("?"):
+            return None
+
+        # If the user starts with a non-negation interrogative/leading operator, they are asking a new question
+        has_neg = any(t in self.frame_policy.negation_tokens for t in tokens)
+        if has_leading_op and not has_neg:
+            return None
+
+        subj_cid = str(slot["focal_concept"])
+        pred = str(slot["default_predicate"])
+        spoke = str(slot["expected_spoke"])
+        cand_tgt = slot.get("candidate_target")
+        s_w = subj_cid.lower().replace("_", " ")
+        sa = "an" if s_w and s_w[0] in "aeiou" else "a"
+        pred_w = "has" if pred in ("has_part", "has_property") else pred.replace("_", " ")
+
+        if slot["slot_type"] == "ANALOGICAL_HYPOTHESIS" and cand_tgt:
+            t_w = str(cand_tgt).lower().replace("_", " ")
+            if has_neg:
+                self.pending_curiosity_slot = None
+                self.revise_belief_360(
+                    subj_cid, pred, str(cand_tgt), verified=False, evidence_weight=4.0
+                )
+                neg_cot = (
+                    f"can {sa} {s_w} {t_w}? think 360 curiosity feedback refutes {t_w} on {spoke} spoke for {s_w} "
+                    f"answer no {sa} {s_w} cannot {t_w}."
+                    if pred in ("can", "capable_of")
+                    else f"does {sa} {s_w} have {t_w}? think 360 curiosity feedback refutes {t_w} on {spoke} spoke for {s_w} "
+                    f"answer no {sa} {s_w} does not have {t_w}."
+                )
+                self.train_neural_mlu(neg_cot, epochs=24, learning_rate=0.04, persist=persist)
+                return {
+                    "mode": "CURIOSITY_RESOLVED",
+                    "status": "REFUTED",
+                    "focal_concept": subj_cid,
+                    "predicate": pred,
+                    "target_concept": str(cand_tgt),
+                    "reply": f"Recorded negative evidence: {sa} {s_w} does not {pred_w} {t_w}.",
+                    "trace": f"[MLU-360-CURIOSITY-REJECTED] {subj_cid} !({pred}) {cand_tgt}",
+                }
+            if not has_interior_op or str(cand_tgt).lower() in "_".join(tokens):
+                self.pending_curiosity_slot = None
+                synth_stmt = f"{sa.capitalize()} {s_w} {pred_w} {t_w}."
+                rep = self.train_on_text(synth_stmt, persist=persist)
+                distill_rep: dict[str, Any] = {}
+                if rep.verified_triples:
+                    distill_rep = self.distill_triples_to_neural_mlu(
+                        rep.verified_triples, epochs=28, learning_rate=0.04, persist=persist
+                    )
+                return {
+                    "mode": "CURIOSITY_RESOLVED",
+                    "status": "VERIFIED" if rep.relations_verified > 0 else "REFUTED",
+                    "focal_concept": subj_cid,
+                    "predicate": pred,
+                    "target_concept": str(cand_tgt),
+                    "relations_verified": rep.relations_verified,
+                    "neural_sequences_distilled": int(distill_rep.get("sequences_trained", 0)),
+                    "reply": f"Verified and learned from curiosity confirmation: {sa} {s_w} {pred_w} {t_w}.",
+                    "trace": f"[MLU-360-CURIOSITY-VERIFIED] {subj_cid} -({pred})-> {cand_tgt}",
+                }
+
+        if slot["slot_type"] == "MISSING_SPOKE":
+            if not has_interior_op:
+                extracted_cid, sal = self._extract_salient_concept(tokens)
+                if extracted_cid and sal >= 1.8:
+                    self.pending_curiosity_slot = None
+                    t_w = extracted_cid.lower().replace("_", " ")
+                    synth_stmt = f"{sa.capitalize()} {s_w} {pred_w} {t_w}."
+                    rep = self.train_on_text(synth_stmt, persist=persist)
+                    distill_rep = {}
+                    if rep.verified_triples:
+                        distill_rep = self.distill_triples_to_neural_mlu(
+                            rep.verified_triples, epochs=28, learning_rate=0.04, persist=persist
+                        )
+                    return {
+                        "mode": "CURIOSITY_RESOLVED",
+                        "status": "VERIFIED" if rep.relations_verified > 0 else "REFUTED",
+                        "focal_concept": subj_cid,
+                        "predicate": pred,
+                        "target_concept": extracted_cid.upper(),
+                        "relations_verified": rep.relations_verified,
+                        "relations_refuted": rep.relations_refuted,
+                        "neural_sequences_distilled": int(distill_rep.get("sequences_trained", 0)),
+                        "reply": (
+                            f"Learned from your answer: {sa} {s_w} {pred_w} {t_w}."
+                            if rep.relations_verified > 0
+                            else f"Rejected contradictory answer for {s_w} via 360° invariant gates."
+                        ),
+                        "trace": f"[MLU-360-CURIOSITY-FILLED] {subj_cid} -({pred})-> {extracted_cid.upper()}",
+                    }
+            else:
+                # Full or pronoun-led sentence answer ("It has keratin_scales.") -> clear slot and let normal learning handle it
+                self.pending_curiosity_slot = None
+
+        return None
+
     def chat_turn_360(self, user_input: str, persist: bool = True) -> dict[str, Any]:
-        """Phase 34, 52, 53, 55 & 57: Execute a unified 360° conversational turn combining Differentiable Neural Thinking + 360° Spider-Web Arena + Episodic Working Memory."""
+        """Phase 34, 52, 53, 55, 57 & 58: Execute a unified 360° conversational turn combining Differentiable Neural Thinking + 360° Spider-Web Arena + Episodic Working Memory + Curiosity Loop."""
         clean_in = user_input.strip()
         if not clean_in:
             return {
@@ -2343,6 +2606,13 @@ class SpiderWebMLM:
             for i in range(1, len(tokens))
             for j in range(i + 1, min(len(tokens), i + 6))
         )
+
+        if self.pending_curiosity_slot is not None:
+            resolved_slot = self._resolve_pending_curiosity_slot(
+                clean_in, tokens, has_leading_op, has_interior_op, persist=persist
+            )
+            if resolved_slot is not None:
+                return resolved_slot
 
         is_question = clean_in.endswith("?") or has_leading_op or not has_interior_op
         neural_gen = self.generate_neural_mlu(clean_in, max_new_tokens=48)

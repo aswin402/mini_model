@@ -1132,6 +1132,74 @@ def test_spiderweb_mlm_phase57_multiturn_working_memory_comparative_and_proof_ex
         mlm.close()
 
 
+def test_spiderweb_mlm_phase58_active_epistemic_self_questioning_and_curiosity_loop(
+    tmp_path,
+) -> None:
+    """Verify Phase 58: Active Epistemic Self-Questioning (ask_curiosity_question_360) and Elliptic User Answer Binding in chat_turn_360."""
+    db_file = str(tmp_path / "phase58_curiosity_loop.db")
+    with MemoryStore(db_file, seed_ontology=False) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+
+        mlm.train_on_text(
+            "An orca is a cetacean. "
+            "An orca can echolocate. "
+            "A dolphin is a cetacean. "
+            "A pangolin is a mammal.",
+            persist=False,
+        )
+
+        # 1. Analogical Hypothesis Self-Questioning for DOLPHIN (discovers ECHOLOCATE from ORCA via CETACEAN)
+        cur1 = mlm.ask_curiosity_question_360("DOLPHIN", persist=False)
+        assert cur1["mode"] == "CURIOSITY_INQUIRY"
+        assert cur1["slot_type"] == "ANALOGICAL_HYPOTHESIS"
+        assert cur1["focal_concept"] == "DOLPHIN"
+        assert cur1["candidate_target"] == "ECHOLOCATE"
+        assert "echolocate" in cur1["question"].lower()
+        assert "epistemic curiosity" in cur1["neural_thinking"].lower()
+
+        # User answers with a single word "Yes" -> binds to pending slot, verifies, and distills into NeuralSpiderWebMlu
+        r1 = mlm.chat_turn_360("Yes", persist=False)
+        assert r1["mode"] == "CURIOSITY_RESOLVED"
+        assert r1["status"] == "VERIFIED"
+        assert r1["focal_concept"] == "DOLPHIN"
+        assert r1["target_concept"] == "ECHOLOCATE"
+        n_dolphin = mlm.generate_neural_mlu("can a dolphin echolocate?", max_new_tokens=28)
+        assert "yes" in n_dolphin["neural_answer"].lower()
+        assert "echolocate" in n_dolphin["neural_answer"].lower()
+
+        # 2. Missing Spoke Self-Questioning for PANGOLIN on mereology spoke
+        cur2 = mlm.ask_curiosity_question_360("PANGOLIN", expected_spoke="mereology", persist=False)
+        assert cur2["slot_type"] == "MISSING_SPOKE"
+        assert cur2["focal_concept"] == "PANGOLIN"
+        assert cur2["expected_spoke"] == "mereology"
+        assert cur2["default_predicate"] == "has_part"
+        assert "pangolin" in cur2["question"].lower()
+
+        # User answers with bare concept phrase "keratin_scales" (no verb!) -> binds to PANGOLIN has_part KERATIN_SCALES
+        r2 = mlm.chat_turn_360("keratin_scales", persist=False)
+        assert r2["mode"] == "CURIOSITY_RESOLVED"
+        assert r2["status"] == "VERIFIED"
+        assert r2["focal_concept"] == "PANGOLIN"
+        assert r2["target_concept"] == "KERATIN_SCALES"
+
+        q_scales = mlm.chat_turn_360("Does a pangolin have keratin_scales?", persist=False)
+        assert q_scales["status"] == "VERIFIED"
+        assert "keratin scales" in q_scales["reply"].lower()
+
+        # 3. Missing Spoke Self-Questioning for PANGOLIN on procedural spoke
+        cur3 = mlm.ask_curiosity_question_360(
+            "PANGOLIN", expected_spoke="procedural", persist=False
+        )
+        assert cur3["expected_spoke"] == "procedural"
+        assert cur3["default_predicate"] == "can"
+        r3 = mlm.chat_turn_360("curl_into_ball", persist=False)
+        assert r3["status"] == "VERIFIED"
+        n_curl = mlm.generate_neural_mlu("can a pangolin curl into ball?", max_new_tokens=28)
+        assert "yes" in n_curl["neural_answer"].lower()
+        assert "curl into ball" in n_curl["neural_answer"].lower()
+        mlm.close()
+
+
 
 
 
