@@ -1256,6 +1256,59 @@ def test_spiderweb_mlm_phase59_transitive_poset_dynamics_and_isort_neural_fusion
         mlm.close()
 
 
+def test_spiderweb_mlm_phase60_non_monotonic_exception_override_and_belief_revision(
+    tmp_path,
+) -> None:
+    """Verify Phase 60: Default Taxonomic Inheritance, Non-Monotonic Exception Overriding ('A penguin cannot fly'), Live Neural Belief Revision, and 'Why not?' Exception Proof Explanation."""
+    db_file = str(tmp_path / "phase60_non_monotonic_exception.db")
+    with MemoryStore(db_file, seed_ontology=False) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+
+        # 1. Teach default rule on BIRD and two subclasses (EAGLE, PENGUIN)
+        mlm.chat_turn_360(
+            "A bird is an animal. "
+            "A bird can fly. "
+            "An eagle is a bird. "
+            "A penguin is a bird.",
+            persist=False,
+        )
+
+        # Before exception is taught, PENGUIN inherits 'can fly' from BIRD by default
+        q_before = mlm.chat_turn_360("Can a penguin fly?", persist=False)
+        assert q_before["status"] == "VERIFIED"
+        assert "yes" in q_before["reply"].lower()
+
+        # 2. User teaches explicit non-monotonic exception in natural language
+        rev_turn = mlm.chat_turn_360("Actually, a penguin cannot fly.", persist=False)
+        assert rev_turn["mode"] == "LEARN_AND_DELIBERATE"
+        assert rev_turn["relations_refuted"] >= 1
+
+        # 3. Sibling EAGLE still inherits 'can fly' from BIRD
+        q_eagle = mlm.chat_turn_360("Can an eagle fly?", persist=False)
+        assert q_eagle["status"] == "VERIFIED"
+        assert "yes" in q_eagle["reply"].lower()
+
+        # 4. PENGUIN now overrides the inherited BIRD default via I_EXCEPTION and updates NeuralSpiderWebMlu
+        q_after = mlm.chat_turn_360("Can a penguin fly?", persist=False)
+        assert q_after["status"] == "REFUTED"
+        assert "I_EXCEPTION" in q_after["trace"]
+        assert "penguin cannot fly" in q_after["reply"].lower()
+        assert "non monotonic exception gate refutes" in q_after["neural_thinking"].lower()
+        assert "no" in q_after["neural_answer"].lower()
+        top_cell, top_w = q_after["active_spoke_weights"][0]
+        assert top_cell == "CELL_4_CAPABILITY"
+        assert top_w > 0.25
+
+        # 5. Multi-turn "Why not?" explains both the default inheritance and the local exception override
+        q_why_not = mlm.chat_turn_360("Why not?", persist=False)
+        assert q_why_not["status"] == "VERIFIED"
+        assert "[MLU-360-EXPLAIN]" in q_why_not["trace"]
+        assert "penguin is a bird" in q_why_not["reply"].lower()
+        assert "bird can fly" in q_why_not["reply"].lower()
+        assert "penguin cannot fly" in q_why_not["reply"].lower()
+        assert "penguin cannot fly" in q_why_not["neural_answer"].lower()
+        mlm.close()
+
 
 
 

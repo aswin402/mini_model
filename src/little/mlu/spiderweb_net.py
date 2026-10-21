@@ -612,12 +612,94 @@ class SpiderWebMLM:
     # Online Stream Training (JEPA + LFM + DeepSeek-R1 Verification Gate)
     # ------------------------------------------------------------------
 
+    def _extract_negated_triples(
+        self, sentence: str, active_subject_fallback: str | None = None
+    ) -> list[tuple[str, str, str]]:
+        """Phase 60: Extract non-monotonic exception / negated relation triples (e.g., 'A penguin cannot fly', 'A whale does not have gills')."""
+        tokens = _tokenize_words(sentence)
+        if len(tokens) < 3:
+            return []
+
+        n = len(tokens)
+        discourse_prefixes = {
+            "actually",
+            "however",
+            "but",
+            "yet",
+            "still",
+            "no",
+            "aux",
+            "does",
+            "do",
+            "did",
+            "can",
+            "is",
+            "are",
+        }
+
+        def _build_pair(left_idx: int, right_idx: int, pred: str) -> list[tuple[str, str, str]]:
+            subj_toks = [t for t in tokens[:left_idx] if t not in discourse_prefixes]
+            subj_c, subj_sal = self._extract_salient_concept(subj_toks)
+            if (not subj_c or subj_sal < 2.25) and active_subject_fallback:
+                subj_c = active_subject_fallback.lower()
+            obj_c, _ = self._extract_salient_concept(tokens[right_idx:])
+            if subj_c and obj_c and subj_c != obj_c:
+                return [(subj_c, pred, obj_c)]
+            return []
+
+        # 1. Explicit 'cannot <verb/target>' or 'can not <verb/target>' (when not 'cannot be')
+        for k in range(1, n - 1):
+            if tokens[k] == "cannot" and tokens[k + 1] != "be":
+                res = _build_pair(k, k + 1, "can")
+                if res:
+                    return res
+            if (
+                tokens[k] == "can"
+                and k + 2 < n
+                and tokens[k + 1] in ("not", "never")
+                and tokens[k + 2] != "be"
+            ):
+                res = _build_pair(k, k + 2, "can")
+                if res:
+                    return res
+            if tokens[k] in ("without", "lack", "lacks"):
+                res = _build_pair(k, k + 1, "has_part")
+                if res:
+                    return res
+
+        # 2. Multi-word negated non-taxonomic phrases ('does not have', 'does not cause', 'is not located in', etc.)
+        neg_patterns: list[tuple[tuple[str, ...], str]] = [
+            (("does", "not", "have"), "has_part"),
+            (("do", "not", "have"), "has_part"),
+            (("did", "not", "have"), "has_part"),
+            (("has", "no"), "has_part"),
+            (("have", "no"), "has_part"),
+            (("does", "not", "cause"), "causes"),
+            (("do", "not", "cause"), "causes"),
+            (("is", "not", "capable", "of"), "can"),
+            (("are", "not", "capable", "of"), "can"),
+            (("is", "not", "located", "in"), "located_in"),
+            (("are", "not", "located", "in"), "located_in"),
+            (("does", "not", "live", "in"), "located_in"),
+        ]
+        for pat, pred in neg_patterns:
+            plen = len(pat)
+            for k in range(1, n - plen):
+                if tuple(tokens[k : k + plen]) == pat:
+                    res = _build_pair(k, k + plen, pred)
+                    if res:
+                        return res
+
+        return []
+
     def _extract_candidate_triples(
         self, sentence: str, active_subject_fallback: str | None = None
     ) -> list[tuple[str, str, str]]:
         """Extract relational triples via multi-clause operator energy decomposition & liquid coreference binding."""
         tokens = _tokenize_words(sentence)
         if len(tokens) < 2:
+            return []
+        if self._extract_negated_triples(sentence, active_subject_fallback=active_subject_fallback):
             return []
 
         n = len(tokens)
@@ -750,6 +832,29 @@ class SpiderWebMLM:
         for sent in raw_sentences:
             self.cycle_step += 1
             sentences_processed += 1
+
+            # Phase 60: Check for non-monotonic exception / negated belief revision triples first
+            neg_triples = self._extract_negated_triples(
+                sent, active_subject_fallback=active_discourse_focus
+            )
+            if neg_triples:
+                for subj, pred, obj in neg_triples:
+                    self.revise_belief_360(
+                        subj, pred, obj, verified=False, evidence_weight=4.0
+                    )
+                    relations_refuted += 1
+                    spoke = map_predicate_to_spoke(pred)
+                    subj_unit = self.get_or_create_mlu(subj, preferred_spoke=spoke)
+                    obj_unit = self.get_or_create_mlu(obj, preferred_spoke=spoke)
+                    active_discourse_focus = subj_unit.concept_id.lower()
+                    self._update_conversation_context(subj_unit.concept_id)
+                    touched_nodes.add(subj_unit.concept_id)
+                    touched_nodes.add(obj_unit.concept_id)
+                    surprises.append(0.85)
+                self.distill_negated_triples_to_neural_mlu(
+                    neg_triples, epochs=32, learning_rate=0.045, persist=False
+                )
+                continue
 
             # 1. Tokenize and train Central Core Multi-Token Prediction (MTP)
             tokens = _tokenize_words(sent)
@@ -926,13 +1031,25 @@ class SpiderWebMLM:
     def _collect_360_predictions(
         self, focal_unit: MiniLearningUnit, max_hops: int = 5
     ) -> tuple[list[MLUSpokePrediction], list[str]]:
-        """Traverse the 360° Spider-Web around `focal_unit` (including transitive taxonomic inheritance)."""
+        """Traverse the 360° Spider-Web around `focal_unit` (including transitive taxonomic inheritance & Phase 60 non-monotonic exception masking)."""
         candidate_vecs = {cid: u.anchor_vec for cid, u in self.nodes.items()}
         all_preds: list[MLUSpokePrediction] = []
         activated: list[str] = ["CORE_ROOT"]
         if focal_unit.parent_hub:
             activated.append(focal_unit.parent_hub)
         activated.append(focal_unit.concept_id)
+
+        # Phase 60: Collect local non-monotonic exception overrides (w_neg > w_pos) on focal_unit
+        overridden_targets: set[str] = {
+            t_cid
+            for sp in focal_unit.spokes.values()
+            for t_cid, rec in sp.target_affinities.items()
+            if isinstance(rec, list)
+            and len(rec) >= 4
+            and float(rec[1]) > float(rec[0])
+            and str(rec[3])
+            not in ("is_a", "subclass_of", "instance_of", "disjoint_with", "not_a", "co_occurs_with")
+        }
 
         # Direct 360° 6-spoke predictions on the focal MLU
         for spoke_name in SPOKE_NAMES:
@@ -954,6 +1071,7 @@ class SpiderWebMLM:
                 if (
                     self.verifier.registry.relation(pred_name) is None
                     or tgt_name not in self.nodes
+                    or tgt_name in overridden_targets
                 ):
                     continue
                 all_preds.append(
@@ -998,6 +1116,7 @@ class SpiderWebMLM:
                         if (
                             pp.target_concept == focal_unit.concept_id
                             or pp.predicate in self.verifier.disjoint_predicates
+                            or pp.target_concept in overridden_targets
                         ):
                             continue
                         inherited = MLUSpokePrediction(
@@ -1066,7 +1185,7 @@ class SpiderWebMLM:
     def _extract_arena_proof_steps(
         self, res: MLMQueryResult, target_cid: str | None
     ) -> list[tuple[str, str, str]]:
-        """Phase 57: Extract the step-by-step multi-hop proof or refutation chain for an Arena query result."""
+        """Phase 57, 59 & 60: Extract the step-by-step multi-hop proof or refutation chain for an Arena query result."""
         from collections import deque
 
         focal = res.focal_concept
@@ -1080,6 +1199,27 @@ class SpiderWebMLM:
                 rev_path = self._find_verified_spoke_path(target_cid, focal, max_hops=6)
                 if rev_path:
                     return rev_path
+
+            if "I_EXCEPTION" in res.inspectable_trace:
+                exc_pred = "cannot"
+                for sp in self.nodes[focal].spokes.values():
+                    rec = sp.target_affinities.get(target_cid)
+                    if isinstance(rec, list) and len(rec) >= 4 and float(rec[1]) > float(rec[0]):
+                        raw_p = str(rec[3])
+                        exc_pred = (
+                            "cannot"
+                            if raw_p in ("can", "capable_of")
+                            else (
+                                "does_not_have"
+                                if raw_p in ("has_part", "has_property", "has")
+                                else f"cannot_{raw_p}"
+                            )
+                        )
+                        break
+                default_chain = self._find_verified_spoke_path(focal, target_cid, max_hops=5)
+                if default_chain:
+                    return [*default_chain, (focal, exc_pred, target_cid)]
+                return [(focal, exc_pred, target_cid)]
 
             def _anc_map(root_id: str) -> dict[str, list[tuple[str, str, str]]]:
                 amap: dict[str, list[tuple[str, str, str]]] = {root_id: []}
@@ -1485,7 +1625,27 @@ class SpiderWebMLM:
                             fluent_english=fluent_ord,
                         )
 
-                # Check if DeepSeekInvariantVerifier or Rust Arena refutes the link via I_MUTEX / I_SORT
+                # Check if DeepSeekInvariantVerifier, Rust Arena, or local I_EXCEPTION override refutes the link
+                local_exception_pred: str | None = None
+                for sp in focal_unit.spokes.values():
+                    rec = sp.target_affinities.get(target_cid)
+                    if (
+                        isinstance(rec, list)
+                        and len(rec) >= 4
+                        and float(rec[1]) > float(rec[0])
+                        and str(rec[3])
+                        not in (
+                            "is_a",
+                            "subclass_of",
+                            "instance_of",
+                            "disjoint_with",
+                            "not_a",
+                            "co_occurs_with",
+                        )
+                    ):
+                        local_exception_pred = str(rec[3])
+                        break
+
                 gate_check = self.verifier.verify_relation(focal_cid, "is_a", target_cid)
                 rust_inv = (
                     self.rust_arena.verify_invariants(focal_cid, "is_a", target_cid)
@@ -1503,27 +1663,46 @@ class SpiderWebMLM:
                     )
                 rust_passed = bool(rust_inv.get("passed", True))
                 rust_gate = str(rust_inv.get("gate", "I_MUTEX"))
-                if not gate_check.passed or not rust_passed:
-                    v_gate = gate_check.violated_gate if not gate_check.passed else rust_gate
+                if not gate_check.passed or not rust_passed or local_exception_pred is not None:
+                    v_gate = (
+                        gate_check.violated_gate
+                        if not gate_check.passed
+                        else ("I_EXCEPTION" if local_exception_pred is not None else rust_gate)
+                    )
+                    eff_pred = query_pred or local_exception_pred or "can"
                     v_msg = (
                         gate_check.error_message
                         if not gate_check.passed
                         else (
-                            f"360° Arena {rust_gate} poset antisymmetry violation between {focal_cid} and {target_cid} along {query_pred}"
-                            if v_gate == "I_SORT"
-                            else f"360° Arena {rust_gate} disjointness between {focal_cid} and {target_cid}"
+                            f"360° Arena I_EXCEPTION non-monotonic override for {focal_cid} on {eff_pred} -> {target_cid}"
+                            if v_gate == "I_EXCEPTION"
+                            else (
+                                f"360° Arena {rust_gate} poset antisymmetry violation between {focal_cid} and {target_cid} along {query_pred}"
+                                if v_gate == "I_SORT"
+                                else f"360° Arena {rust_gate} disjointness between {focal_cid} and {target_cid}"
+                            )
                         )
                     )
-                    ref_verb = (
-                        f"cannot {query_pred.replace('_', ' ')}"
-                        if v_gate == "I_SORT" and query_pred
-                        else "cannot be"
-                    )
+                    if v_gate == "I_EXCEPTION":
+                        ref_verb = (
+                            "cannot"
+                            if eff_pred in ("can", "capable_of")
+                            else (
+                                "does not have"
+                                if eff_pred in ("has_part", "has_property", "has")
+                                else f"does not {eff_pred.replace('_', ' ')}"
+                            )
+                        )
+                    elif v_gate == "I_SORT" and query_pred:
+                        ref_verb = f"cannot {query_pred.replace('_', ' ')}"
+                    else:
+                        ref_verb = "cannot be"
                     ans_ref = (
                         f"No — {focal_cid.lower().replace('_', ' ')} {ref_verb} "
                         f"{target_cid.lower().replace('_', ' ')} "
                         f"(Refuted by {v_gate}: {v_msg})."
                     )
+                    pred_tag = f" ({eff_pred})" if v_gate == "I_EXCEPTION" else ""
                     return MLMQueryResult(
                         query=clean_q,
                         focal_concept=focal_cid,
@@ -1534,7 +1713,7 @@ class SpiderWebMLM:
                         active_subcore=active_subcore,
                         activated_mlus=activated,
                         spoke_predictions=preds[:6],
-                        inspectable_trace=f"[MLU-360] Refuted by {v_gate}: {v_msg}",
+                        inspectable_trace=f"[MLU-360] Refuted by {v_gate}{pred_tag}: {v_msg}",
                         fluent_english=ans_ref,
                     )
 
@@ -2187,10 +2366,46 @@ class SpiderWebMLM:
             "\n".join(lines), epochs=epochs, learning_rate=learning_rate, persist=persist
         )
 
+    def distill_negated_triples_to_neural_mlu(
+        self,
+        negated_triples: list[tuple[str, str, str]],
+        epochs: int = 32,
+        learning_rate: float = 0.045,
+        persist: bool = False,
+    ) -> dict[str, Any]:
+        """Phase 60: Distill non-monotonic exception & belief revision triples into NeuralSpiderWebMlu via Backpropagation + AdamW."""
+        if not negated_triples:
+            return {"epochs": 0, "sequences_trained": 0}
+        lines: list[str] = []
+        for subj, pred, obj in negated_triples:
+            s = subj.lower().replace("_", " ").strip()
+            p = pred.lower().replace("_", " ").strip()
+            o = obj.lower().replace("_", " ").strip()
+            if not s or not o:
+                continue
+            sa = "an" if s and s[0] in "aeiou" else "a"
+            if pred in ("can", "capable_of"):
+                lines.append(
+                    f"can {sa} {s} {o}? think 360 non monotonic exception gate refutes {s} on capability spoke answer no {sa} {s} cannot {o}."
+                )
+            elif pred in ("has_part", "has_property", "has"):
+                lines.append(
+                    f"does {sa} {s} have {o}? think 360 non monotonic exception gate refutes {s} on mereology spoke answer no {sa} {s} does not have {o}."
+                )
+            else:
+                lines.append(
+                    f"does {sa} {s} {p} {o}? think 360 non monotonic exception gate refutes {s} on dynamics spoke answer no {sa} {s} does not {p} {o}."
+                )
+        if not lines:
+            return {"epochs": 0, "sequences_trained": 0}
+        return self.train_neural_mlu(
+            "\n".join(lines), epochs=epochs, learning_rate=learning_rate, persist=persist
+        )
+
     def _build_arena_conditioning(
         self, prompt: str, q_res: MLMQueryResult
     ) -> tuple[str, list[float]]:
-        """Phase 55 & 59: Extract 6-spoke neural cell priors and multi-hop Chain-of-Thought proof sequences from a 360° Arena wave."""
+        """Phase 55, 59 & 60: Extract 6-spoke neural cell priors and multi-hop Chain-of-Thought proof sequences from a 360° Arena wave."""
         # Map 360° predicates & wave traces to NeuralSpiderWebMlu's 6 logic cells:
         # 0: TAXONOMY, 1: MEREOLOGY, 2: CAUSALITY, 3: SPATIAL, 4: CAPABILITY, 5: DYNAMICS
         pred_to_cell: dict[str, tuple[int, str]] = {
@@ -2230,6 +2445,15 @@ class SpiderWebMLM:
         if "I_SORT" in tr or "[MLU-360-ORDER]" in tr:
             raw_prior[5] += 3.5
             matched_trace_spoke = "dynamics"
+        elif "I_EXCEPTION" in tr:
+            if matched_trace_spoke is None:
+                raw_prior[4] += 3.5
+                matched_trace_spoke = "capability"
+            else:
+                for c_idx, s_label in pred_to_cell.values():
+                    if s_label == matched_trace_spoke:
+                        raw_prior[c_idx] += 3.5
+                        break
         elif (
             q_res.status == "REFUTED"
             or "I_MUTEX" in tr
@@ -2270,6 +2494,11 @@ class SpiderWebMLM:
         if q_res.status == "REFUTED" and "I_SORT" in tr:
             think_clause = (
                 f"think 360 poset antisymmetry gate refutes {focal_w} on dynamics spoke"
+            )
+        elif q_res.status == "REFUTED" and "I_EXCEPTION" in tr:
+            exc_spoke = matched_trace_spoke or "capability"
+            think_clause = (
+                f"think 360 non monotonic exception gate refutes {focal_w} on {exc_spoke} spoke"
             )
         elif q_res.status == "REFUTED":
             think_clause = (
@@ -2663,8 +2892,12 @@ class SpiderWebMLM:
 
         tokens = _tokenize_words(clean_in)
         op_tuples = {ptoks for ptoks, _, _ in self._operator_codebook}
+        has_neg_exception = any(
+            bool(self._extract_negated_triples(s)) for s in _segment_sentences(clean_in)
+        )
         has_leading_op = bool(
             tokens
+            and not (has_neg_exception and tokens[0] in ("actually", "however", "but", "no"))
             and (
                 any(
                     tuple(tokens[:k]) in op_tuples
@@ -2677,7 +2910,7 @@ class SpiderWebMLM:
                 )
             )
         )
-        has_interior_op = any(
+        has_interior_op = has_neg_exception or any(
             tuple(tokens[i:j]) in op_tuples
             or tuple(t for t in tokens[i:j] if t not in self.frame_policy.stop_determiners)
             in op_tuples

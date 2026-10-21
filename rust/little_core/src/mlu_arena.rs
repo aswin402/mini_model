@@ -729,6 +729,21 @@ impl SpiderWebArena {
             if obj_pred_reach.contains(&sub_clean) {
                 return (false, "I_SORT");
             }
+            // Gate 4: I_EXCEPTION (non-monotonic exception override on subject cell)
+            if let Some(&sub_id) = self.name_to_id.get(&sub_clean) {
+                if let Some(sub_cell) = self.cells.get(sub_id as usize) {
+                    for edges in &sub_cell.spoke_synapses {
+                        for syn in edges {
+                            if syn.target_name == obj_clean
+                                && syn.predicate == pred_clean
+                                && syn.neg_evidence > syn.pos_evidence
+                            {
+                                return (false, "I_EXCEPTION");
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Gate 3: I_MUTEX (check if subject's ancestor closure is disjoint with object's ancestor closure)
@@ -1054,7 +1069,17 @@ impl SpiderWebArena {
         activated_cells.push(clean.clone());
 
         let mut all_preds: Vec<SpokePredictionDto> = Vec::new();
+        let mut overridden_targets: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         for s_idx in 0..NUM_SPOKES {
+            for syn in &self.cells[cid as usize].spoke_synapses[s_idx] {
+                if syn.neg_evidence > syn.pos_evidence
+                    && syn.predicate != "disjoint_with"
+                    && syn.predicate != "not_a"
+                {
+                    overridden_targets.insert(syn.target_name.clone());
+                }
+            }
             if !self.cells[cid as usize].spoke_synapses[s_idx].is_empty() {
                 all_preds.extend(self.predict_spoke_targets(&clean, s_idx, 4));
             }
@@ -1101,6 +1126,7 @@ impl SpiderWebArena {
                             || !pp.verified
                             || pp.predicate == "disjoint_with"
                             || pp.predicate == "co_occurs_with"
+                            || overridden_targets.contains(&pp.target_concept)
                         {
                             continue;
                         }
