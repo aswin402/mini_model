@@ -1200,6 +1200,61 @@ def test_spiderweb_mlm_phase58_active_epistemic_self_questioning_and_curiosity_l
         mlm.close()
 
 
+def test_spiderweb_mlm_phase59_transitive_poset_dynamics_and_isort_neural_fusion(
+    tmp_path,
+) -> None:
+    """Verify Phase 59: Transitive Poset Order (evaluate_order_360), I_SORT Antisymmetry Refutation, CELL_5_DYNAMICS Neural Fusion, and 'Why not?' Proof Explanation."""
+    db_file = str(tmp_path / "phase59_poset_dynamics.db")
+    with MemoryStore(db_file, seed_ontology=False) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+
+        mlm.chat_turn_360(
+            "Jupiter is larger than Saturn. "
+            "Saturn is larger than Earth. "
+            "Earth is larger than Mars.",
+            persist=False,
+        )
+
+        # 1. Multi-hop transitive poset verification (JUPITER > SATURN > EARTH > MARS)
+        q1 = mlm.chat_turn_360("Is jupiter larger than mars?", persist=False)
+        assert q1["status"] == "VERIFIED"
+        assert "[MLU-360-ORDER]" in q1["trace"]
+        assert "yes" in q1["reply"].lower()
+        assert "mars" in q1["neural_answer"].lower()
+        assert "poset" in q1["neural_thinking"].lower() or "dynamics" in q1["neural_thinking"].lower()
+        top_cell_1, top_w_1 = q1["active_spoke_weights"][0]
+        assert top_cell_1 == "CELL_5_DYNAMICS"
+        assert top_w_1 > 0.25
+
+        # 2. Multi-turn "Why?" proof explanation for transitive poset chain
+        q2 = mlm.chat_turn_360("Why?", persist=False)
+        assert q2["status"] == "VERIFIED"
+        assert "[MLU-360-EXPLAIN]" in q2["trace"]
+        assert "because jupiter larger than saturn" in q2["reply"].lower()
+        assert "saturn larger than earth" in q2["reply"].lower()
+        assert "earth larger than mars" in q2["reply"].lower()
+
+        # 3. Multi-hop I_SORT antisymmetry refutation (MARS larger_than JUPITER is refuted by JUPITER > ... > MARS)
+        q3 = mlm.chat_turn_360("Is mars larger than jupiter?", persist=False)
+        assert q3["status"] == "REFUTED"
+        assert "I_SORT" in q3["trace"]
+        assert "mars cannot larger than jupiter" in q3["reply"].lower()
+        assert "poset antisymmetry gate refutes" in q3["neural_thinking"].lower()
+        assert "no" in q3["neural_answer"].lower()
+        top_cell_3, top_w_3 = q3["active_spoke_weights"][0]
+        assert top_cell_3 == "CELL_5_DYNAMICS"
+        assert top_w_3 > 0.25
+
+        # 4. Multi-turn "Why not?" proof explanation for I_SORT refutation
+        q4 = mlm.chat_turn_360("Why not?", persist=False)
+        assert q4["status"] == "VERIFIED"
+        assert "[MLU-360-EXPLAIN]" in q4["trace"]
+        assert "ref_status=REFUTED" in q4["trace"]
+        assert q4["focal_concept"] == "MARS"
+        assert "because jupiter larger than saturn" in q4["reply"].lower()
+        assert "because jupiter larger than saturn" in q4["neural_answer"].lower()
+        mlm.close()
+
 
 
 

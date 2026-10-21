@@ -1076,6 +1076,10 @@ class SpiderWebMLM:
             and focal in self.nodes
             and target_cid in self.nodes
         ):
+            if "I_SORT" in res.inspectable_trace:
+                rev_path = self._find_verified_spoke_path(target_cid, focal, max_hops=6)
+                if rev_path:
+                    return rev_path
 
             def _anc_map(root_id: str) -> dict[str, list[tuple[str, str, str]]]:
                 amap: dict[str, list[tuple[str, str, str]]] = {root_id: []}
@@ -1398,6 +1402,142 @@ class SpiderWebMLM:
         preds, activated = self._collect_360_predictions(focal_unit)
         active_subcore = focal_unit.parent_hub or "CORE_ROOT"
 
+        query_pred: str | None = None
+        query_pol: int = 1
+        if target_cid is not None:
+            non_concept_toks = [
+                t
+                for t in tokens
+                if t.upper() not in (focal_cid, target_cid)
+            ]
+            query_pred, query_pol = self._resolve_operator_span(non_concept_toks)
+            if has_leading_operator:
+                matching = [
+                    p
+                    for p in preds
+                    if p.target_concept == target_cid
+                    and p.predicate not in self.verifier.disjoint_predicates
+                ]
+                if matching:
+                    best = matching[0]
+                    verb = best.predicate.replace("_", " ")
+                    order_tag = (
+                        " | [MLU-360-ORDER]"
+                        if best.predicate in ("larger_than", "greater_than", "before", "after")
+                        else ""
+                    )
+                    ans = (
+                        f"Yes — {focal_cid.lower().replace('_', ' ')} {verb} "
+                        f"{target_cid.lower().replace('_', ' ')} "
+                        f"(spoke={best.spoke}, confidence={best.combined_confidence:.2f}, "
+                        f"subcore={active_subcore})."
+                    )
+                    fluent = (
+                        f"Yes, {focal_cid.lower().replace('_', ' ')} {verb} "
+                        f"{target_cid.lower().replace('_', ' ')}."
+                    )
+                    trace = (
+                        f"[MLU-360] Core -> {active_subcore} -> {' -> '.join(activated[2:])} | "
+                        f"spoke={best.spoke}({best.predicate}) -> {target_cid} "
+                        f"[neural={best.neural_score:.2f}, nars={best.nars_confidence:.2f}, "
+                        f"H={best.epistemic_entropy:.2f}]{order_tag}"
+                    )
+                    return MLMQueryResult(
+                        query=clean_q,
+                        focal_concept=focal_cid,
+                        status="VERIFIED" if best.verified else "NEURAL_GROUNDED",
+                        answer=ans,
+                        confidence=best.combined_confidence,
+                        epistemic_entropy=best.epistemic_entropy,
+                        active_subcore=active_subcore,
+                        activated_mlus=activated,
+                        spoke_predictions=preds[:6],
+                        inspectable_trace=trace,
+                        fluent_english=fluent,
+                    )
+
+                # Phase 59: Multi-hop Transitive Poset Order verification via evaluate_order_360
+                if query_pred in ("larger_than", "causes", "requires") and self.rust_arena.is_native:
+                    ord_dto = self.evaluate_order_360(
+                        query_pred, start_concept=focal_cid, max_hops=6
+                    )
+                    if f"{focal_cid} -> {target_cid}" in ord_dto.get("transitive_pairs", []):
+                        chain_list = [str(c) for c in ord_dto.get("ordered_chain", [])]
+                        verb = query_pred.replace("_", " ")
+                        fluent_ord = (
+                            f"Yes, {focal_cid.lower().replace('_', ' ')} {verb} "
+                            f"{target_cid.lower().replace('_', ' ')}."
+                        )
+                        return MLMQueryResult(
+                            query=clean_q,
+                            focal_concept=focal_cid,
+                            status="VERIFIED",
+                            answer=fluent_ord,
+                            confidence=0.90,
+                            epistemic_entropy=0.06,
+                            active_subcore=active_subcore,
+                            activated_mlus=chain_list or activated,
+                            spoke_predictions=preds[:6],
+                            inspectable_trace=(
+                                f"[MLU-360-ORDER] {focal_cid} -({query_pred})-> {target_cid} | "
+                                f"chain={chain_list}"
+                            ),
+                            fluent_english=fluent_ord,
+                        )
+
+                # Check if DeepSeekInvariantVerifier or Rust Arena refutes the link via I_MUTEX / I_SORT
+                gate_check = self.verifier.verify_relation(focal_cid, "is_a", target_cid)
+                rust_inv = (
+                    self.rust_arena.verify_invariants(focal_cid, "is_a", target_cid)
+                    if self.rust_arena.is_native
+                    else {"passed": True, "gate": "OK"}
+                )
+                if (
+                    bool(rust_inv.get("passed", True))
+                    and query_pred
+                    and query_pred not in ("is_a", "disjoint_with")
+                    and self.rust_arena.is_native
+                ):
+                    rust_inv = self.rust_arena.verify_invariants(
+                        focal_cid, query_pred, target_cid
+                    )
+                rust_passed = bool(rust_inv.get("passed", True))
+                rust_gate = str(rust_inv.get("gate", "I_MUTEX"))
+                if not gate_check.passed or not rust_passed:
+                    v_gate = gate_check.violated_gate if not gate_check.passed else rust_gate
+                    v_msg = (
+                        gate_check.error_message
+                        if not gate_check.passed
+                        else (
+                            f"360° Arena {rust_gate} poset antisymmetry violation between {focal_cid} and {target_cid} along {query_pred}"
+                            if v_gate == "I_SORT"
+                            else f"360° Arena {rust_gate} disjointness between {focal_cid} and {target_cid}"
+                        )
+                    )
+                    ref_verb = (
+                        f"cannot {query_pred.replace('_', ' ')}"
+                        if v_gate == "I_SORT" and query_pred
+                        else "cannot be"
+                    )
+                    ans_ref = (
+                        f"No — {focal_cid.lower().replace('_', ' ')} {ref_verb} "
+                        f"{target_cid.lower().replace('_', ' ')} "
+                        f"(Refuted by {v_gate}: {v_msg})."
+                    )
+                    return MLMQueryResult(
+                        query=clean_q,
+                        focal_concept=focal_cid,
+                        status="REFUTED",
+                        answer=ans_ref,
+                        confidence=0.95,
+                        epistemic_entropy=0.0,
+                        active_subcore=active_subcore,
+                        activated_mlus=activated,
+                        spoke_predictions=preds[:6],
+                        inspectable_trace=f"[MLU-360] Refuted by {v_gate}: {v_msg}",
+                        fluent_english=ans_ref,
+                    )
+
         if not preds:
             if target_cid is not None and target_cid in self.nodes:
                 abd_pair = self.diagnose_abductive_360(
@@ -1463,209 +1603,125 @@ class SpiderWebMLM:
                 fluent_english=f"I recognize '{focal_cid.lower().replace('_', ' ')}', but I do not yet have verified 360° spoke facts for it.",
             )
 
-        # Case A: Targeted relational verification or 360° Comparative Wave Intersection
-        if target_cid is not None:
-            if has_leading_operator:
-                matching = [
-                    p
-                    for p in preds
-                    if p.target_concept == target_cid
-                    and p.predicate not in self.verifier.disjoint_predicates
-                ]
-                if matching:
-                    best = matching[0]
-                    verb = best.predicate.replace("_", " ")
-                    ans = (
-                        f"Yes — {focal_cid.lower().replace('_', ' ')} {verb} "
-                        f"{target_cid.lower().replace('_', ' ')} "
-                        f"(spoke={best.spoke}, confidence={best.combined_confidence:.2f}, "
-                        f"subcore={active_subcore})."
-                    )
-                    fluent = (
-                        f"Yes, {focal_cid.lower().replace('_', ' ')} {verb} "
-                        f"{target_cid.lower().replace('_', ' ')}."
-                    )
-                    trace = (
-                        f"[MLU-360] Core -> {active_subcore} -> {' -> '.join(activated[2:])} | "
-                        f"spoke={best.spoke}({best.predicate}) -> {target_cid} "
-                        f"[neural={best.neural_score:.2f}, nars={best.nars_confidence:.2f}, "
-                        f"H={best.epistemic_entropy:.2f}]"
-                    )
-                    return MLMQueryResult(
-                        query=clean_q,
-                        focal_concept=focal_cid,
-                        status="VERIFIED" if best.verified else "NEURAL_GROUNDED",
-                        answer=ans,
-                        confidence=best.combined_confidence,
-                        epistemic_entropy=best.epistemic_entropy,
-                        active_subcore=active_subcore,
-                        activated_mlus=activated,
-                        spoke_predictions=preds[:6],
-                        inspectable_trace=trace,
-                        fluent_english=fluent,
-                    )
-
-                # Check if DeepSeekInvariantVerifier or Rust Arena refutes the link via I_MUTEX / disjointness
-                gate_check = self.verifier.verify_relation(focal_cid, "is_a", target_cid)
-                rust_inv = (
-                    self.rust_arena.verify_invariants(focal_cid, "is_a", target_cid)
-                    if self.rust_arena.is_native
-                    else {"passed": True, "gate": "OK"}
+        # Case A: 360° Counterfactual Intervention, Comparative Wave Intersection & Relational Bridge
+        if target_cid is not None and target_cid in self.nodes:
+            if query_pol < 0:
+                cf_dto = self.intervene_counterfactual_360(
+                    focal_cid, target_cid, max_hops=3
                 )
-                rust_passed = bool(rust_inv.get("passed", True))
-                rust_gate = str(rust_inv.get("gate", "I_MUTEX"))
-                if not gate_check.passed or not rust_passed:
-                    v_gate = gate_check.violated_gate if not gate_check.passed else rust_gate
-                    v_msg = (
-                        gate_check.error_message
-                        if not gate_check.passed
-                        else f"360° Arena {rust_gate} disjointness between {focal_cid} and {target_cid}"
-                    )
-                    ans_ref = (
-                        f"No — {focal_cid.lower().replace('_', ' ')} cannot be "
-                        f"{target_cid.lower().replace('_', ' ')} "
-                        f"(Refuted by {v_gate}: {v_msg})."
-                    )
-                    return MLMQueryResult(
-                        query=clean_q,
-                        focal_concept=focal_cid,
-                        status="REFUTED",
-                        answer=ans_ref,
-                        confidence=0.95,
-                        epistemic_entropy=0.0,
-                        active_subcore=active_subcore,
-                        activated_mlus=activated,
-                        spoke_predictions=preds[:6],
-                        inspectable_trace=f"[MLU-360] Refuted by {v_gate}: {v_msg}",
-                        fluent_english=ans_ref,
-                    )
-
-            # Phase 14, 16, 20 & 21: 360° Counterfactual Intervention, Comparative Wave Intersection & Relational Bridge
-            if target_cid in self.nodes:
-                # Check if operator tokens between/around focal_cid and target_cid carry negative polarity (counterfactual suppression)
-                non_concept_toks = [
-                    t
-                    for t in tokens
-                    if t.upper() not in (focal_cid, target_cid)
-                ]
-                _, query_pol = self._resolve_operator_span(non_concept_toks)
-                if query_pol < 0:
-                    cf_dto = self.intervene_counterfactual_360(
-                        focal_cid, target_cid, max_hops=3
-                    )
-                    inv_list = cf_dto.get("invalidated_conclusions", [])
-                    cf_synth = str(cf_dto.get("counterfactual_synthesis", "")).strip()
-                    if inv_list and cf_synth:
-                        return MLMQueryResult(
-                            query=clean_q,
-                            focal_concept=focal_cid,
-                            status="VERIFIED",
-                            answer=cf_synth,
-                            confidence=0.88,
-                            epistemic_entropy=0.1,
-                            active_subcore=active_subcore,
-                            activated_mlus=activated + [target_cid],
-                            spoke_predictions=preds[:6],
-                            inspectable_trace=(
-                                f"[MLU-360-COUNTERFACTUAL] root={focal_cid} | "
-                                f"suppressed={target_cid} | invalidated={inv_list}"
-                            ),
-                            fluent_english=cf_synth,
-                        )
-
-                cmp_dto = self.compare_360(focal_cid, target_cid, max_hops=3)
-                comp_synth = str(cmp_dto.get("comparative_synthesis", "")).strip()
-                shared_list = cmp_dto.get("shared_attractors", [])
-                if shared_list and comp_synth:
-                    conf = float(shared_list[0]["combined_confidence"])
+                inv_list = cf_dto.get("invalidated_conclusions", [])
+                cf_synth = str(cf_dto.get("counterfactual_synthesis", "")).strip()
+                if inv_list and cf_synth:
                     return MLMQueryResult(
                         query=clean_q,
                         focal_concept=focal_cid,
                         status="VERIFIED",
-                        answer=comp_synth,
-                        confidence=conf,
+                        answer=cf_synth,
+                        confidence=0.88,
                         epistemic_entropy=0.1,
                         active_subcore=active_subcore,
                         activated_mlus=activated + [target_cid],
                         spoke_predictions=preds[:6],
                         inspectable_trace=(
-                            f"[MLU-360-COMPARE] {focal_cid} <-> {target_cid} | "
-                            f"shared={len(shared_list)} | mutex={cmp_dto.get('mutually_exclusive', False)}"
+                            f"[MLU-360-COUNTERFACTUAL] root={focal_cid} | "
+                            f"suppressed={target_cid} | invalidated={inv_list}"
                         ),
-                        fluent_english=comp_synth,
+                        fluent_english=cf_synth,
                     )
 
-                bridge_dto = self.find_bridge_360(focal_cid, target_cid, max_hops=4)
-                if bridge_dto.get("connected") and bridge_dto.get("bridge_synthesis"):
-                    br_synth = str(bridge_dto["bridge_synthesis"])
-                    return MLMQueryResult(
-                        query=clean_q,
-                        focal_concept=focal_cid,
-                        status="VERIFIED",
-                        answer=br_synth,
-                        confidence=0.82,
-                        epistemic_entropy=0.12,
-                        active_subcore=active_subcore,
-                        activated_mlus=activated + [target_cid],
-                        spoke_predictions=preds[:6],
-                        inspectable_trace=(
-                            f"[MLU-360-BRIDGE] {focal_cid} <-> {target_cid} | "
-                            f"hops={bridge_dto.get('hop_count', 0)}"
-                        ),
-                        fluent_english=br_synth,
-                    )
-
-                # Phase 41b: 2-Observation Abductive Diagnosis Fallback (e.g., "fever and inflammation")
-                abd2 = self.diagnose_abductive_360(
-                    [focal_cid, target_cid], max_hops=3, top_k=3
+            cmp_dto = self.compare_360(focal_cid, target_cid, max_hops=3)
+            comp_synth = str(cmp_dto.get("comparative_synthesis", "")).strip()
+            shared_list = cmp_dto.get("shared_attractors", [])
+            if shared_list and comp_synth:
+                conf = float(shared_list[0]["combined_confidence"])
+                return MLMQueryResult(
+                    query=clean_q,
+                    focal_concept=focal_cid,
+                    status="VERIFIED",
+                    answer=comp_synth,
+                    confidence=conf,
+                    epistemic_entropy=0.1,
+                    active_subcore=active_subcore,
+                    activated_mlus=activated + [target_cid],
+                    spoke_predictions=preds[:6],
+                    inspectable_trace=(
+                        f"[MLU-360-COMPARE] {focal_cid} <-> {target_cid} | "
+                        f"shared={len(shared_list)} | mutex={cmp_dto.get('mutually_exclusive', False)}"
+                    ),
+                    fluent_english=comp_synth,
                 )
-                if (
-                    abd2.get("best_explanation")
-                    and float(abd2.get("best_coverage_ratio", 0.0)) >= 0.99
-                    and abd2.get("diagnostic_synthesis")
-                ):
-                    best_e2 = str(abd2["best_explanation"])
-                    d_synth2 = str(abd2["diagnostic_synthesis"])
-                    c2 = abd2.get("candidates", [{}])[0]
-                    p_conf2 = float(c2.get("posterior_confidence", 0.85))
-                    return MLMQueryResult(
-                        query=clean_q,
-                        focal_concept=best_e2,
-                        status="VERIFIED",
-                        answer=d_synth2,
-                        confidence=p_conf2,
-                        epistemic_entropy=round(1.0 - p_conf2, 4),
-                        active_subcore=active_subcore,
-                        activated_mlus=activated + [focal_cid, target_cid, best_e2],
-                        spoke_predictions=preds[:6],
-                        inspectable_trace=(
-                            f"[MLU-360-DIAGNOSE] observations={[focal_cid, target_cid]} -> "
-                            f"best_explanation={best_e2}"
-                        ),
-                        fluent_english=d_synth2,
-                    )
 
-                # Phase 57: Contrastive 360° comparison when two concepts have divergent/mutually-exclusive spokes
-                if comp_synth and (
-                    cmp_dto.get("mutually_exclusive")
-                    or (cmp_dto.get("distinct_a") and cmp_dto.get("distinct_b"))
-                ):
-                    return MLMQueryResult(
-                        query=clean_q,
-                        focal_concept=focal_cid,
-                        status="VERIFIED",
-                        answer=comp_synth,
-                        confidence=0.90,
-                        epistemic_entropy=0.08,
-                        active_subcore=active_subcore,
-                        activated_mlus=activated + [target_cid],
-                        spoke_predictions=preds[:6],
-                        inspectable_trace=(
-                            f"[MLU-360-COMPARE] {focal_cid} <-> {target_cid} | "
-                            f"shared=0 | mutex={cmp_dto.get('mutually_exclusive', False)}"
-                        ),
-                        fluent_english=comp_synth,
-                    )
+            bridge_dto = self.find_bridge_360(focal_cid, target_cid, max_hops=4)
+            if bridge_dto.get("connected") and bridge_dto.get("bridge_synthesis"):
+                br_synth = str(bridge_dto["bridge_synthesis"])
+                return MLMQueryResult(
+                    query=clean_q,
+                    focal_concept=focal_cid,
+                    status="VERIFIED",
+                    answer=br_synth,
+                    confidence=0.82,
+                    epistemic_entropy=0.12,
+                    active_subcore=active_subcore,
+                    activated_mlus=activated + [target_cid],
+                    spoke_predictions=preds[:6],
+                    inspectable_trace=(
+                        f"[MLU-360-BRIDGE] {focal_cid} <-> {target_cid} | "
+                        f"hops={bridge_dto.get('hop_count', 0)}"
+                    ),
+                    fluent_english=br_synth,
+                )
+
+            # Phase 41b: 2-Observation Abductive Diagnosis Fallback (e.g., "fever and inflammation")
+            abd2 = self.diagnose_abductive_360(
+                [focal_cid, target_cid], max_hops=3, top_k=3
+            )
+            if (
+                abd2.get("best_explanation")
+                and float(abd2.get("best_coverage_ratio", 0.0)) >= 0.99
+                and abd2.get("diagnostic_synthesis")
+            ):
+                best_e2 = str(abd2["best_explanation"])
+                d_synth2 = str(abd2["diagnostic_synthesis"])
+                c2 = abd2.get("candidates", [{}])[0]
+                p_conf2 = float(c2.get("posterior_confidence", 0.85))
+                return MLMQueryResult(
+                    query=clean_q,
+                    focal_concept=best_e2,
+                    status="VERIFIED",
+                    answer=d_synth2,
+                    confidence=p_conf2,
+                    epistemic_entropy=round(1.0 - p_conf2, 4),
+                    active_subcore=active_subcore,
+                    activated_mlus=activated + [focal_cid, target_cid, best_e2],
+                    spoke_predictions=preds[:6],
+                    inspectable_trace=(
+                        f"[MLU-360-DIAGNOSE] observations={[focal_cid, target_cid]} -> "
+                        f"best_explanation={best_e2}"
+                    ),
+                    fluent_english=d_synth2,
+                )
+
+            # Phase 57: Contrastive 360° comparison when two concepts have divergent/mutually-exclusive spokes
+            if comp_synth and (
+                cmp_dto.get("mutually_exclusive")
+                or (cmp_dto.get("distinct_a") and cmp_dto.get("distinct_b"))
+            ):
+                return MLMQueryResult(
+                    query=clean_q,
+                    focal_concept=focal_cid,
+                    status="VERIFIED",
+                    answer=comp_synth,
+                    confidence=0.90,
+                    epistemic_entropy=0.08,
+                    active_subcore=active_subcore,
+                    activated_mlus=activated + [target_cid],
+                    spoke_predictions=preds[:6],
+                    inspectable_trace=(
+                        f"[MLU-360-COMPARE] {focal_cid} <-> {target_cid} | "
+                        f"shared=0 | mutex={cmp_dto.get('mutually_exclusive', False)}"
+                    ),
+                    fluent_english=comp_synth,
+                )
 
         # Case B: Open 360° synthesis across all radial spokes + multi-hop causal wave + learned neural sequence continuation
         spoke_clauses: list[str] = []
@@ -2113,6 +2169,10 @@ class SpiderWebMLM:
                 lines.append(
                     f"what causes {o}? think tracing backward causal spoke to {s} answer {s} causes {o}."
                 )
+            elif pred in ("larger_than", "greater_than", "before", "after"):
+                lines.append(
+                    f"is {s} {p} {o}? think 360 poset order on dynamics spoke confirms {s} {p} {o} answer yes {s} is {p} {o}."
+                )
             elif pred in ("disjoint_with", "cannot_be", "different_from"):
                 lines.append(
                     f"is a {s} a {o}? think mutual exclusivity gate refutes {s} and {o} answer no a {s} is not a {o}."
@@ -2130,7 +2190,7 @@ class SpiderWebMLM:
     def _build_arena_conditioning(
         self, prompt: str, q_res: MLMQueryResult
     ) -> tuple[str, list[float]]:
-        """Phase 55: Extract 6-spoke neural cell priors and multi-hop Chain-of-Thought proof sequences from a 360° Arena wave."""
+        """Phase 55 & 59: Extract 6-spoke neural cell priors and multi-hop Chain-of-Thought proof sequences from a 360° Arena wave."""
         # Map 360° predicates & wave traces to NeuralSpiderWebMlu's 6 logic cells:
         # 0: TAXONOMY, 1: MEREOLOGY, 2: CAUSALITY, 3: SPATIAL, 4: CAPABILITY, 5: DYNAMICS
         pred_to_cell: dict[str, tuple[int, str]] = {
@@ -2151,6 +2211,7 @@ class SpiderWebMLM:
             "lives_in": (3, "spatial"),
             "can": (4, "capability"),
             "capable_of": (4, "capability"),
+            "larger_than": (5, "dynamics"),
             "greater_than": (5, "dynamics"),
             "less_than": (5, "dynamics"),
             "before": (5, "dynamics"),
@@ -2166,7 +2227,10 @@ class SpiderWebMLM:
             if f"({pred_k})" in tr:
                 raw_prior[c_idx] += 3.0
                 matched_trace_spoke = s_label
-        if (
+        if "I_SORT" in tr or "[MLU-360-ORDER]" in tr:
+            raw_prior[5] += 3.5
+            matched_trace_spoke = "dynamics"
+        elif (
             q_res.status == "REFUTED"
             or "I_MUTEX" in tr
             or "[MLU-360-COMPARE]" in tr
@@ -2203,9 +2267,23 @@ class SpiderWebMLM:
         if not ans_words:
             return "", spoke_prior
 
-        if q_res.status == "REFUTED":
+        if q_res.status == "REFUTED" and "I_SORT" in tr:
+            think_clause = (
+                f"think 360 poset antisymmetry gate refutes {focal_w} on dynamics spoke"
+            )
+        elif q_res.status == "REFUTED":
             think_clause = (
                 f"think 360 invariant gate refutes {focal_w} via mutual exclusivity on taxonomy spoke"
+            )
+        elif "[MLU-360-ORDER]" in tr:
+            hop_nodes = [
+                " ".join(_tokenize_words(c))
+                for c in q_res.activated_mlus
+                if c != "CORE_ROOT" and not c.startswith("SUBCORE_")
+            ]
+            chain_w = " to ".join(hop_nodes[:5]) if len(hop_nodes) >= 2 else focal_w
+            think_clause = (
+                f"think 360 transitive poset order traverses {chain_w} on dynamics spoke"
             )
         elif "[MLU-360-EXPLAIN]" in tr:
             hop_nodes = [
@@ -2635,7 +2713,12 @@ class SpiderWebMLM:
             trace = q_res.inspectable_trace
             conf = q_res.confidence
 
-            if "[MLU-360-EXPLAIN]" in trace or "[MLU-360-COMPARE]" in trace:
+            if (
+                "[MLU-360-EXPLAIN]" in trace
+                or "[MLU-360-COMPARE]" in trace
+                or "[MLU-360-ORDER]" in trace
+                or status == "REFUTED"
+            ):
                 neural_grounded = False
 
             # Phase 55 & 57: When the 360° Arena resolves a multi-hop/abductive/comparative/refuted/explanation query
@@ -2848,6 +2931,11 @@ class SpiderWebMLM:
                 elif p.predicate in ("located_in", "lives_in", "orbits"):
                     _add_line(
                         f"where is {sa} {s}? think 360 sleep consolidation traces spatial spoke from {hop_str} answer {sa} {s} is in {o}."
+                    )
+                elif p.predicate in ("larger_than", "greater_than", "before", "after"):
+                    pred_w = p.predicate.replace("_", " ")
+                    _add_line(
+                        f"is {s} {pred_w} {o}? think 360 sleep consolidation traces transitive poset order from {hop_str} on dynamics spoke answer yes {s} is {pred_w} {o}."
                     )
 
             # 3. Consolidate multi-hop causal wave cascades

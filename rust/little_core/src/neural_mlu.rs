@@ -743,7 +743,7 @@ impl NeuralSpiderWebMlu {
                     counts[4] += 1.0;
                     matched = true;
                 }
-                "dynamics" | "quantitative" => {
+                "dynamics" | "quantitative" | "poset" => {
                     counts[5] += 1.0;
                     matched = true;
                 }

@@ -135,6 +135,18 @@
       "consist of",
       "contains",
       "contain"
+    ],
+    "larger_than": [
+      "is larger than",
+      "are larger than",
+      "larger than",
+      "is greater than",
+      "greater than",
+      "is bigger than",
+      "bigger than",
+      "exceeds",
+      "precedes",
+      "comes before"
     ]
   },
   "passive_patterns": {

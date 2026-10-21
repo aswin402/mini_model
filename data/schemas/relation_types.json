@@ -231,7 +231,9 @@
         "entity"
       ],
       "transitive": true,
-      "reverse_refutation": true
+      "acyclic": true,
+      "reverse_refutation": true,
+      "axis": "dynamics"
     },
     {
       "name": "made_of",
