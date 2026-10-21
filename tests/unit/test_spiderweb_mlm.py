@@ -1368,6 +1368,80 @@ def test_spiderweb_mlm_phase61_cross_domain_proportional_analogy_and_neural_fusi
         mlm.close()
 
 
+def test_spiderweb_mlm_phase62_compositional_set_intersection_and_neural_fusion(
+    tmp_path,
+) -> None:
+    """Verify Phase 62: Compositional Set & Conjunctive Constraint Intersection ('Which mammal can echolocate?', 'Which bird cannot fly?', 'Which bird has wings and lives in Antarctica?'), Neural Fusion, and 'Why?' Proof Explanation."""
+    db_file = str(tmp_path / "phase62_compositional_intersection.db")
+    with MemoryStore(db_file, seed_ontology=False) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+
+        # 1. Teach multi-hop taxonomy + positive & negated spoke constraints
+        mlm.chat_turn_360(
+            "A mammal is an animal. "
+            "A cetacean is a mammal. "
+            "A dolphin is a cetacean. "
+            "A dolphin can echolocate. "
+            "A bird is an animal. "
+            "A bird has wings. "
+            "A bird can fly. "
+            "An eagle is a bird. "
+            "A penguin is a bird. "
+            "A penguin lives in Antarctica.",
+            persist=False,
+        )
+        mlm.chat_turn_360("Actually, a penguin cannot fly.", persist=False)
+
+        # 2. Multi-hop taxonomic + capability intersection: "Which mammal can echolocate?" -> DOLPHIN
+        q_mammal = mlm.chat_turn_360("Which mammal can echolocate?", persist=False)
+        assert q_mammal["status"] == "VERIFIED"
+        assert q_mammal["focal_concept"] == "DOLPHIN"
+        assert "[MLU-360-INTERSECT]" in q_mammal["trace"]
+        assert "match=DOLPHIN" in q_mammal["trace"]
+        assert "dolphin is a mammal that can echolocate" in q_mammal["reply"].lower()
+        assert "compositional set intersection filters" in q_mammal["neural_thinking"].lower()
+        assert "dolphin" in q_mammal["neural_answer"].lower()
+        top_cell, top_w = q_mammal["active_spoke_weights"][0]
+        assert top_cell == "CELL_4_CAPABILITY"
+        assert top_w > 0.25
+
+        # 3. Multi-turn "Why?" explains both the 2-hop taxonomic lineage and the capability spoke
+        q_why_mammal = mlm.chat_turn_360("Why?", persist=False)
+        assert q_why_mammal["status"] == "VERIFIED"
+        assert "[MLU-360-EXPLAIN]" in q_why_mammal["trace"]
+        assert "dolphin is a cetacean" in q_why_mammal["reply"].lower()
+        assert "cetacean is a mammal" in q_why_mammal["reply"].lower()
+        assert "dolphin can echolocate" in q_why_mammal["reply"].lower()
+
+        # 4. Negated constraint intersection: "Which bird cannot fly?" -> PENGUIN
+        q_neg = mlm.chat_turn_360("Which bird cannot fly?", persist=False)
+        assert q_neg["status"] == "VERIFIED"
+        assert q_neg["focal_concept"] == "PENGUIN"
+        assert "[MLU-360-INTERSECT]" in q_neg["trace"]
+        assert "penguin is a bird that cannot fly" in q_neg["reply"].lower()
+        assert "penguin" in q_neg["neural_answer"].lower()
+
+        # 5. Conjunctive multi-constraint intersection (inherited mereology + direct spatial):
+        # "Which bird has wings and lives in Antarctica?" -> PENGUIN
+        q_conj = mlm.chat_turn_360(
+            "Which bird has wings and lives in Antarctica?", persist=False
+        )
+        assert q_conj["status"] == "VERIFIED"
+        assert q_conj["focal_concept"] == "PENGUIN"
+        assert "[MLU-360-INTERSECT]" in q_conj["trace"]
+        assert "penguin is a bird that has wings and lives in antarctica" in q_conj["reply"].lower()
+        assert "penguin" in q_conj["neural_answer"].lower()
+
+        # 6. Multi-turn "Why?" on the conjunctive query explains taxonomy + inherited mereology + spatial spoke
+        q_why_conj = mlm.chat_turn_360("Why?", persist=False)
+        assert q_why_conj["status"] == "VERIFIED"
+        assert "penguin is a bird" in q_why_conj["reply"].lower()
+        assert "bird has part wings" in q_why_conj["reply"].lower()
+        assert "penguin located in antarctica" in q_why_conj["reply"].lower()
+        mlm.close()
+
+
+
 
 
 

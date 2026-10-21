@@ -1182,6 +1182,45 @@ class SpiderWebMLM:
                         queue.append((t_cid, next_path))
         return []
 
+    def _find_taxonomic_path(
+        self, start_cid: str, ancestor_cid: str, max_hops: int = 5
+    ) -> list[tuple[str, str, str]]:
+        """Phase 62: Find the shortest verified taxonomic path [(u, 'is_a', v), ...] from start_cid to ancestor_cid."""
+        from collections import deque
+
+        if (
+            not start_cid
+            or not ancestor_cid
+            or start_cid == ancestor_cid
+            or start_cid not in self.nodes
+        ):
+            return []
+        queue: deque[tuple[str, list[tuple[str, str, str]]]] = deque([(start_cid, [])])
+        visited: set[str] = {start_cid}
+        while queue:
+            curr, path = queue.popleft()
+            unit = self.nodes.get(curr)
+            if unit is None:
+                continue
+            for sp in unit.spokes.values():
+                for t_cid, rec in sp.target_affinities.items():
+                    if not (
+                        isinstance(rec, list)
+                        and len(rec) >= 4
+                        and float(rec[0]) > float(rec[1])
+                    ):
+                        continue
+                    pred = str(rec[3])
+                    if pred not in ("is_a", "subclass_of", "instance_of"):
+                        continue
+                    next_path = [*path, (curr, pred, t_cid)]
+                    if t_cid == ancestor_cid:
+                        return next_path
+                    if len(next_path) < max_hops and t_cid not in visited:
+                        visited.add(t_cid)
+                        queue.append((t_cid, next_path))
+        return []
+
     def _extract_arena_proof_steps(
         self, res: MLMQueryResult, target_cid: str | None
     ) -> list[tuple[str, str, str]]:
@@ -1269,6 +1308,11 @@ class SpiderWebMLM:
                             ):
                                 return [*anc_a[a_id], *path_b, (a_id, "disjoint_with", b_id)]
             return [(focal, "disjoint_with", target_cid)]
+
+        if "[MLU-360-INTERSECT]" in res.inspectable_trace:
+            inter_steps = list(getattr(self, "_last_intersect_proof_steps", []))
+            if inter_steps:
+                return inter_steps
 
         if target_cid:
             direct_or_hop = self._find_verified_spoke_path(focal, target_cid, max_hops=6)
@@ -1408,6 +1452,7 @@ class SpiderWebMLM:
         focal_pos: int = -1
         target_cid: str | None = None
         matched_cids: list[str] = []
+        matched_spans: list[tuple[str, int, int]] = []
 
         # Check multi-word and single-word matches in self.nodes
         for i in range(len(tokens)):
@@ -1420,6 +1465,7 @@ class SpiderWebMLM:
                 ):
                     if bigram_cid not in matched_cids:
                         matched_cids.append(bigram_cid)
+                        matched_spans.append((bigram_cid, i, i + 2))
                     if focal_cid is None:
                         focal_cid = bigram_cid
                         focal_pos = i
@@ -1436,11 +1482,80 @@ class SpiderWebMLM:
                     single_cid in m.split("_") for m in matched_cids
                 ):
                     matched_cids.append(single_cid)
+                    matched_spans.append((single_cid, i, i + 1))
                 if focal_cid is None:
                     focal_cid = single_cid
                     focal_pos = i
                 elif single_cid != focal_cid and target_cid is None:
                     target_cid = single_cid
+
+        # Phase 62: Compositional Set & Conjunctive Constraint Intersection ("Which mammal can echolocate?", "Which bird cannot fly?")
+        if len(matched_spans) >= 2 and (
+            matched_spans[0][1] == 0 or (tokens and tokens[0] in ("which", "what", "who"))
+        ):
+            cat_cid, _, prev_end = matched_spans[0]
+            constraints: list[tuple[int, str | None, str]] = []
+            valid_constraints = True
+            for c_cid, s_idx, e_idx in matched_spans[1:]:
+                span_toks = tokens[prev_end:s_idx]
+                prev_end = e_idx
+                has_neg_tok = any(
+                    t in self.frame_policy.negation_tokens
+                    or t in ("cannot", "not", "never", "without")
+                    for t in span_toks
+                )
+                clean_span = [
+                    t
+                    for t in span_toks
+                    if t not in ("and", "that", "which", "who", "also")
+                    and t not in self.frame_policy.negation_tokens
+                    and t not in ("cannot", "not", "never", "without")
+                ]
+                pred_k, pol_k = self._resolve_operator_span(
+                    clean_span if clean_span else span_toks
+                )
+                if has_neg_tok:
+                    pol_k = -1
+                    if pred_k in (None, "disjoint_with", "not_a"):
+                        pred_k = "can" if "cannot" in span_toks else None
+                if pred_k is None and pol_k > 0:
+                    valid_constraints = False
+                    break
+                constraints.append((pol_k, pred_k, c_cid))
+            if valid_constraints and constraints:
+                inter_dto = self.intersect_concepts_360(cat_cid, constraints, max_hops=4)
+                if inter_dto.get("resolved") and inter_dto.get("best_concept"):
+                    best_c = str(inter_dto["best_concept"])
+                    in_synth = str(inter_dto.get("intersection_synthesis", ""))
+                    in_conf = float(inter_dto.get("confidence", 0.90))
+                    in_spoke = str(inter_dto.get("primary_spoke", "taxonomy"))
+                    in_pred = str(inter_dto.get("primary_predicate", "is_a"))
+                    sp_preds = list(inter_dto.get("spoke_predictions", []))
+                    self._last_intersect_proof_steps = list(
+                        inter_dto.get("proof_steps", [])
+                    )
+                    self._update_conversation_context(best_c)
+                    return MLMQueryResult(
+                        query=clean_q,
+                        focal_concept=best_c,
+                        status="VERIFIED",
+                        answer=in_synth,
+                        confidence=in_conf,
+                        epistemic_entropy=round(1.0 - in_conf, 4),
+                        active_subcore=(
+                            self.nodes[best_c].parent_hub
+                            if best_c in self.nodes and self.nodes[best_c].parent_hub
+                            else "CORE_ROOT"
+                        ),
+                        activated_mlus=["CORE_ROOT", best_c, *matched_cids],
+                        spoke_predictions=sp_preds,
+                        inspectable_trace=(
+                            f"[MLU-360-INTERSECT] category={cat_cid} | "
+                            f"constraints={inter_dto.get('constraint_summary', '')} -> "
+                            f"match={best_c} | spoke={in_spoke}({in_pred})"
+                        ),
+                        fluent_english=in_synth,
+                    )
 
         # Phase 61: Cross-Domain Proportional Analogy Routing (A : B :: C : ?) when 3 concepts are present
         if len(matched_cids) == 3:
@@ -2523,6 +2638,202 @@ class SpiderWebMLM:
             "spoke_prediction": best_cd,
         }
 
+    def intersect_concepts_360(
+        self,
+        category_concept: str,
+        constraints: list[tuple[int, str | None, str]],
+        max_hops: int = 4,
+    ) -> dict[str, Any]:
+        """Phase 62: Solve Compositional Set & Conjunctive Constraint Intersection queries ('Which mammal can echolocate?', 'Which bird cannot fly?')."""
+        cat_cid = category_concept.strip().upper().replace(" ", "_")
+        empty_res: dict[str, Any] = {
+            "resolved": False,
+            "category_concept": cat_cid,
+            "best_concept": "",
+            "matched_candidates": [],
+            "confidence": 0.0,
+            "primary_spoke": "taxonomy",
+            "primary_predicate": "is_a",
+            "constraint_summary": "",
+            "proof_steps": [],
+            "spoke_predictions": [],
+            "intersection_synthesis": "",
+        }
+        if cat_cid not in self.nodes or not constraints:
+            return empty_res
+
+        # 1. Discover all taxonomic descendants of cat_cid via verified taxonomic edges
+        descendants: list[tuple[str, list[tuple[str, str, str]]]] = []
+        for cand_cid in self.nodes:
+            if (
+                cand_cid in (cat_cid, "CORE_ROOT")
+                or cand_cid.startswith("SUBCORE_")
+            ):
+                continue
+            tax_path = self._find_taxonomic_path(cand_cid, cat_cid, max_hops=max_hops)
+            if tax_path:
+                descendants.append((cand_cid, tax_path))
+
+        if not descendants:
+            return empty_res
+
+        # 2. Evaluate each descendant against every positive or negated spoke constraint
+        scored_matches: list[
+            tuple[
+                float,
+                str,
+                list[tuple[str, str, str]],
+                list[str],
+                list[MLUSpokePrediction],
+                str,
+                str,
+            ]
+        ] = []
+
+        for cand_cid, tax_path in descendants:
+            cand_unit = self.nodes[cand_cid]
+            preds, _ = self._collect_360_predictions(cand_unit, max_hops=max_hops)
+            all_satisfied = True
+            total_conf = 0.0
+            c_clauses: list[str] = []
+            c_proof_steps: list[tuple[str, str, str]] = list(tax_path)
+            c_spoke_preds: list[MLUSpokePrediction] = []
+            primary_spoke = "taxonomy"
+            primary_pred = "is_a"
+
+            for pol, req_pred, raw_tgt in constraints:
+                tgt_cid = raw_tgt.strip().upper().replace(" ", "_")
+                tgt_w = tgt_cid.lower().replace("_", " ")
+                if pol < 0:
+                    # Negated constraint (e.g., 'cannot fly', 'does not have wings')
+                    neg_rec_pred: str | None = None
+                    neg_spoke = "procedural"
+                    for sp_name, sp_head in cand_unit.spokes.items():
+                        rec = sp_head.target_affinities.get(tgt_cid)
+                        if (
+                            isinstance(rec, list)
+                            and len(rec) >= 4
+                            and float(rec[1]) > float(rec[0])
+                        ):
+                            neg_rec_pred = str(rec[3])
+                            neg_spoke = sp_name
+                            break
+                    if neg_rec_pred is None:
+                        all_satisfied = False
+                        break
+                    eff_p = req_pred or neg_rec_pred
+                    if eff_p in ("can", "capable_of"):
+                        c_clauses.append(f"cannot {tgt_w}")
+                        step_p = "cannot"
+                    elif eff_p in ("has_part", "has_property", "has"):
+                        c_clauses.append(f"does not have {tgt_w}")
+                        step_p = "does_not_have"
+                    else:
+                        c_clauses.append(f"does not {eff_p.replace('_', ' ')} {tgt_w}")
+                        step_p = f"cannot_{eff_p}"
+                    neg_edge = (cand_cid, step_p, tgt_cid)
+                    if neg_edge not in c_proof_steps:
+                        c_proof_steps.append(neg_edge)
+                    total_conf += 0.95
+                    primary_spoke = neg_spoke
+                    primary_pred = eff_p
+                else:
+                    # Positive spoke constraint (e.g., 'lives in antarctica', 'can echolocate', 'has wings')
+                    cand_hits = [
+                        p
+                        for p in preds
+                        if p.target_concept == tgt_cid
+                        and p.verified
+                        and p.predicate not in ("co_occurs_with", "disjoint_with", "not_a")
+                    ]
+                    if not cand_hits:
+                        all_satisfied = False
+                        break
+                    best_hit = max(
+                        cand_hits,
+                        key=lambda p: (
+                            p.combined_confidence
+                            + (0.25 if req_pred and p.predicate == req_pred else 0.0)
+                        ),
+                    )
+                    hit_p = best_hit.predicate
+                    if hit_p in ("located_in", "lives_in"):
+                        c_clauses.append(f"lives in {tgt_w}")
+                    elif hit_p in ("has_part", "has_property", "has"):
+                        c_clauses.append(f"has {tgt_w}")
+                    elif hit_p in ("can", "capable_of"):
+                        c_clauses.append(f"can {tgt_w}")
+                    else:
+                        c_clauses.append(f"{hit_p.replace('_', ' ')} {tgt_w}")
+                    hop_edges = self._find_verified_spoke_path(
+                        cand_cid, tgt_cid, max_hops=max_hops
+                    )
+                    for e in hop_edges or [(cand_cid, hit_p, tgt_cid)]:
+                        if e not in c_proof_steps:
+                            c_proof_steps.append(e)
+                    c_spoke_preds.append(best_hit)
+                    # Direct ownership bonus over inherited property
+                    direct_bonus = (
+                        0.08
+                        if hop_edges and len(hop_edges) == 1
+                        else 0.0
+                    )
+                    total_conf += best_hit.combined_confidence + direct_bonus
+                    primary_spoke = best_hit.spoke
+                    primary_pred = best_hit.predicate
+
+            if all_satisfied:
+                mean_conf = total_conf / float(len(constraints))
+                scored_matches.append(
+                    (
+                        mean_conf,
+                        cand_cid,
+                        c_proof_steps,
+                        c_clauses,
+                        c_spoke_preds,
+                        primary_spoke,
+                        primary_pred,
+                    )
+                )
+
+        if not scored_matches:
+            return empty_res
+
+        scored_matches.sort(key=lambda item: item[0], reverse=True)
+        (
+            best_score,
+            best_cid,
+            best_steps,
+            best_clauses,
+            best_sp_preds,
+            best_spoke,
+            best_pred,
+        ) = scored_matches[0]
+        best_w = best_cid.lower().replace("_", " ")
+        cat_w = cat_cid.lower().replace("_", " ")
+        cat_art = "an" if cat_w and cat_w[0] in "aeiou" else "a"
+        synthesis = (
+            f"{best_w.capitalize()} is {cat_art} {cat_w} that "
+            f"{' and '.join(best_clauses)}."
+        )
+        c_summary = " & ".join(
+            f"{'!' if pol < 0 else ''}{pred or '*'}:{tgt}"
+            for pol, pred, tgt in constraints
+        )
+        return {
+            "resolved": True,
+            "category_concept": cat_cid,
+            "best_concept": best_cid,
+            "matched_candidates": [m[1] for m in scored_matches],
+            "confidence": round(min(0.99, best_score), 4),
+            "primary_spoke": best_spoke,
+            "primary_predicate": best_pred,
+            "constraint_summary": c_summary,
+            "proof_steps": best_steps,
+            "spoke_predictions": best_sp_preds,
+            "intersection_synthesis": synthesis,
+        }
+
     def train_neural_mlu(
         self,
         text: str,
@@ -2783,6 +3094,17 @@ class SpiderWebMLM:
             chain_w = " to ".join(hop_nodes[:4]) if len(hop_nodes) >= 2 else focal_w
             think_clause = (
                 f"think 360 proportional analogy maps {chain_w} on {an_spoke} spoke"
+            )
+        elif "[MLU-360-INTERSECT]" in tr:
+            hop_nodes = [
+                " ".join(_tokenize_words(c))
+                for c in q_res.activated_mlus
+                if c != "CORE_ROOT" and not c.startswith("SUBCORE_")
+            ]
+            in_spoke = matched_trace_spoke or "taxonomy"
+            chain_w = " and ".join(hop_nodes[:4]) if len(hop_nodes) >= 2 else focal_w
+            think_clause = (
+                f"think 360 compositional set intersection filters {chain_w} on {in_spoke} spoke"
             )
         elif "[MLU-360-EXPLAIN]" in tr:
             hop_nodes = [
@@ -3221,6 +3543,7 @@ class SpiderWebMLM:
                 or "[MLU-360-COMPARE]" in trace
                 or "[MLU-360-ORDER]" in trace
                 or "[MLU-360-ANALOGY]" in trace
+                or "[MLU-360-INTERSECT]" in trace
                 or status == "REFUTED"
             ):
                 neural_grounded = False
@@ -3260,6 +3583,7 @@ class SpiderWebMLM:
                     or "[MLU-360-DIAGNOSE]" in q_res.inspectable_trace
                     or "[MLU-360-COMPARE]" in q_res.inspectable_trace
                     or "[MLU-360-ANALOGY]" in q_res.inspectable_trace
+                    or "[MLU-360-INTERSECT]" in q_res.inspectable_trace
                     or "[MLU-360-COUNTERFACTUAL]" in q_res.inspectable_trace
                     or (
                         "[MLU-360-PLAN]" in q_res.inspectable_trace
