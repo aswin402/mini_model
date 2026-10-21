@@ -1314,6 +1314,14 @@ class SpiderWebMLM:
             if inter_steps:
                 return inter_steps
 
+        if (
+            "[MLU-360-COUNTERFACTUAL]" in res.inspectable_trace
+            or "[MLU-360-CAUSAL-WAVE]" in res.inspectable_trace
+        ):
+            causal_steps = list(getattr(self, "_last_causal_proof_steps", []))
+            if causal_steps:
+                return causal_steps
+
         if target_cid:
             direct_or_hop = self._find_verified_spoke_path(focal, target_cid, max_hops=6)
             if direct_or_hop:
@@ -1949,27 +1957,70 @@ class SpiderWebMLM:
             )
 
         # Case A: 360° Counterfactual Intervention, Comparative Wave Intersection & Relational Bridge
+        has_cf_cue = any(
+            t
+            in (
+                "without",
+                "removed",
+                "remove",
+                "stops",
+                "stop",
+                "disappears",
+                "disappear",
+                "fails",
+                "fail",
+                "absent",
+                "prevented",
+                "suppressed",
+                "eliminated",
+                "lacks",
+            )
+            for t in tokens
+        ) or (
+            "if" in tokens
+            and any(
+                t in self.frame_policy.negation_tokens or t in ("not", "no", "never")
+                for t in tokens
+            )
+        )
         if target_cid is not None and target_cid in self.nodes:
-            if query_pol < 0:
+            if query_pol < 0 or has_cf_cue:
+                cf_root, cf_supp = focal_cid, target_cid
                 cf_dto = self.intervene_counterfactual_360(
-                    focal_cid, target_cid, max_hops=3
+                    cf_root, cf_supp, max_hops=4
                 )
-                inv_list = cf_dto.get("invalidated_conclusions", [])
+                if not cf_dto.get("invalidated_conclusions"):
+                    alt_dto = self.intervene_counterfactual_360(
+                        target_cid, focal_cid, max_hops=4
+                    )
+                    if alt_dto.get("invalidated_conclusions"):
+                        cf_dto = alt_dto
+                        cf_root, cf_supp = target_cid, focal_cid
+                inv_list = [str(c) for c in cf_dto.get("invalidated_conclusions", [])]
                 cf_synth = str(cf_dto.get("counterfactual_synthesis", "")).strip()
                 if inv_list and cf_synth:
+                    c_wave = self.simulate_causal_360(cf_root, max_hops=4)
+                    self._last_causal_proof_steps = [
+                        (
+                            str(st["source_concept"]),
+                            str(st["predicate"]),
+                            str(st["target_concept"]),
+                        )
+                        for st in c_wave.get("causal_steps", [])
+                    ]
                     return MLMQueryResult(
                         query=clean_q,
-                        focal_concept=focal_cid,
+                        focal_concept=cf_root,
                         status="VERIFIED",
                         answer=cf_synth,
                         confidence=0.88,
                         epistemic_entropy=0.1,
                         active_subcore=active_subcore,
-                        activated_mlus=activated + [target_cid],
+                        activated_mlus=["CORE_ROOT", cf_root, cf_supp, *inv_list],
                         spoke_predictions=preds[:6],
                         inspectable_trace=(
-                            f"[MLU-360-COUNTERFACTUAL] root={focal_cid} | "
-                            f"suppressed={target_cid} | invalidated={inv_list}"
+                            f"[MLU-360-COUNTERFACTUAL] root={cf_root} | "
+                            f"suppressed={cf_supp} | invalidated={inv_list} | spoke=dynamics(causes)"
                         ),
                         fluent_english=cf_synth,
                     )
@@ -2068,6 +2119,55 @@ class SpiderWebMLM:
                     fluent_english=comp_synth,
                 )
 
+        # Phase 63: Single-concept Counterfactual Root Intervention ("What happens if sunlight is removed?", "What if rain stops?")
+        if target_cid is None and has_cf_cue:
+            cf_dto = self.intervene_counterfactual_360(focal_cid, focal_cid, max_hops=4)
+            causal_dto = self.simulate_causal_360(focal_cid, max_hops=4)
+            inv_list = [
+                str(c)
+                for c in (
+                    cf_dto.get("invalidated_conclusions")
+                    or causal_dto.get("affected_concepts")
+                    or []
+                )
+            ]
+            if inv_list:
+                self._last_causal_proof_steps = [
+                    (
+                        str(st["source_concept"]),
+                        str(st["predicate"]),
+                        str(st["target_concept"]),
+                    )
+                    for st in causal_dto.get("causal_steps", [])
+                ]
+                inv_words = [c.lower().replace("_", " ") for c in inv_list]
+                inv_str = (
+                    inv_words[0]
+                    if len(inv_words) == 1
+                    else f"{', '.join(inv_words[:-1])} and {inv_words[-1]}"
+                )
+                f_w = focal_cid.lower().replace("_", " ")
+                cf_fluent = (
+                    f"Counterfactual intervention: if {f_w} is removed, "
+                    f"downstream conclusions {inv_str} are invalidated."
+                )
+                return MLMQueryResult(
+                    query=clean_q,
+                    focal_concept=focal_cid,
+                    status="VERIFIED",
+                    answer=cf_fluent,
+                    confidence=0.90,
+                    epistemic_entropy=0.08,
+                    active_subcore=active_subcore,
+                    activated_mlus=["CORE_ROOT", focal_cid, *inv_list],
+                    spoke_predictions=preds[:6],
+                    inspectable_trace=(
+                        f"[MLU-360-COUNTERFACTUAL] root={focal_cid} | "
+                        f"suppressed={focal_cid} | invalidated={inv_list} | spoke=dynamics(causes)"
+                    ),
+                    fluent_english=cf_fluent,
+                )
+
         # Case B: Open 360° synthesis across all radial spokes + multi-hop causal wave + learned neural sequence continuation
         spoke_clauses: list[str] = []
         for p in preds[:5]:
@@ -2078,8 +2178,20 @@ class SpiderWebMLM:
         causal_suffix = ""
         causal_trace_tag = ""
         if any(p.predicate == "causes" for p in preds):
-            causal_dto = self.simulate_causal_360(focal_cid, max_hops=3)
-            affected_list = causal_dto.get("affected_concepts", [])
+            causal_dto = self.simulate_causal_360(focal_cid, max_hops=4)
+            affected_list = [str(c) for c in causal_dto.get("affected_concepts", [])]
+            if affected_list:
+                self._last_causal_proof_steps = [
+                    (
+                        str(st["source_concept"]),
+                        str(st["predicate"]),
+                        str(st["target_concept"]),
+                    )
+                    for st in causal_dto.get("causal_steps", [])
+                ]
+                for aff_c in affected_list:
+                    if aff_c not in activated:
+                        activated.append(aff_c)
             if len(affected_list) > 1:
                 c_synth = str(causal_dto.get("causal_synthesis", "")).strip()
                 if c_synth:
@@ -3141,8 +3253,24 @@ class SpiderWebMLM:
                     f"think intersecting 360 radial waves from {focal_w} and {target_w} across shared attractors"
                 )
         elif "[MLU-360-COUNTERFACTUAL]" in tr:
+            hop_nodes = [
+                " ".join(_tokenize_words(c))
+                for c in q_res.activated_mlus
+                if c != "CORE_ROOT" and not c.startswith("SUBCORE_")
+            ]
+            chain_w = " and ".join(hop_nodes[:4]) if len(hop_nodes) >= 2 else focal_w
             think_clause = (
-                f"think 360 counterfactual intervention suppresses causal branch from {focal_w}"
+                f"think 360 counterfactual intervention suppresses causal cascade across {chain_w} on causality spoke"
+            )
+        elif "[MLU-360-CAUSAL-WAVE]" in tr:
+            hop_nodes = [
+                " ".join(_tokenize_words(c))
+                for c in q_res.activated_mlus
+                if c != "CORE_ROOT" and not c.startswith("SUBCORE_")
+            ]
+            chain_w = " then ".join(hop_nodes[:4]) if len(hop_nodes) >= 2 else focal_w
+            think_clause = (
+                f"think 360 multi hop causal wave propagates through {chain_w} on causality spoke"
             )
         elif "[MLU-360-PLAN]" in tr:
             think_clause = (
@@ -3544,6 +3672,8 @@ class SpiderWebMLM:
                 or "[MLU-360-ORDER]" in trace
                 or "[MLU-360-ANALOGY]" in trace
                 or "[MLU-360-INTERSECT]" in trace
+                or "[MLU-360-COUNTERFACTUAL]" in trace
+                or "[MLU-360-CAUSAL-WAVE]" in trace
                 or status == "REFUTED"
             ):
                 neural_grounded = False
@@ -3585,6 +3715,7 @@ class SpiderWebMLM:
                     or "[MLU-360-ANALOGY]" in q_res.inspectable_trace
                     or "[MLU-360-INTERSECT]" in q_res.inspectable_trace
                     or "[MLU-360-COUNTERFACTUAL]" in q_res.inspectable_trace
+                    or "[MLU-360-CAUSAL-WAVE]" in q_res.inspectable_trace
                     or (
                         "[MLU-360-PLAN]" in q_res.inspectable_trace
                         and q_res.confidence >= 0.72

@@ -1441,6 +1441,59 @@ def test_spiderweb_mlm_phase62_compositional_set_intersection_and_neural_fusion(
         mlm.close()
 
 
+def test_spiderweb_mlm_phase63_causal_cascade_counterfactual_intervention_and_neural_fusion(
+    tmp_path,
+) -> None:
+    """Verify Phase 63: Multi-Hop Causal Cascade Simulation, Single- & Two-Concept Counterfactual Intervention ('What happens if sunlight is removed?'), CELL_2_CAUSALITY Neural Fusion, and 'Why?' Causal Proof Explanation."""
+    db_file = str(tmp_path / "phase63_causal_counterfactual.db")
+    with MemoryStore(db_file, seed_ontology=False) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+
+        # 1. Teach a 2-hop causal cascade: SUNLIGHT -(causes)-> PHOTOSYNTHESIS -(causes)-> OXYGEN
+        mlm.chat_turn_360(
+            "Sunlight causes photosynthesis. "
+            "Photosynthesis causes oxygen.",
+            persist=False,
+        )
+
+        # 2. Forward multi-hop causal wave inquiry
+        q_wave = mlm.chat_turn_360("What does sunlight cause?", persist=False)
+        assert q_wave["status"] == "VERIFIED"
+        assert "[MLU-360-CAUSAL-WAVE]" in q_wave["trace"]
+        assert "photosynthesis" in q_wave["reply"].lower()
+        assert "oxygen" in q_wave["reply"].lower()
+        assert "multi hop causal wave propagates" in q_wave["neural_thinking"].lower()
+        top_cell_w, top_w_w = q_wave["active_spoke_weights"][0]
+        assert top_cell_w == "CELL_2_CAUSALITY"
+        assert top_w_w > 0.25
+
+        # 3. Single-concept counterfactual root removal: "What happens if sunlight is removed?"
+        q_cf = mlm.chat_turn_360(
+            "What happens if sunlight is removed?", persist=False
+        )
+        assert q_cf["status"] == "VERIFIED"
+        assert q_cf["focal_concept"] == "SUNLIGHT"
+        assert "[MLU-360-COUNTERFACTUAL]" in q_cf["trace"]
+        assert "photosynthesis" in q_cf["reply"].lower()
+        assert "oxygen" in q_cf["reply"].lower()
+        assert "invalidated" in q_cf["reply"].lower()
+        assert "counterfactual intervention suppresses causal cascade" in q_cf["neural_thinking"].lower()
+        assert "invalidated" in q_cf["neural_answer"].lower()
+        top_cell_cf, top_w_cf = q_cf["active_spoke_weights"][0]
+        assert top_cell_cf == "CELL_2_CAUSALITY"
+        assert top_w_cf > 0.25
+
+        # 4. Multi-turn "Why?" explains the full multi-hop causal cascade proof
+        q_why = mlm.chat_turn_360("Why?", persist=False)
+        assert q_why["status"] == "VERIFIED"
+        assert "[MLU-360-EXPLAIN]" in q_why["trace"]
+        assert "sunlight causes photosynthesis" in q_why["reply"].lower()
+        assert "photosynthesis causes oxygen" in q_why["reply"].lower()
+        assert "photosynthesis causes oxygen" in q_why["neural_answer"].lower()
+        mlm.close()
+
+
+
 
 
 
