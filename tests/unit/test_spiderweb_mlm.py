@@ -1013,6 +1013,53 @@ def test_spiderweb_mlm_phase55_arena_conditioned_neural_fusion(tmp_path) -> None
         mlm.close()
 
 
+def test_spiderweb_mlm_phase56_sleep_autonomous_multihop_neural_consolidation(tmp_path) -> None:
+    """Verify Phase 56: Sleep-Cycle Autonomous Multi-Hop Neural Consolidation (consolidate -> NeuralSpiderWebMlu)."""
+    db_file = str(tmp_path / "phase56_sleep_neural_consolidation.db")
+    with MemoryStore(db_file, seed_ontology=False) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+
+        # Teach 1-hop facts only (no multi-hop questions asked yet!)
+        mlm.train_on_text(
+            "An orca is a cetacean. "
+            "A cetacean is a mammal. "
+            "A mammal is an animal. "
+            "An orca can echolocate. "
+            "A dolphin is a cetacean. "
+            "Drought causes crop_failure. "
+            "Crop_failure causes famine.",
+            persist=False,
+        )
+
+        # Run sleep-cycle consolidation (discovers analogies, multi-hop chains, and distills into NeuralSpiderWebMlu)
+        cons = mlm.consolidate()
+        sleep_neural = cons["neural_sleep_consolidation"]
+        assert sleep_neural["synthesized_sequences"] >= 5
+        assert sleep_neural["final_perplexity"] < 1.5
+
+        # Now query NeuralSpiderWebMlu ZERO-SHOT (without calling query_360 or chat_turn_360!)
+        # 1. Multi-hop taxonomy ("is an orca an animal?")
+        n_tax = mlm.generate_neural_mlu("is an orca an animal?", max_new_tokens=36)
+        assert "multi hop taxonomy" in n_tax["neural_thinking"].lower()
+        assert "yes" in n_tax["neural_answer"].lower()
+        assert "animal" in n_tax["neural_answer"].lower()
+        assert n_tax["active_spoke_weights"][0][0] == "CELL_0_TAXONOMY"
+
+        # 2. Analogical curiosity promotion ("can a dolphin echolocate?")
+        n_ana = mlm.generate_neural_mlu("can a dolphin echolocate?", max_new_tokens=36)
+        assert "analogical" in n_ana["neural_thinking"].lower()
+        assert "yes" in n_ana["neural_answer"].lower()
+        assert "echolocate" in n_ana["neural_answer"].lower()
+        assert n_ana["active_spoke_weights"][0][0] == "CELL_4_CAPABILITY"
+
+        # 3. Multi-hop causal cascade ("what causes famine?")
+        n_cau = mlm.generate_neural_mlu("what causes famine?", max_new_tokens=36)
+        assert "causal wave" in n_cau["neural_thinking"].lower()
+        assert "drought" in n_cau["neural_answer"].lower()
+        assert n_cau["active_spoke_weights"][0][0] == "CELL_2_CAUSALITY"
+        mlm.close()
+
+
 
 
 

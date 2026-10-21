@@ -2178,10 +2178,150 @@ class SpiderWebMLM:
             "follow_up_question": delib.get("follow_up_question", ""),
         }
 
+    def consolidate_multihop_to_neural_mlu(
+        self,
+        promoted_hypotheses: list[dict[str, Any]] | None = None,
+        max_sequences: int = 36,
+        epochs: int = 24,
+        learning_rate: float = 0.038,
+        persist: bool = False,
+    ) -> dict[str, Any]:
+        """Phase 56: Sleep-Cycle Autonomous Multi-Hop, Analogical & Causal Neural Consolidation into NeuralSpiderWebMlu."""
+        lines: list[str] = []
+        seen: set[str] = set()
+
+        def _add_line(s_line: str) -> None:
+            if s_line and s_line not in seen and len(lines) < max_sequences:
+                seen.add(s_line)
+                lines.append(s_line)
+
+        def _art(phrase: str) -> str:
+            return "an" if phrase and phrase[0] in "aeiou" else "a"
+
+        # 1. Consolidate analogical curiosity promotions discovered during sleep
+        for hyp in promoted_hypotheses or []:
+            s = " ".join(_tokenize_words(str(hyp.get("subject_concept", ""))))
+            pred = str(hyp.get("predicate", "")).lower().strip()
+            o = " ".join(_tokenize_words(str(hyp.get("target_concept", ""))))
+            src = " ".join(_tokenize_words(str(hyp.get("analog_source", "")))) or "peer"
+            hub = " ".join(_tokenize_words(str(hyp.get("shared_attractor", "")))) or "subcore"
+            if not s or not pred or not o:
+                continue
+            sa = _art(s)
+            oa = _art(o)
+            if pred in ("can", "capable_of"):
+                _add_line(
+                    f"can {sa} {s} {o}? think 360 sleep analogical capability transfer from {src} via {hub} answer yes {sa} {s} can {o}."
+                )
+            elif pred in ("located_in", "lives_in", "orbits"):
+                _add_line(
+                    f"where does {sa} {s} live? think 360 sleep analogical spatial transfer from {src} via {hub} answer {sa} {s} lives in {o}."
+                )
+            elif pred in ("has_part", "has_property", "has"):
+                _add_line(
+                    f"does {sa} {s} have {o}? think 360 sleep analogical mereology transfer from {src} via {hub} answer yes {sa} {s} has {o}."
+                )
+            else:
+                _add_line(
+                    f"is {sa} {s} {oa} {o}? think 360 sleep analogical taxonomy transfer from {src} via {hub} answer yes {sa} {s} is {oa} {o}."
+                )
+
+        # 2. Consolidate multi-hop (>= 2 hops) transitive deductions across active concepts
+        candidate_units = sorted(
+            (
+                u
+                for cid, u in self.nodes.items()
+                if cid != "CORE_ROOT" and cid not in DEFAULT_SUBCORES
+            ),
+            key=lambda u: (u.verified_hits + float(u.activation_count)),
+            reverse=True,
+        )
+        for unit in candidate_units[:24]:
+            if len(lines) >= max_sequences:
+                break
+            direct_targets = {
+                t_cid
+                for sp in unit.spokes.values()
+                for t_cid, rec in sp.target_affinities.items()
+                if isinstance(rec, list) and len(rec) >= 2 and float(rec[0]) > float(rec[1])
+            }
+            preds, activated = self._collect_360_predictions(unit, max_hops=5)
+            s = " ".join(_tokenize_words(unit.concept_id))
+            sa = _art(s)
+            hop_nodes = [
+                " ".join(_tokenize_words(c))
+                for c in activated
+                if c != "CORE_ROOT" and not c.startswith("SUBCORE_")
+            ][:4]
+            for p in preds:
+                if (
+                    not p.verified
+                    or p.target_concept in direct_targets
+                    or p.target_concept == unit.concept_id
+                ):
+                    continue
+                o = " ".join(_tokenize_words(p.target_concept))
+                if not s or not o:
+                    continue
+                oa = _art(o)
+                hop_str = " to ".join(hop_nodes) if len(hop_nodes) >= 2 else f"{s} to {o}"
+                if p.predicate in ("is_a", "subclass_of", "instance_of"):
+                    _add_line(
+                        f"is {sa} {s} {oa} {o}? think 360 sleep consolidation traces multi hop taxonomy from {hop_str} answer yes {sa} {s} is {oa} {o}."
+                    )
+                elif p.predicate in ("has_part", "has_property", "has"):
+                    _add_line(
+                        f"does {sa} {s} have {o}? think 360 sleep consolidation inherits {o} on mereology spoke from {hop_str} answer yes {sa} {s} has {o}."
+                    )
+                elif p.predicate in ("can", "capable_of"):
+                    _add_line(
+                        f"can {sa} {s} {o}? think 360 sleep consolidation inherits capability {o} from {hop_str} answer yes {sa} {s} can {o}."
+                    )
+                elif p.predicate in ("located_in", "lives_in", "orbits"):
+                    _add_line(
+                        f"where is {sa} {s}? think 360 sleep consolidation traces spatial spoke from {hop_str} answer {sa} {s} is in {o}."
+                    )
+
+            # 3. Consolidate multi-hop causal wave cascades
+            has_causal = any(
+                isinstance(rec, list) and len(rec) >= 4 and str(rec[3]) == "causes"
+                for sp in unit.spokes.values()
+                for rec in sp.target_affinities.values()
+            )
+            if has_causal and self.rust_arena.is_native:
+                causal_dto = self.simulate_causal_360(unit.concept_id, max_hops=4)
+                affected = [str(c) for c in causal_dto.get("affected_concepts", [])]
+                if len(affected) >= 2:
+                    chain_w = " to ".join(
+                        " ".join(_tokenize_words(c)) for c in [unit.concept_id, *affected[:3]]
+                    )
+                    for eff_cid in affected[1:]:
+                        e_w = " ".join(_tokenize_words(eff_cid))
+                        if s and e_w:
+                            _add_line(
+                                f"what causes {e_w}? think 360 sleep causal wave propagates from {chain_w} answer {s} causes {e_w}."
+                            )
+                            _add_line(
+                                f"does {s} cause {e_w}? think 360 sleep causal wave propagates from {chain_w} answer yes {s} causes {e_w}."
+                            )
+
+        if not lines:
+            return {
+                "synthesized_sequences": 0,
+                "epochs": 0,
+                "sequences_trained": 0,
+                "final_perplexity": 1.0,
+            }
+        train_rep = self.train_neural_mlu(
+            "\n".join(lines), epochs=epochs, learning_rate=learning_rate, persist=persist
+        )
+        train_rep["synthesized_sequences"] = len(lines)
+        return train_rep
+
     def consolidate(
         self, min_transition_weight: float = 0.05, replay_lr: float = 0.15
     ) -> dict[str, Any]:
-        """Phase 2, 15 & 18: Run Sleep-Cycle Consolidation (spoke replay + transition pruning + mitosis + active curiosity)."""
+        """Phase 2, 15, 18 & 56: Run Sleep-Cycle Consolidation (spoke replay + transition pruning + mitosis + active curiosity + autonomous multi-hop neural consolidation)."""
         rust_report = (
             self.rust_arena.consolidate(
                 min_transition_weight=min_transition_weight, replay_lr=replay_lr
@@ -2201,12 +2341,20 @@ class SpiderWebMLM:
         )
         clusters = self.discover_clusters_360(min_members=2)
         promoted, pruned = self.run_structural_plasticity_cycle()
+        neural_sleep = self.consolidate_multihop_to_neural_mlu(
+            promoted_hypotheses=autonomous_step.get("promoted_hypotheses", []),
+            max_sequences=36,
+            epochs=24,
+            learning_rate=0.038,
+            persist=False,
+        )
         self.save_nodes(promoted if promoted else None)
         return {
             "rust_consolidation": rust_report,
             "curiosity": curiosity,
             "autonomous_curiosity": autonomous_step,
             "latent_clusters": clusters,
+            "neural_sleep_consolidation": neural_sleep,
             "python_mitosis_promotions": promoted,
             "python_pruned_nodes": pruned,
             "total_mlu_nodes": len(self.nodes),

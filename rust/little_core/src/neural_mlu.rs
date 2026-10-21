@@ -714,10 +714,61 @@ impl NeuralSpiderWebMlu {
         caches
     }
 
+    /// Infer the 6-spoke logic cell prior distribution from canonical spoke trace tokens in `seq`.
+    pub fn infer_sequence_spoke_prior(&self, seq: &[usize]) -> Option<[f32; NUM_LOGIC_CELLS]> {
+        let mut counts = [0.0f32; NUM_LOGIC_CELLS];
+        let mut matched = false;
+        for &tid in seq {
+            let Some(w) = self.id_to_vocab.get(tid) else {
+                continue;
+            };
+            match w.as_str() {
+                "taxonomy" | "taxonomic" | "exclusivity" => {
+                    counts[0] += 1.0;
+                    matched = true;
+                }
+                "mereology" => {
+                    counts[1] += 1.0;
+                    matched = true;
+                }
+                "causal" | "causality" | "abductive" => {
+                    counts[2] += 1.0;
+                    matched = true;
+                }
+                "spatial" | "episodic" => {
+                    counts[3] += 1.0;
+                    matched = true;
+                }
+                "procedural" | "capability" => {
+                    counts[4] += 1.0;
+                    matched = true;
+                }
+                "dynamics" | "quantitative" => {
+                    counts[5] += 1.0;
+                    matched = true;
+                }
+                _ => {}
+            }
+        }
+        if !matched {
+            return None;
+        }
+        let mut sum = 0.0f32;
+        for v in &mut counts {
+            *v += 0.02;
+            sum += *v;
+        }
+        for v in &mut counts {
+            *v /= sum;
+        }
+        Some(counts)
+    }
+
     /// Analytical Backpropagation + AdamW update over a single sequence of token IDs `seq`.
     /// Returns the average cross-entropy loss across the sequence.
     pub fn train_sequence_step(&mut self, seq: &[usize], lr: f32) -> f32 {
-        self.train_sequence_step_with_spoke_prior(seq, lr, None, false)
+        let inferred = self.infer_sequence_spoke_prior(seq);
+        self.train_sequence_step_with_spoke_prior(seq, lr, inferred.as_ref(), false)
     }
 
     /// Analytical Backpropagation + AdamW update over `seq` with optional 360° Arena spoke prior
@@ -733,7 +784,8 @@ impl NeuralSpiderWebMlu {
         if len < 2 {
             return 0.0;
         }
-        let caches = self.forward_sequence_with_spoke_prior(&seq[..len], spoke_prior);
+        let fwd_prior = if online_single_seq { spoke_prior } else { None };
+        let caches = self.forward_sequence_with_spoke_prior(&seq[..len], fwd_prior);
         let v_size = self.id_to_vocab.len();
         let scale_qk = 1.0 / (D_MODEL as f32).sqrt();
         let qmark_id = self.vocab_to_id.get("?").copied();
