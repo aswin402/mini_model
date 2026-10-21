@@ -1914,9 +1914,33 @@ class SpiderWebMLM:
             if neural_grounded:
                 if n_think:
                     trace = f"{trace} | [NEURAL-THINK] {n_think}"
-                if status == "UNKNOWN" or not is_question:
+                explicit_concept_in_prompt = any(
+                    t.upper() == q_res.focal_concept
+                    or q_res.focal_concept in "_".join(t.upper() for t in tokens)
+                    for t in tokens
+                )
+                is_structured_wave = (
+                    has_leading_op
+                    or "[MLU-360-DIAGNOSE]" in q_res.inspectable_trace
+                    or "[MLU-360-COMPARE]" in q_res.inspectable_trace
+                    or "[MLU-360-COUNTERFACTUAL]" in q_res.inspectable_trace
+                    or (
+                        "[MLU-360-PLAN]" in q_res.inspectable_trace
+                        and q_res.confidence >= 0.72
+                    )
+                )
+                if (
+                    status == "UNKNOWN"
+                    or not is_question
+                    or not explicit_concept_in_prompt
+                    or (not is_structured_wave and n_conf >= 0.90 and n_conf > q_res.confidence + 0.12)
+                ):
                     status = "VERIFIED"
-                    reply = n_ans
+                    reply = (
+                        f"{n_ans} [Neural Thought: {n_think}]"
+                        if n_think and "Thought:" not in n_ans
+                        else n_ans
+                    )
                     conf = n_conf
                 elif n_think and "Thought:" not in reply:
                     reply = f"{reply} [Neural Thought: {n_think}]"
@@ -2198,23 +2222,102 @@ class SpiderWebMLM:
         except OSError:
             return ""
 
+    def _learn_verified_triple_direct(
+        self, subj: str, pred: str, obj: str
+    ) -> tuple[bool, str]:
+        """Verify and commit a structured (subject, predicate, object) triple into Rust Arena, Python MLUs, and MemoryStore."""
+        s_clean = subj.strip().lower().replace(" ", "_")
+        o_clean = obj.strip().lower().replace(" ", "_")
+        p_clean = pred.strip().lower().replace(" ", "_")
+        if not s_clean or not o_clean or s_clean == o_clean:
+            return False, ""
+        spoke = map_predicate_to_spoke(p_clean)
+        subj_u = self.get_or_create_mlu(s_clean, preferred_spoke=spoke)
+        obj_u = self.get_or_create_mlu(o_clean, preferred_spoke=spoke)
+        rust_p = "disjoint_with" if p_clean == "not_a" else p_clean
+        if self.rust_arena.is_native:
+            inv = self.rust_arena.verify_invariants(
+                subj_u.concept_id, rust_p, obj_u.concept_id
+            )
+            passed = bool(inv.get("passed", True))
+        else:
+            passed = self.verifier.verify_relation(s_clean, p_clean, o_clean).passed
+        if not passed:
+            return False, ""
+        if self.rust_arena.is_native:
+            self.rust_arena.learn_spoke(
+                subj_u.concept_id,
+                rust_p,
+                obj_u.concept_id,
+                learning_rate=0.20,
+                verified=True,
+            )
+        subj_u.learn_spoke_relation(
+            predicate=rust_p,
+            target_concept=obj_u.concept_id,
+            target_vec=obj_u.anchor_vec,
+            learning_rate=0.20,
+            verified=True,
+        )
+        obj_u.verified_hits += 0.5
+        c_sub = self.memory.create_concept(subj_u.concept_id)
+        c_obj = self.memory.create_concept(obj_u.concept_id)
+        self.memory.add_relation(c_sub.id, rust_p, c_obj.id)
+        if p_clean not in ("disjoint_with", "not_a"):
+            return (
+                True,
+                f"{s_clean.replace('_', ' ')} {p_clean.replace('_', ' ')} {o_clean.replace('_', ' ')}.",
+            )
+        return True, ""
+
     def ingest_csv_dataset(
         self, csv_path: str, max_rows: int | None = None, persist: bool = False
     ) -> dict[str, Any]:
-        """Phase 47: Ingest tabular CSV/TSV datasets (structured triples or text rows) into the 360° Spider-Web MLM."""
+        """Phase 47 & 54: Ingest tabular CSV/TSV datasets (triples, Kaggle taxonomies, QA pairs, symptom profiles, or prose) into the 360° Spider-Web MLM & Neural MLU."""
         import csv
         from pathlib import Path
 
         fpath = Path(csv_path)
         if not fpath.is_file():
-            return {"rows_processed": 0, "relations_verified": 0, "relations_refuted": 0}
+            return {
+                "rows_processed": 0,
+                "relations_verified": 0,
+                "relations_refuted": 0,
+                "neural_sequences_trained": 0,
+            }
 
-        delim = "\t" if fpath.suffix.lower() == ".tsv" else ","
+        raw_text = fpath.read_text(encoding="utf-8", errors="ignore")
+        first_line = raw_text.splitlines()[0] if raw_text.splitlines() else ""
+        if fpath.suffix.lower() == ".tsv":
+            delim = "\t"
+        elif ";" in first_line and first_line.count(";") > first_line.count(","):
+            delim = ";"
+        else:
+            delim = ","
+
         rows_processed = 0
         relations_verified = 0
         relations_refuted = 0
         text_passages: list[str] = []
         synth_sentences: list[str] = []
+        neural_cot_lines: list[str] = []
+        headers: list[str] = []
+        taxonomy_col_indices: list[int] = []
+        q_col_idx: int = -1
+        a_col_idx: int = -1
+        disease_col_idx: int = -1
+        symptom_cols: list[tuple[int, str]] = []
+
+        tax_ranks = (
+            "scientific_name",
+            "species",
+            "genus",
+            "family",
+            "order",
+            "class",
+            "phylum",
+            "kingdom",
+        )
 
         try:
             with fpath.open("r", encoding="utf-8", errors="ignore", newline="") as f:
@@ -2222,9 +2325,127 @@ class SpiderWebMLM:
                 for row_idx, row in enumerate(reader):
                     if max_rows is not None and rows_processed >= max_rows:
                         break
-                    cells = [c.strip() for c in row if c.strip()]
-                    if not cells:
+                    raw_cells = [c.strip().lstrip("\ufeff") for c in row]
+                    if not any(raw_cells):
                         continue
+
+                    if row_idx == 0:
+                        norm_h = [
+                            "_".join(_tokenize_words(c)) for c in raw_cells
+                        ]
+                        # Check if row 0 is a header row
+                        is_triple_row = (
+                            len(raw_cells) >= 3
+                            and (
+                                self.verifier.registry.relation(norm_h[1]) is not None
+                                or norm_h[1] in ("not_a", "disjoint_with")
+                            )
+                            and norm_h[0] != "subject"
+                        )
+                        if not is_triple_row:
+                            headers = norm_h
+                            for rk in tax_ranks:
+                                if rk in headers:
+                                    taxonomy_col_indices.append(headers.index(rk))
+                            if "question" in headers and "answer" in headers:
+                                q_col_idx = headers.index("question")
+                                a_col_idx = headers.index("answer")
+                            if "disease" in headers:
+                                disease_col_idx = headers.index("disease")
+                                for idx_c, h_name in enumerate(headers):
+                                    if idx_c != disease_col_idx and h_name not in (
+                                        "age",
+                                        "gender",
+                                        "blood_pressure",
+                                        "cholesterol_level",
+                                        "outcome_variable",
+                                    ):
+                                        symptom_cols.append((idx_c, h_name))
+                            continue
+
+                    # 1. Check Kaggle Multi-Rank Taxonomic Hierarchy CSV (e.g. Species -> Genus -> Family -> Order -> Class -> Phylum -> Kingdom)
+                    if len(taxonomy_col_indices) >= 3:
+                        rank_vals: list[str] = []
+                        for c_idx in taxonomy_col_indices:
+                            if c_idx < len(raw_cells) and raw_cells[c_idx]:
+                                val_clean = "_".join(_tokenize_words(raw_cells[c_idx]))
+                                if val_clean and val_clean not in rank_vals:
+                                    rank_vals.append(val_clean)
+                        if len(rank_vals) >= 2:
+                            rows_processed += 1
+                            for k in range(len(rank_vals) - 1):
+                                child_c, parent_c = rank_vals[k], rank_vals[k + 1]
+                                ok, sent = self._learn_verified_triple_direct(
+                                    child_c, "is_a", parent_c
+                                )
+                                if ok:
+                                    relations_verified += 1
+                                    if sent:
+                                        synth_sentences.append(sent)
+                                else:
+                                    relations_refuted += 1
+                            if len(neural_cot_lines) < 25:
+                                leaf = rank_vals[0].replace("_", " ")
+                                parent = rank_vals[1].replace("_", " ")
+                                root_k = rank_vals[-1].replace("_", " ")
+                                neural_cot_lines.append(
+                                    f"what is {leaf}? think {leaf} belongs to {parent} in kingdom {root_k} answer {leaf} is a {parent} in the {root_k} kingdom."
+                                )
+                            continue
+
+                    # 2. Check Kaggle Question-Answer CSV (e.g. Question, Answer)
+                    if (
+                        q_col_idx >= 0
+                        and a_col_idx >= 0
+                        and q_col_idx < len(raw_cells)
+                        and a_col_idx < len(raw_cells)
+                    ):
+                        q_txt = raw_cells[q_col_idx]
+                        a_txt = raw_cells[a_col_idx]
+                        if q_txt and a_txt:
+                            rows_processed += 1
+                            text_passages.append(a_txt if a_txt.endswith(".") else f"{a_txt}.")
+                            q_toks = _tokenize_words(q_txt)[:12]
+                            a_toks = _tokenize_words(a_txt)[:14]
+                            if q_toks and a_toks and len(neural_cot_lines) < 35:
+                                salient_q = [
+                                    t for t in q_toks if self._token_salience(t) >= 2.0
+                                ][:4] or q_toks[:3]
+                                neural_cot_lines.append(
+                                    f"{' '.join(q_toks)}? think analyzing {' '.join(salient_q)} in 360 mlu network answer {' '.join(a_toks)}."
+                                )
+                            continue
+
+                    # 3. Check Kaggle Disease-Symptom Profile CSV (Disease + Yes/No symptom columns)
+                    if disease_col_idx >= 0 and disease_col_idx < len(raw_cells) and symptom_cols:
+                        dis_name = "_".join(_tokenize_words(raw_cells[disease_col_idx]))
+                        if dis_name:
+                            rows_processed += 1
+                            pos_symptoms: list[str] = []
+                            for s_idx, s_name in symptom_cols:
+                                if (
+                                    s_idx < len(raw_cells)
+                                    and raw_cells[s_idx].lower() in ("yes", "true", "1")
+                                ):
+                                    pos_symptoms.append(s_name)
+                                    ok, sent = self._learn_verified_triple_direct(
+                                        dis_name, "causes", s_name
+                                    )
+                                    if ok:
+                                        relations_verified += 1
+                                        if sent:
+                                            synth_sentences.append(sent)
+                            if pos_symptoms and len(neural_cot_lines) < 25:
+                                d_readable = dis_name.replace("_", " ")
+                                s_readable = " and ".join(
+                                    s.replace("_", " ") for s in pos_symptoms[:3]
+                                )
+                                neural_cot_lines.append(
+                                    f"what causes {s_readable}? think abductive medical diagnosis over symptom spokes answer {d_readable} causes {s_readable}."
+                                )
+                            continue
+
+                    cells = [c for c in raw_cells if c]
                     if len(cells) >= 3:
                         cand_pred = cells[1].lower().replace(" ", "_")
                         if (
@@ -2235,47 +2456,17 @@ class SpiderWebMLM:
                             obj = cells[2].lower().replace(" ", "_")
                             if subj and obj and subj != obj:
                                 rows_processed += 1
-                                spoke = map_predicate_to_spoke(cand_pred)
-                                subj_u = self.get_or_create_mlu(subj, preferred_spoke=spoke)
-                                obj_u = self.get_or_create_mlu(obj, preferred_spoke=spoke)
-                                rust_p = "disjoint_with" if cand_pred == "not_a" else cand_pred
-                                if self.rust_arena.is_native:
-                                    inv = self.rust_arena.verify_invariants(
-                                        subj_u.concept_id, rust_p, obj_u.concept_id
-                                    )
-                                    passed = bool(inv.get("passed", True))
-                                else:
-                                    passed = self.verifier.verify_relation(
-                                        subj, cand_pred, obj
-                                    ).passed
-                                if passed:
+                                ok, sent = self._learn_verified_triple_direct(
+                                    subj, cand_pred, obj
+                                )
+                                if ok:
                                     relations_verified += 1
-                                    if self.rust_arena.is_native:
-                                        self.rust_arena.learn_spoke(
-                                            subj_u.concept_id,
-                                            rust_p,
-                                            obj_u.concept_id,
-                                            learning_rate=0.20,
-                                            verified=True,
-                                        )
-                                    subj_u.learn_spoke_relation(
-                                        predicate=rust_p,
-                                        target_concept=obj_u.concept_id,
-                                        target_vec=obj_u.anchor_vec,
-                                        learning_rate=0.20,
-                                        verified=True,
-                                    )
-                                    obj_u.verified_hits += 0.5
-                                    if cand_pred not in ("disjoint_with", "not_a"):
-                                        synth_sentences.append(
-                                            f"{subj.replace('_', ' ')} {cand_pred.replace('_', ' ')} {obj.replace('_', ' ')}."
-                                        )
+                                    if sent:
+                                        synth_sentences.append(sent)
                                 else:
                                     relations_refuted += 1
                                 continue
-                    # Skip single-word header row
-                    if row_idx == 0 and all(" " not in c for c in cells):
-                        continue
+
                     salient_cells = [
                         c
                         for c in cells
@@ -2286,7 +2477,12 @@ class SpiderWebMLM:
                         rows_processed += 1
                         text_passages.append(" ".join(salient_cells))
         except OSError:
-            return {"rows_processed": 0, "relations_verified": 0, "relations_refuted": 0}
+            return {
+                "rows_processed": 0,
+                "relations_verified": 0,
+                "relations_refuted": 0,
+                "neural_sequences_trained": 0,
+            }
 
         if synth_sentences and self.rust_arena.is_native:
             self.rust_arena.train_stream(" ".join(synth_sentences), learning_rate=0.12)
@@ -2296,6 +2492,20 @@ class SpiderWebMLM:
             relations_verified += rep.relations_verified
             relations_refuted += rep.relations_refuted
 
+        neural_seq_trained = 0
+        neural_ppl = 1.0
+        if neural_cot_lines:
+            n_rep = self.train_neural_mlu(
+                "\n".join(neural_cot_lines[:35]),
+                epochs=32,
+                learning_rate=0.04,
+                persist=False,
+            )
+            neural_seq_trained = int(n_rep.get("sequences_trained", 0))
+            neural_ppl = float(n_rep.get("final_perplexity", 1.0))
+
+        self.recent_focal_stack.clear()
+        self.conversation_liquid_state = [0.0] * self.dim
         self._dirty_since_save = True
         if persist:
             self.save_nodes()
@@ -2303,28 +2513,41 @@ class SpiderWebMLM:
             "rows_processed": rows_processed,
             "relations_verified": relations_verified,
             "relations_refuted": relations_refuted,
+            "neural_sequences_trained": neural_seq_trained,
+            "neural_final_perplexity": neural_ppl,
         }
 
     def ingest_jsonl_dataset(
         self, jsonl_path: str, max_rows: int | None = None, persist: bool = False
     ) -> dict[str, Any]:
-        """Phase 47: Ingest JSONL datasets (HuggingFace OpenBookQA, SciQ, Simple Wikipedia, GenericsKB, or triple streams) into the 360° MLM."""
+        """Phase 47 & 54: Ingest JSONL datasets (HuggingFace SciQ, OpenBookQA, TruthfulQA, Simple Wikipedia, GenericsKB) into both the 360° Arena and Differentiable Neural MLU."""
         import json
         from pathlib import Path
 
         fpath = Path(jsonl_path)
         if not fpath.is_file():
-            return {"rows_processed": 0, "relations_verified": 0, "relations_refuted": 0}
+            return {
+                "rows_processed": 0,
+                "relations_verified": 0,
+                "relations_refuted": 0,
+                "neural_sequences_trained": 0,
+            }
 
         rows_processed = 0
         relations_verified = 0
         relations_refuted = 0
         passages: list[str] = []
+        neural_cot_lines: list[str] = []
 
         try:
             lines = fpath.read_text(encoding="utf-8", errors="ignore").splitlines()
         except OSError:
-            return {"rows_processed": 0, "relations_verified": 0, "relations_refuted": 0}
+            return {
+                "rows_processed": 0,
+                "relations_verified": 0,
+                "relations_refuted": 0,
+                "neural_sequences_trained": 0,
+            }
 
         for raw_line in lines:
             if max_rows is not None and rows_processed >= max_rows:
@@ -2340,6 +2563,37 @@ class SpiderWebMLM:
                 continue
 
             rows_processed += 1
+
+            # Extract structured QA + Chain-of-Thought pairs (e.g. SciQ, OpenBookQA, TruthfulQA)
+            q_str = str(obj.get("question") or obj.get("question_stem") or "").strip()
+            a_str = str(
+                obj.get("correct_answer")
+                or obj.get("best_answer")
+                or obj.get("fact1")
+                or obj.get("fact")
+                or ""
+            ).strip()
+            sup_str = str(
+                obj.get("support")
+                or obj.get("fact1")
+                or obj.get("fact")
+                or obj.get("category")
+                or ""
+            ).strip()
+            if q_str and a_str and len(neural_cot_lines) < 35:
+                q_toks = _tokenize_words(q_str)[:12]
+                a_toks = _tokenize_words(a_str)[:12]
+                s_toks = (
+                    _tokenize_words(sup_str)[:10]
+                    if sup_str
+                    else [t for t in q_toks if self._token_salience(t) >= 2.0][:4]
+                )
+                if q_toks and a_toks:
+                    think_span = " ".join(s_toks) if s_toks else "evaluating 360 spokes"
+                    neural_cot_lines.append(
+                        f"{' '.join(q_toks)}? think {think_span} answer {' '.join(a_toks)}."
+                    )
+
             for val in obj.values():
                 if not isinstance(val, str):
                     continue
@@ -2359,7 +2613,31 @@ class SpiderWebMLM:
             rep = self.train_on_text(" ".join(passages), persist=False)
             relations_verified += rep.relations_verified
             relations_refuted += rep.relations_refuted
+            if not neural_cot_lines and rep.verified_triples:
+                d_rep = self.distill_triples_to_neural_mlu(
+                    rep.verified_triples[:20], epochs=28, learning_rate=0.04, persist=False
+                )
+                neural_seq_trained = int(d_rep.get("sequences_trained", 0))
+                neural_ppl = float(d_rep.get("final_perplexity", 1.0))
+            else:
+                neural_seq_trained = 0
+                neural_ppl = 1.0
+        else:
+            neural_seq_trained = 0
+            neural_ppl = 1.0
 
+        if neural_cot_lines:
+            n_rep = self.train_neural_mlu(
+                "\n".join(neural_cot_lines[:35]),
+                epochs=32,
+                learning_rate=0.04,
+                persist=False,
+            )
+            neural_seq_trained = int(n_rep.get("sequences_trained", 0))
+            neural_ppl = float(n_rep.get("final_perplexity", 1.0))
+
+        self.recent_focal_stack.clear()
+        self.conversation_liquid_state = [0.0] * self.dim
         self._dirty_since_save = True
         if persist:
             self.save_nodes()
@@ -2367,6 +2645,8 @@ class SpiderWebMLM:
             "rows_processed": rows_processed,
             "relations_verified": relations_verified,
             "relations_refuted": relations_refuted,
+            "neural_sequences_trained": neural_seq_trained,
+            "neural_final_perplexity": neural_ppl,
         }
 
     def fetch_huggingface_dataset(
@@ -2378,7 +2658,7 @@ class SpiderWebMLM:
         save_dir: str = "data/knowledge/hf_datasets",
         persist: bool = False,
     ) -> dict[str, Any]:
-        """Phase 48: Download dataset rows directly from HuggingFace Datasets Server API, save to JSONL, and train the 360° Spider-Web MLM."""
+        """Phase 48 & 54: Download dataset rows directly from HuggingFace Datasets Server API, save to JSONL, and train both the 360° Spider-Web Arena and Neural MLU."""
         import json
         import urllib.parse
         import urllib.request
@@ -2418,6 +2698,7 @@ class SpiderWebMLM:
                 "error": str(exc),
                 "relations_verified": 0,
                 "relations_refuted": 0,
+                "neural_sequences_trained": 0,
             }
 
         ing = self.ingest_jsonl_dataset(str(out_path), max_rows=safe_len, persist=persist)
@@ -2428,6 +2709,101 @@ class SpiderWebMLM:
             "saved_path": str(out_path),
             "relations_verified": ing["relations_verified"],
             "relations_refuted": ing["relations_refuted"],
+            "neural_sequences_trained": ing.get("neural_sequences_trained", 0),
+            "neural_final_perplexity": ing.get("neural_final_perplexity", 1.0),
+        }
+
+    def fetch_kaggle_dataset(
+        self,
+        dataset: str,
+        limit: int = 60,
+        save_dir: str = "data/knowledge/kaggle_datasets",
+        persist: bool = False,
+    ) -> dict[str, Any]:
+        """Phase 54: Download a real dataset archive directly from Kaggle API v1, extract files, and train both the 360° Spider-Web Arena and Differentiable Neural MLU."""
+        import io
+        import urllib.request
+        import zipfile
+        from pathlib import Path
+
+        clean_ds = dataset.strip().strip("/")
+        url = f"https://www.kaggle.com/api/v1/datasets/download/{clean_ds}"
+        out_folder = Path(save_dir) / clean_ds.replace("/", "_")
+        out_folder.mkdir(parents=True, exist_ok=True)
+
+        extracted_files: list[str] = []
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=25) as resp:
+                raw_bytes = resp.read()
+            with zipfile.ZipFile(io.BytesIO(raw_bytes)) as zf:
+                for member in zf.namelist():
+                    if member.endswith("/"):
+                        continue
+                    safe_name = Path(member).name
+                    if not safe_name:
+                        continue
+                    dest = out_folder / safe_name
+                    dest.write_bytes(zf.read(member))
+                    extracted_files.append(str(dest))
+        except (OSError, zipfile.BadZipFile, ValueError) as exc:
+            return {
+                "dataset": clean_ds,
+                "files_extracted": [],
+                "rows_processed": 0,
+                "relations_verified": 0,
+                "relations_refuted": 0,
+                "neural_sequences_trained": 0,
+                "error": str(exc),
+            }
+
+        total_rows = 0
+        total_verified = 0
+        total_refuted = 0
+        total_neural = 0
+        final_ppl = 1.0
+        safe_limit = max(1, min(limit, 250))
+
+        for f_str in extracted_files:
+            ext = Path(f_str).suffix.lower()
+            if ext in (".csv", ".tsv"):
+                rep = self.ingest_csv_dataset(f_str, max_rows=safe_limit, persist=False)
+                total_rows += rep["rows_processed"]
+                total_verified += rep["relations_verified"]
+                total_refuted += rep["relations_refuted"]
+                total_neural += int(rep.get("neural_sequences_trained", 0))
+                if rep.get("neural_sequences_trained", 0) > 0:
+                    final_ppl = float(rep.get("neural_final_perplexity", 1.0))
+            elif ext in (".jsonl", ".ndjson"):
+                rep = self.ingest_jsonl_dataset(f_str, max_rows=safe_limit, persist=False)
+                total_rows += rep["rows_processed"]
+                total_verified += rep["relations_verified"]
+                total_refuted += rep["relations_refuted"]
+                total_neural += int(rep.get("neural_sequences_trained", 0))
+                if rep.get("neural_sequences_trained", 0) > 0:
+                    final_ppl = float(rep.get("neural_final_perplexity", 1.0))
+            elif ext == ".json":
+                jrep = self.ingest_json_ontology(f_str, persist=False)
+                total_rows += jrep["triples_processed"]
+                total_verified += jrep["relations_verified"]
+                total_refuted += jrep["relations_refuted"]
+            elif ext in (".txt", ".md"):
+                txt = Path(f_str).read_text(encoding="utf-8", errors="ignore")
+                trep = self.train_on_text(txt[:25000], persist=False)
+                total_rows += trep.sentences_processed
+                total_verified += trep.relations_verified
+                total_refuted += trep.relations_refuted
+
+        if persist:
+            self.save_nodes()
+        return {
+            "dataset": clean_ds,
+            "files_extracted": extracted_files,
+            "rows_processed": total_rows,
+            "relations_verified": total_verified,
+            "relations_refuted": total_refuted,
+            "neural_sequences_trained": total_neural,
+            "neural_final_perplexity": final_ppl,
         }
 
     def ingest_corpus_path(

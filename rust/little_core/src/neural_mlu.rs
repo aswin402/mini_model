@@ -310,6 +310,10 @@ pub struct NeuralSpiderWebMlu {
     // Neural Language Head
     pub lm_head_w: ParamTensor, // V x D
     pub lm_head_b: ParamTensor, // V
+
+    // Episodic Experience Replay Buffer for Continual Multi-Dataset Learning
+    #[serde(default)]
+    pub replay_buffer: Vec<Vec<usize>>,
 }
 
 impl NeuralSpiderWebMlu {
@@ -365,6 +369,7 @@ impl NeuralSpiderWebMlu {
             logic_cells,
             lm_head_w,
             lm_head_b,
+            replay_buffer: Vec::new(),
         }
     }
 
@@ -504,11 +509,12 @@ impl NeuralSpiderWebMlu {
         let mut c_prompt = vec![0.0f32; D_MODEL];
         if let Some(qp) = qmark_pos {
             if qp > 1 {
-                let inv_p = 1.0 / ((qp - 1) as f32);
+                let inv_p = 1.0 / ((qp - 1) as f32).sqrt();
                 for j in 1..qp {
                     let off = seq[j] * D_MODEL;
+                    let shift = (j * 5) % D_MODEL;
                     for d in 0..D_MODEL {
-                        c_prompt[d] += self.token_emb.w[off + d] * inv_p;
+                        c_prompt[d] += self.token_emb.w[off + ((d + shift) % D_MODEL)] * inv_p;
                     }
                 }
             }
@@ -530,7 +536,7 @@ impl NeuralSpiderWebMlu {
             let emb_off = tok_id * D_MODEL;
             let pos_off = pos_idx * D_MODEL;
             let prev1_off = if t >= 1 { Some(seq[t - 1] * D_MODEL) } else { None };
-            let in_response = qmark_pos.map_or(false, |qp| t >= qp);
+            let resp_k = qmark_pos.and_then(|qp| if t >= qp { Some(t - qp) } else { None });
             for d in 0..D_MODEL {
                 let e_cur = self.token_emb.w[emb_off + d];
                 let mut fast_inp = e_cur;
@@ -539,7 +545,10 @@ impl NeuralSpiderWebMlu {
                 }
                 fast_liquid[d] = 0.75 * fast_liquid[d] + fast_inp;
                 slow_liquid[d] = 0.96 * slow_liquid[d] + 0.35 * e_cur;
-                let ctx_bonus = if in_response { 0.90 * c_prompt[d] } else { 0.0 };
+                let ctx_bonus = match resp_k {
+                    Some(rk) => 0.90 * c_prompt[(d + rk * 7) % D_MODEL],
+                    None => 0.0,
+                };
                 x0[d] = fast_liquid[d] + slow_liquid[d] + ctx_bonus + self.pos_emb.w[pos_off + d];
             }
 
@@ -638,6 +647,12 @@ impl NeuralSpiderWebMlu {
                 cell_m.push(m_vec);
             }
 
+            if let Some(rk) = resp_k {
+                for d in 0..D_MODEL {
+                    o[d] += 1.25 * c_prompt[(d + rk * 7) % D_MODEL];
+                }
+            }
+
             let logits = matvec(
                 &self.lm_head_w.w,
                 v_size,
@@ -700,6 +715,7 @@ impl NeuralSpiderWebMlu {
         let mut d_all_v = vec![vec![0.0f32; D_MODEL]; len];
         let mut d_x0_list = vec![vec![0.0f32; D_MODEL]; len];
         let mut d_q_list = vec![vec![0.0f32; D_MODEL]; len];
+        let mut d_c_prompt = vec![0.0f32; D_MODEL];
 
         for t in 0..(len - 1) {
             let w_t = match qmark_pos {
@@ -728,6 +744,15 @@ impl NeuralSpiderWebMlu {
                 for d in 0..D_MODEL {
                     self.lm_head_w.grad[row_off + d] += dl * cache.o[d];
                     d_o[d] += dl * self.lm_head_w.w[row_off + d];
+                }
+            }
+
+            if let Some(qp) = qmark_pos {
+                if t >= qp {
+                    let rk = t - qp;
+                    for d in 0..D_MODEL {
+                        d_c_prompt[(d + rk * 7) % D_MODEL] += 1.25 * d_o[d];
+                    }
                 }
             }
 
@@ -886,7 +911,6 @@ impl NeuralSpiderWebMlu {
         // Accumulate Q, K, V gradients into W_Q, W_K, W_V and backpropagate through time (BPTT) into token_emb / pos_emb
         let mut d_fast_next = vec![0.0f32; D_MODEL];
         let mut d_slow_next = vec![0.0f32; D_MODEL];
-        let mut d_c_prompt = vec![0.0f32; D_MODEL];
         for t in (0..len).rev() {
             let cache = &caches[t];
             let mut d_x0 = d_x0_list[t].clone();
@@ -909,14 +933,14 @@ impl NeuralSpiderWebMlu {
             let emb_off = cache.tok_id * D_MODEL;
             let pos_off = cache.pos_idx * D_MODEL;
             let prev1_off = if t >= 1 { Some(seq[t - 1] * D_MODEL) } else { None };
-            let in_response = qmark_pos.map_or(false, |qp| t >= qp);
+            let resp_k = qmark_pos.and_then(|qp| if t >= qp { Some(t - qp) } else { None });
             for d in 0..D_MODEL {
                 let d_fast = d_x0[d] + d_fast_next[d];
                 let d_slow = d_x0[d] + d_slow_next[d];
                 d_fast_next[d] = 0.75 * d_fast;
                 d_slow_next[d] = 0.96 * d_slow;
-                if in_response {
-                    d_c_prompt[d] += 0.90 * d_x0[d];
+                if let Some(rk) = resp_k {
+                    d_c_prompt[(d + rk * 7) % D_MODEL] += 0.90 * d_x0[d];
                 }
 
                 self.pos_emb.grad[pos_off + d] += d_x0[d];
@@ -928,11 +952,12 @@ impl NeuralSpiderWebMlu {
         }
         if let Some(qp) = qmark_pos {
             if qp > 1 {
-                let inv_p = 1.0 / ((qp - 1) as f32);
+                let inv_p = 1.0 / ((qp - 1) as f32).sqrt();
                 for j in 1..qp {
                     let off = seq[j] * D_MODEL;
+                    let shift = (j * 5) % D_MODEL;
                     for d in 0..D_MODEL {
-                        self.token_emb.grad[off + d] += d_c_prompt[d] * inv_p;
+                        self.token_emb.grad[off + ((d + shift) % D_MODEL)] += d_c_prompt[d] * inv_p;
                     }
                 }
             }
@@ -1001,6 +1026,22 @@ impl NeuralSpiderWebMlu {
             }
         }
 
+        let prior_replay: Vec<Vec<usize>> = self
+            .replay_buffer
+            .iter()
+            .filter(|r| !train_seqs.contains(r))
+            .cloned()
+            .collect();
+
+        for seq in &train_seqs {
+            if !self.replay_buffer.contains(seq) {
+                if self.replay_buffer.len() >= 140 {
+                    self.replay_buffer.remove(0);
+                }
+                self.replay_buffer.push(seq.clone());
+            }
+        }
+
         let ep_count = epochs.max(1);
         let mut initial_loss = 0.0f32;
         let mut final_loss = 0.0f32;
@@ -1008,6 +1049,15 @@ impl NeuralSpiderWebMlu {
         for ep in 0..ep_count {
             let mut ep_loss = 0.0f32;
             let curr_lr = lr * (0.98f32).powi(ep as i32);
+            if !prior_replay.is_empty() && (ep % 3 == 0 || ep + 3 >= ep_count) {
+                let r_len = prior_replay.len();
+                let batch = r_len.min(24);
+                let offset = (ep * 11) % r_len;
+                for k in 0..batch {
+                    let r_seq = &prior_replay[(offset + k) % r_len];
+                    let _ = self.train_sequence_step(r_seq, curr_lr * 0.85);
+                }
+            }
             for seq in &train_seqs {
                 ep_loss += self.train_sequence_step(seq, curr_lr);
             }

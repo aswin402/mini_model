@@ -862,6 +862,91 @@ def test_spiderweb_mlm_phase53_zero_regex_and_live_neural_distillation(tmp_path)
         mlm.close()
 
 
+def test_spiderweb_mlm_phase54_kaggle_and_huggingface_neural_training(tmp_path) -> None:
+    """Verify Phase 54: Multi-dataset training across Kaggle CSVs (taxonomy, medical symptoms, DataScience Q&A) and HuggingFace JSONLs (SciQ, OpenBookQA) with holographic replay."""
+    db_file = str(tmp_path / "phase54_kaggle_hf.db")
+    with MemoryStore(db_file, seed_ontology=False) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+
+        # 1. Ingest Kaggle Animal Kingdom Taxonomy CSV
+        rep_tax = mlm.ingest_csv_dataset(
+            "data/knowledge/kaggle_datasets/hasanarcas_animal-kingdom-taxonomy/taxonomy.csv",
+            max_rows=25,
+            persist=False,
+        )
+        assert rep_tax["rows_processed"] == 25
+        assert rep_tax["relations_verified"] >= 120
+
+        # 2. Ingest Kaggle Clinical Disease Symptoms Profile CSV
+        rep_med = mlm.ingest_csv_dataset(
+            "data/knowledge/kaggle_datasets/uom190346a_disease-symptoms-and-patient-profile-dataset/Disease_symptom_and_patient_profile_dataset.csv",
+            max_rows=25,
+            persist=False,
+        )
+        assert rep_med["rows_processed"] == 25
+        assert rep_med["relations_verified"] >= 40
+
+        # 3. Ingest Kaggle DataScience QA CSV
+        rep_ds = mlm.ingest_csv_dataset(
+            "data/knowledge/kaggle_datasets/nvnikhil0001_data-science-questions-and-answers/DataScience QA.csv",
+            max_rows=12,
+            persist=False,
+        )
+        assert rep_ds["rows_processed"] == 12
+        assert rep_ds["neural_sequences_trained"] >= 300
+
+        # 4. Ingest HuggingFace SciQ JSONL
+        rep_sciq = mlm.ingest_jsonl_dataset(
+            "data/knowledge/hf_datasets/allenai_sciq_default.jsonl",
+            max_rows=12,
+            persist=False,
+        )
+        assert rep_sciq["rows_processed"] == 12
+        assert rep_sciq["neural_sequences_trained"] >= 300
+
+        # 5. Co-train English Thinking Curriculum with Holographic Replay
+        cur_rep = mlm.train_neural_curriculum(epochs=35, learning_rate=0.04, persist=False)
+        assert cur_rep["final_perplexity"] < 1.65
+
+        # Verify 5-hop Kaggle taxonomic deduction
+        q_felis = mlm.chat_turn_360("Is felis an animalia?", persist=False)
+        assert q_felis["status"] == "VERIFIED"
+        assert "yes" in q_felis["reply"].lower()
+
+        # Verify Kaggle clinical abductive diagnosis
+        q_diag = mlm.chat_turn_360(
+            "What explains fever, fatigue, and difficulty_breathing?", persist=False
+        )
+        assert q_diag["status"] == "VERIFIED"
+        assert "[MLU-360-DIAGNOSE]" in q_diag["trace"]
+
+        # Verify HuggingFace SciQ neural Chain-of-Thought + answer
+        q_decay = mlm.chat_turn_360(
+            "what is the least dangerous radioactive decay?", persist=False
+        )
+        assert q_decay["status"] == "VERIFIED"
+        assert "alpha" in q_decay["reply"].lower()
+        assert "radioactive" in q_decay["neural_thinking"].lower()
+
+        # Verify Kaggle DataScience QA neural Chain-of-Thought + answer
+        q_nlp = mlm.chat_turn_360(
+            "what is natural language processing nlp?", persist=False
+        )
+        assert q_nlp["status"] == "VERIFIED"
+        assert "artificial intelligence" in q_nlp["reply"].lower()
+
+        # Verify conversational greeting & zero-hallucination abstention
+        q_hi = mlm.chat_turn_360("hii", persist=False)
+        assert q_hi["status"] == "VERIFIED"
+        assert "hello" in q_hi["reply"].lower()
+
+        q_unk = mlm.chat_turn_360("What is a hyper_tachyon_quasar?", persist=False)
+        assert q_unk["status"] == "UNKNOWN"
+        assert q_unk["confidence"] == 0.0
+        mlm.close()
+
+
+
 
 
 

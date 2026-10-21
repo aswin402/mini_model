@@ -163,7 +163,16 @@
     "this",
     "that",
     "these",
-    "those"
+    "those",
+    "what",
+    "which",
+    "who",
+    "whom",
+    "whose",
+    "where",
+    "when",
+    "why",
+    "how"
   ],
   "operator_canonical_map": {
     "has": "has_part",

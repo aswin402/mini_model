@@ -907,6 +907,13 @@ def cmd_mlu(args: argparse.Namespace) -> None:
                 persist=True,
             )
             print(json.dumps(hf_dict, indent=2))
+        elif action == "fetch-kaggle":
+            kg_dict = kernel.mlm.fetch_kaggle_dataset(
+                dataset=args.dataset,
+                limit=int(getattr(args, "limit", 60)),
+                persist=True,
+            )
+            print(json.dumps(kg_dict, indent=2))
         elif action == "consolidate":
             cons_dict = kernel.mlm.consolidate()
             rc = cons_dict["rust_consolidation"]
@@ -1355,6 +1362,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=50, help="Number of rows to download and train on (default: 50)"
     )
     p_mlu_fetch_hf.set_defaults(func=cmd_mlu)
+    p_mlu_fetch_kaggle = p_mlu_subs.add_parser(
+        "fetch-kaggle",
+        parents=[db_parent],
+        help="Download dataset archive from Kaggle API v1 and train the 360° Spider-Web MLM + Neural MLU",
+    )
+    p_mlu_fetch_kaggle.add_argument(
+        "dataset",
+        help="Kaggle dataset ref (e.g., hasanarcas/animal-kingdom-taxonomy or nvnikhil0001/data-science-questions-and-answers)",
+    )
+    p_mlu_fetch_kaggle.add_argument(
+        "--limit", type=int, default=60, help="Maximum rows per file to ingest (default: 60)"
+    )
+    p_mlu_fetch_kaggle.set_defaults(func=cmd_mlu)
     p_mlu_benchmark = p_mlu_subs.add_parser(
         "benchmark",
         parents=[db_parent],
