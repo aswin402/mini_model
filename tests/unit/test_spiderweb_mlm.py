@@ -1060,6 +1060,78 @@ def test_spiderweb_mlm_phase56_sleep_autonomous_multihop_neural_consolidation(tm
         mlm.close()
 
 
+def test_spiderweb_mlm_phase57_multiturn_working_memory_comparative_and_proof_explanation(
+    tmp_path,
+) -> None:
+    """Verify Phase 57: Multi-Turn Episodic Working Memory, Proof Explanation ('Why?' / 'Why not?'), Elliptic Coreference, and Comparative/Contrastive Reasoning."""
+    db_file = str(tmp_path / "phase57_multiturn_working_memory.db")
+    with MemoryStore(db_file, seed_ontology=False) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+
+        mlm.train_on_text(
+            "A felis is a felidae. "
+            "A felidae is a carnivora. "
+            "A carnivora is a mammalia. "
+            "A mammalia is an animalia. "
+            "A mammalia has warm_blood. "
+            "A panthera is a felidae. "
+            "An animalia is not a plant. "
+            "A fern is a plant.",
+            persist=False,
+        )
+
+        # Turn 1: 4-hop taxonomic verification
+        t1 = mlm.chat_turn_360("Is a felis an animalia?", persist=False)
+        assert t1["status"] == "VERIFIED"
+        assert len(mlm.episodic_working_memory) == 1
+        assert len(mlm.episodic_working_memory[-1]["proof_steps"]) == 4
+
+        # Turn 2: Follow-up proof explanation ("Why?")
+        t2 = mlm.chat_turn_360("Why?", persist=False)
+        assert t2["status"] == "VERIFIED"
+        assert "[MLU-360-EXPLAIN]" in t2["trace"]
+        assert "episodic working memory traces multi hop proof" in t2["neural_thinking"].lower()
+        assert "because felis is a felidae" in t2["reply"].lower()
+        assert "mammalia is a animalia" in t2["reply"].lower()
+        assert "felidae" in t2["neural_answer"].lower()
+
+        # Turn 3: Elliptic pronoun follow-up ("Does it have warm_blood?")
+        t3 = mlm.chat_turn_360("Does it have warm_blood?", persist=False)
+        assert t3["status"] == "VERIFIED"
+        assert t3["focal_concept"] == "FELIS"
+        assert "warm blood" in t3["neural_answer"].lower()
+
+        # Turn 4: Elliptic pronoun refutation ("Is it a fern?")
+        t4 = mlm.chat_turn_360("Is it a fern?", persist=False)
+        assert t4["status"] == "REFUTED"
+        assert t4["focal_concept"] == "FELIS"
+        assert "mutual exclusivity" in t4["neural_thinking"].lower()
+
+        # Turn 5: Follow-up refutation explanation ("Why not?")
+        t5 = mlm.chat_turn_360("Why not?", persist=False)
+        assert t5["status"] == "VERIFIED"
+        assert "[MLU-360-EXPLAIN]" in t5["trace"]
+        assert "animalia is mutually exclusive with plant" in t5["reply"].lower()
+        assert "mutually exclusive" in t5["neural_answer"].lower()
+
+        # Turn 6: Multi-entity similarity comparison ("How are a felis and a panthera similar?")
+        t6 = mlm.chat_turn_360("How are a felis and a panthera similar?", persist=False)
+        assert t6["status"] == "VERIFIED"
+        assert "[MLU-360-COMPARE]" in t6["trace"]
+        assert "shared attractors" in t6["neural_thinking"].lower()
+        assert "both felis and panthera" in t6["reply"].lower()
+        assert "felidae" in t6["neural_answer"].lower()
+
+        # Turn 7: Multi-entity contrastive comparison ("What is the difference between a felis and a fern?")
+        t7 = mlm.chat_turn_360("What is the difference between a felis and a fern?", persist=False)
+        assert t7["status"] == "VERIFIED"
+        assert "[MLU-360-COMPARE]" in t7["trace"]
+        assert "mutex=True" in t7["trace"]
+        assert "comparative wave contrasts felis and fern" in t7["neural_thinking"].lower()
+        assert "whereas fern is a plant" in t7["reply"].lower()
+        mlm.close()
+
+
 
 
 

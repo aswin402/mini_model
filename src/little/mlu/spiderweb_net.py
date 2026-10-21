@@ -160,6 +160,7 @@ class SpiderWebMLM:
         self.total_pruned_nodes: int = 0
         self.conversation_liquid_state: list[float] = [0.0] * dim
         self.recent_focal_stack: list[tuple[str, float]] = []
+        self.episodic_working_memory: list[dict[str, Any]] = []
         self._operator_codebook: list[tuple[tuple[str, ...], str, list[float]]] = []
         self._operator_token_mass: dict[str, float] = {}
         self._build_operator_codebook()
@@ -1027,8 +1028,216 @@ class SpiderWebMLM:
         sorted_preds = sorted(dedup.values(), key=lambda r: r.combined_confidence, reverse=True)
         return sorted_preds, activated
 
+    def _find_verified_spoke_path(
+        self, start_cid: str, goal_cid: str, max_hops: int = 6
+    ) -> list[tuple[str, str, str]]:
+        """Phase 57: Find the shortest verified 360° spoke path [(u, pred, v), ...] from start_cid to goal_cid."""
+        from collections import deque
+
+        if not start_cid or not goal_cid or start_cid == goal_cid or start_cid not in self.nodes:
+            return []
+        queue: deque[tuple[str, list[tuple[str, str, str]]]] = deque([(start_cid, [])])
+        visited: set[str] = {start_cid}
+        while queue:
+            curr, path = queue.popleft()
+            unit = self.nodes.get(curr)
+            if unit is None:
+                continue
+            for sp in unit.spokes.values():
+                for t_cid, rec in sp.target_affinities.items():
+                    if not (
+                        isinstance(rec, list)
+                        and len(rec) >= 4
+                        and float(rec[0]) > float(rec[1])
+                    ):
+                        continue
+                    pred = str(rec[3])
+                    if pred in ("co_occurs_with", "disjoint_with", "not_a"):
+                        continue
+                    next_path = [*path, (curr, pred, t_cid)]
+                    if t_cid == goal_cid:
+                        return next_path
+                    if len(next_path) < max_hops and t_cid not in visited:
+                        visited.add(t_cid)
+                        queue.append((t_cid, next_path))
+        return []
+
+    def _extract_arena_proof_steps(
+        self, res: MLMQueryResult, target_cid: str | None
+    ) -> list[tuple[str, str, str]]:
+        """Phase 57: Extract the step-by-step multi-hop proof or refutation chain for an Arena query result."""
+        from collections import deque
+
+        focal = res.focal_concept
+        if (
+            res.status == "REFUTED"
+            and target_cid
+            and focal in self.nodes
+            and target_cid in self.nodes
+        ):
+
+            def _anc_map(root_id: str) -> dict[str, list[tuple[str, str, str]]]:
+                amap: dict[str, list[tuple[str, str, str]]] = {root_id: []}
+                q: deque[str] = deque([root_id])
+                while q:
+                    c = q.popleft()
+                    u = self.nodes.get(c)
+                    if u is None:
+                        continue
+                    for sp in u.spokes.values():
+                        for t_id, rec in sp.target_affinities.items():
+                            if (
+                                isinstance(rec, list)
+                                and len(rec) >= 4
+                                and float(rec[0]) > float(rec[1])
+                                and str(rec[3]) in ("is_a", "subclass_of", "instance_of")
+                                and t_id not in amap
+                            ):
+                                amap[t_id] = [*amap[c], (c, str(rec[3]), t_id)]
+                                q.append(t_id)
+                return amap
+
+            anc_a = _anc_map(focal)
+            anc_b = _anc_map(target_cid)
+            for a_id, path_a in anc_a.items():
+                u_a = self.nodes.get(a_id)
+                if u_a is None:
+                    continue
+                for sp in u_a.spokes.values():
+                    for b_id, rec in sp.target_affinities.items():
+                        if b_id in anc_b and isinstance(rec, list) and len(rec) >= 4:
+                            pred_ab = str(rec[3])
+                            if pred_ab in ("disjoint_with", "not_a") or float(rec[1]) > float(
+                                rec[0]
+                            ):
+                                return [*path_a, *anc_b[b_id], (a_id, "disjoint_with", b_id)]
+            for b_id, path_b in anc_b.items():
+                u_b = self.nodes.get(b_id)
+                if u_b is None:
+                    continue
+                for sp in u_b.spokes.values():
+                    for a_id, rec in sp.target_affinities.items():
+                        if a_id in anc_a and isinstance(rec, list) and len(rec) >= 4:
+                            pred_ba = str(rec[3])
+                            if pred_ba in ("disjoint_with", "not_a") or float(rec[1]) > float(
+                                rec[0]
+                            ):
+                                return [*anc_a[a_id], *path_b, (a_id, "disjoint_with", b_id)]
+            return [(focal, "disjoint_with", target_cid)]
+
+        if target_cid:
+            direct_or_hop = self._find_verified_spoke_path(focal, target_cid, max_hops=6)
+            if direct_or_hop:
+                return direct_or_hop
+
+        if "[MLU-360-DIAGNOSE]" in res.inspectable_trace:
+            steps: list[tuple[str, str, str]] = []
+            for obs_cid in res.activated_mlus:
+                if obs_cid in ("CORE_ROOT", focal) or obs_cid.startswith("SUBCORE_"):
+                    continue
+                p = self._find_verified_spoke_path(focal, obs_cid, max_hops=4)
+                for edge in p:
+                    if edge not in steps:
+                        steps.append(edge)
+            if steps:
+                return steps
+
+        if res.spoke_predictions:
+            top_p = res.spoke_predictions[0]
+            hop_p = self._find_verified_spoke_path(focal, top_p.target_concept, max_hops=5)
+            if hop_p:
+                return hop_p
+            return [(focal, top_p.predicate, top_p.target_concept)]
+        return []
+
+    def _record_episodic_turn(
+        self, res: MLMQueryResult, target_cid: str | None = None
+    ) -> None:
+        """Phase 57: Record a verified or refuted reasoning frame into the Episodic Working Memory Ring."""
+        proof_steps = self._extract_arena_proof_steps(res, target_cid)
+        frame = {
+            "turn_step": self.cycle_step,
+            "query": res.query,
+            "focal_concept": res.focal_concept,
+            "target_concept": target_cid,
+            "status": res.status,
+            "active_subcore": res.active_subcore,
+            "activated_mlus": list(res.activated_mlus),
+            "spoke_predictions": list(res.spoke_predictions),
+            "inspectable_trace": res.inspectable_trace,
+            "fluent_english": res.fluent_english or res.answer,
+            "confidence": res.confidence,
+            "proof_steps": proof_steps,
+        }
+        self.episodic_working_memory.append(frame)
+        if len(self.episodic_working_memory) > 16:
+            self.episodic_working_memory = self.episodic_working_memory[-16:]
+
+    def _synthesize_episodic_explanation(
+        self, clean_q: str, last_ep: dict[str, Any]
+    ) -> MLMQueryResult:
+        """Phase 57: Synthesize a multi-hop proof or refutation explanation from the Episodic Working Memory Ring."""
+        focal_cid = str(last_ep.get("focal_concept", "CORE_ROOT"))
+        steps: list[tuple[str, str, str]] = list(last_ep.get("proof_steps", []))
+        clauses: list[str] = []
+        chain_nodes: list[str] = []
+        for u_cid, pred, v_cid in steps:
+            if not chain_nodes:
+                chain_nodes.append(u_cid)
+            if v_cid not in chain_nodes:
+                chain_nodes.append(v_cid)
+            u_w = u_cid.lower().replace("_", " ")
+            v_w = v_cid.lower().replace("_", " ")
+            if pred in ("disjoint_with", "not_a"):
+                clauses.append(f"{u_w} is mutually exclusive with {v_w}")
+            else:
+                clauses.append(f"{u_w} {pred.replace('_', ' ')} {v_w}")
+
+        if clauses:
+            if len(clauses) == 1:
+                fluent = f"Because {clauses[0]}."
+            else:
+                fluent = f"Because {', '.join(clauses[:-1])}, and {clauses[-1]}."
+            proof_tag = " -> ".join(chain_nodes)
+        else:
+            prev_fluent = str(last_ep.get("fluent_english", "")).rstrip(".")
+            fluent = (
+                f"Because {prev_fluent[:1].lower() + prev_fluent[1:]}."
+                if prev_fluent
+                else "Because of verified 360° spoke evidence."
+            )
+            proof_tag = focal_cid
+
+        trace = (
+            f"[MLU-360-EXPLAIN] ref_status={last_ep.get('status', 'VERIFIED')} | "
+            f"hops={len(steps)} | proof={proof_tag}"
+        )
+        return MLMQueryResult(
+            query=clean_q,
+            focal_concept=focal_cid,
+            status="VERIFIED",
+            answer=fluent,
+            confidence=float(last_ep.get("confidence", 0.92)),
+            epistemic_entropy=0.05,
+            active_subcore=str(last_ep.get("active_subcore", "CORE_ROOT")),
+            activated_mlus=chain_nodes or list(last_ep.get("activated_mlus", ["CORE_ROOT"])),
+            spoke_predictions=list(last_ep.get("spoke_predictions", [])),
+            inspectable_trace=trace,
+            fluent_english=fluent,
+        )
+
     def query_360(self, query: str) -> MLMQueryResult:
         """Answer a natural-language question or concept inquiry using the 360° Spider-Web MLM."""
+        self._last_query_target_cid: str | None = None
+        res = self._query_360_core(query)
+        if (
+            res.status in ("VERIFIED", "REFUTED", "NEURAL_GROUNDED")
+            and "[MLU-360-EXPLAIN]" not in res.inspectable_trace
+        ):
+            self._record_episodic_turn(res, target_cid=self._last_query_target_cid)
+        return res
+
+    def _query_360_core(self, query: str) -> MLMQueryResult:
         clean_q = query.strip()
         tokens = _tokenize_words(clean_q)
 
@@ -1113,7 +1322,7 @@ class SpiderWebMLM:
             )
         )
 
-        # Multi-Turn Liquid Context Resonance for elliptic / follow-up inquiries
+        # Multi-Turn Liquid Context Resonance for elliptic / follow-up inquiries & Proof Explanations
         if self.recent_focal_stack:
             top_ctx_cid = self.recent_focal_stack[0][0]
             if (
@@ -1124,15 +1333,43 @@ class SpiderWebMLM:
                 and top_ctx_cid in self.nodes
             ):
                 ctx_preds, _ = self._collect_360_predictions(self.nodes[top_ctx_cid])
-                if any(p.target_concept == focal_cid for p in ctx_preds) or (
-                    not self.verifier.verify_relation(top_ctx_cid, "is_a", focal_cid).passed
+                rust_mutex = (
+                    not bool(
+                        self.rust_arena.verify_invariants(top_ctx_cid, "is_a", focal_cid).get(
+                            "passed", True
+                        )
+                    )
+                    if self.rust_arena.is_native
+                    else False
+                )
+                has_anaphor_subject = any(
+                    t not in self.frame_policy.stop_determiners
+                    and self._operator_token_mass.get(t, 0.0) == 0.0
+                    and self._token_salience(t) < 2.25
+                    for t in tokens[:focal_pos]
+                )
+                if (
+                    any(p.target_concept == focal_cid for p in ctx_preds)
+                    or not self.verifier.verify_relation(top_ctx_cid, "is_a", focal_cid).passed
+                    or rust_mutex
+                    or has_anaphor_subject
                 ):
                     target_cid = focal_cid
                     focal_cid = top_ctx_cid
             elif focal_cid is None and tokens:
                 max_sal = max(self._token_salience(t) for t in tokens)
-                if max_sal < 2.8 and top_ctx_cid in self.nodes:
-                    focal_cid = top_ctx_cid
+                if max_sal < 2.8:
+                    if self.episodic_working_memory and (
+                        clean_q.endswith("?")
+                        or any(t in self.frame_policy.stop_determiners for t in tokens)
+                    ):
+                        return self._synthesize_episodic_explanation(
+                            clean_q, self.episodic_working_memory[-1]
+                        )
+                    if top_ctx_cid in self.nodes:
+                        focal_cid = top_ctx_cid
+
+        self._last_query_target_cid = target_cid
 
         if focal_cid is None and tokens:
             # Select the token with the highest Shannon character-entropy & morphological salience
@@ -1405,6 +1642,28 @@ class SpiderWebMLM:
                             f"best_explanation={best_e2}"
                         ),
                         fluent_english=d_synth2,
+                    )
+
+                # Phase 57: Contrastive 360° comparison when two concepts have divergent/mutually-exclusive spokes
+                if comp_synth and (
+                    cmp_dto.get("mutually_exclusive")
+                    or (cmp_dto.get("distinct_a") and cmp_dto.get("distinct_b"))
+                ):
+                    return MLMQueryResult(
+                        query=clean_q,
+                        focal_concept=focal_cid,
+                        status="VERIFIED",
+                        answer=comp_synth,
+                        confidence=0.90,
+                        epistemic_entropy=0.08,
+                        active_subcore=active_subcore,
+                        activated_mlus=activated + [target_cid],
+                        spoke_predictions=preds[:6],
+                        inspectable_trace=(
+                            f"[MLU-360-COMPARE] {focal_cid} <-> {target_cid} | "
+                            f"shared=0 | mutex={cmp_dto.get('mutually_exclusive', False)}"
+                        ),
+                        fluent_english=comp_synth,
                     )
 
         # Case B: Open 360° synthesis across all radial spokes + multi-hop causal wave + learned neural sequence continuation
@@ -1906,7 +2165,12 @@ class SpiderWebMLM:
             if f"({pred_k})" in tr:
                 raw_prior[c_idx] += 3.0
                 matched_trace_spoke = s_label
-        if q_res.status == "REFUTED" or "I_MUTEX" in tr or "[MLU-360-COMPARE]" in tr:
+        if (
+            q_res.status == "REFUTED"
+            or "I_MUTEX" in tr
+            or "[MLU-360-COMPARE]" in tr
+            or "[MLU-360-EXPLAIN]" in tr
+        ):
             raw_prior[0] += 3.0
             matched_trace_spoke = "taxonomy"
         elif (
@@ -1934,13 +2198,23 @@ class SpiderWebMLM:
         focal_w = " ".join(_tokenize_words(q_res.focal_concept)) or "entity"
         raw_fluent = (q_res.fluent_english or q_res.answer).split("(Liquid stream:")[0]
         raw_fluent = raw_fluent.split("(Refuted")[0]
-        ans_words = _tokenize_words(raw_fluent)[:16]
+        ans_words = _tokenize_words(raw_fluent)[:34]
         if not ans_words:
             return "", spoke_prior
 
         if q_res.status == "REFUTED":
             think_clause = (
                 f"think 360 invariant gate refutes {focal_w} via mutual exclusivity on taxonomy spoke"
+            )
+        elif "[MLU-360-EXPLAIN]" in tr:
+            hop_nodes = [
+                " ".join(_tokenize_words(c))
+                for c in q_res.activated_mlus
+                if c != "CORE_ROOT" and not c.startswith("SUBCORE_")
+            ]
+            chain_w = " to ".join(hop_nodes[:5]) if len(hop_nodes) >= 2 else focal_w
+            think_clause = (
+                f"think 360 episodic working memory traces multi hop proof from {chain_w}"
             )
         elif "[MLU-360-DIAGNOSE]" in tr:
             obs_words = [
@@ -1953,9 +2227,19 @@ class SpiderWebMLM:
                 f"think 360 abductive wave over {obs_str} converges on root cause {focal_w}"
             )
         elif "[MLU-360-COMPARE]" in tr:
-            think_clause = (
-                f"think intersecting 360 radial waves from {focal_w} across shared attractors"
+            target_w = (
+                " ".join(_tokenize_words(q_res.activated_mlus[-1]))
+                if q_res.activated_mlus
+                else "peer"
             )
+            if "mutex=True" in tr:
+                think_clause = (
+                    f"think 360 comparative wave contrasts {focal_w} and {target_w} across mutually exclusive spokes"
+                )
+            else:
+                think_clause = (
+                    f"think intersecting 360 radial waves from {focal_w} and {target_w} across shared attractors"
+                )
         elif "[MLU-360-COUNTERFACTUAL]" in tr:
             think_clause = (
                 f"think 360 counterfactual intervention suppresses causal branch from {focal_w}"
@@ -1991,14 +2275,24 @@ class SpiderWebMLM:
         q_res: MLMQueryResult | None = None,
         adapt_epochs: int = 18,
         adapt_lr: float = 0.045,
-        max_new_tokens: int = 42,
+        max_new_tokens: int = 48,
         persist: bool = False,
     ) -> dict[str, Any]:
-        """Phase 55: Fuse 360° Spider-Web Arena multi-hop deductions and spoke priors directly into NeuralSpiderWebMlu generation."""
+        """Phase 55 & 57: Fuse 360° Spider-Web Arena multi-hop deductions, episodic proofs, and spoke priors directly into NeuralSpiderWebMlu generation."""
         resolved_q = q_res if q_res is not None else self.query_360(prompt)
-        arena_cot, spoke_prior = self._build_arena_conditioning(prompt, resolved_q)
+        cond_prompt = prompt
+        if "[MLU-360-EXPLAIN]" in resolved_q.inspectable_trace:
+            tail_cid = (
+                resolved_q.activated_mlus[-1]
+                if resolved_q.activated_mlus
+                else resolved_q.focal_concept
+            )
+            cond_prompt = (
+                f"{prompt.rstrip('?.!')} {resolved_q.focal_concept.lower()} {tail_cid.lower()}?"
+            )
+        arena_cot, spoke_prior = self._build_arena_conditioning(cond_prompt, resolved_q)
         gen = self.neural_mlu.generate_arena_conditioned(
-            prompt,
+            cond_prompt,
             arena_cot_sequence=arena_cot,
             spoke_prior=spoke_prior,
             adapt_epochs=adapt_epochs if arena_cot else 0,
@@ -2016,7 +2310,7 @@ class SpiderWebMLM:
         return gen
 
     def chat_turn_360(self, user_input: str, persist: bool = True) -> dict[str, Any]:
-        """Phase 34, 52, 53 & 55: Execute a unified 360° conversational turn combining Differentiable Neural Thinking + 360° Spider-Web Arena."""
+        """Phase 34, 52, 53, 55 & 57: Execute a unified 360° conversational turn combining Differentiable Neural Thinking + 360° Spider-Web Arena + Episodic Working Memory."""
         clean_in = user_input.strip()
         if not clean_in:
             return {
@@ -2051,7 +2345,7 @@ class SpiderWebMLM:
         )
 
         is_question = clean_in.endswith("?") or has_leading_op or not has_interior_op
-        neural_gen = self.generate_neural_mlu(clean_in, max_new_tokens=42)
+        neural_gen = self.generate_neural_mlu(clean_in, max_new_tokens=48)
         total_ptoks = int(neural_gen.get("total_prompt_tokens", 0))
         known_ptoks = int(neural_gen.get("known_prompt_tokens", 0))
         n_conf = float(neural_gen.get("mean_token_confidence", 0.0))
@@ -2071,7 +2365,10 @@ class SpiderWebMLM:
             trace = q_res.inspectable_trace
             conf = q_res.confidence
 
-            # Phase 55: When the 360° Arena resolves a multi-hop/abductive/comparative/refuted query
+            if "[MLU-360-EXPLAIN]" in trace or "[MLU-360-COMPARE]" in trace:
+                neural_grounded = False
+
+            # Phase 55 & 57: When the 360° Arena resolves a multi-hop/abductive/comparative/refuted/explanation query
             # that NeuralSpiderWebMlu has not yet grounded on its own, fuse the Arena proof + 6-spoke prior into NeuralSpiderWebMlu!
             if not neural_grounded and status in ("VERIFIED", "NEURAL_GROUNDED", "REFUTED"):
                 neural_gen = self.generate_arena_conditioned_neural(
@@ -2079,7 +2376,7 @@ class SpiderWebMLM:
                     q_res=q_res,
                     adapt_epochs=18,
                     adapt_lr=0.045,
-                    max_new_tokens=42,
+                    max_new_tokens=48,
                     persist=persist,
                 )
                 n_conf = float(neural_gen.get("mean_token_confidence", 0.0))
@@ -2102,6 +2399,7 @@ class SpiderWebMLM:
                 is_structured_wave = (
                     has_leading_op
                     or status == "REFUTED"
+                    or "[MLU-360-EXPLAIN]" in q_res.inspectable_trace
                     or "[MLU-360-DIAGNOSE]" in q_res.inspectable_trace
                     or "[MLU-360-COMPARE]" in q_res.inspectable_trace
                     or "[MLU-360-COUNTERFACTUAL]" in q_res.inspectable_trace
