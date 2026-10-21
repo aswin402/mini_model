@@ -123,6 +123,24 @@ impl ParamTensor {
             self.grad[i] = 0.0;
         }
     }
+
+    pub fn step_adamw_sparse(&mut self, lr: f32, beta1: f32, beta2: f32, eps: f32, weight_decay: f32, step_t: i32) {
+        let b1_corr = 1.0 - beta1.powi(step_t);
+        let b2_corr = 1.0 - beta2.powi(step_t);
+        for i in 0..self.w.len() {
+            let raw_g = self.grad[i];
+            self.grad[i] = 0.0;
+            if raw_g.abs() < 1e-7 {
+                continue;
+            }
+            let g = raw_g.clamp(-5.0, 5.0);
+            self.m[i] = beta1 * self.m[i] + (1.0 - beta1) * g;
+            self.v[i] = beta2 * self.v[i] + (1.0 - beta2) * (g * g);
+            let m_hat = self.m[i] / b1_corr;
+            let v_hat = self.v[i] / b2_corr;
+            self.w[i] -= lr * (m_hat / (v_hat.sqrt() + eps) + weight_decay * self.w[i]);
+        }
+    }
 }
 
 /// Differentiable Neural Logic MLU Cell with continuous T-norm gates (`AND`, `OR`, `IMPLIES`, `XOR`).
@@ -497,8 +515,12 @@ impl NeuralSpiderWebMlu {
         best_id
     }
 
-    /// Forward pass over a sequence of token IDs `seq`, returning cached activations for backprop.
-    fn forward_sequence(&self, seq: &[usize]) -> Vec<StepCache> {
+    /// Forward pass over `seq` with optional 360° Arena spoke prior bias `[f32; NUM_LOGIC_CELLS]`.
+    fn forward_sequence_with_spoke_prior(
+        &self,
+        seq: &[usize],
+        spoke_prior: Option<&[f32; NUM_LOGIC_CELLS]>,
+    ) -> Vec<StepCache> {
         let len = seq.len().min(MAX_SEQ_LEN);
         let v_size = self.id_to_vocab.len();
         let mut caches: Vec<StepCache> = Vec::with_capacity(len);
@@ -585,14 +607,19 @@ impl NeuralSpiderWebMlu {
                 h[d] = x0[d] + g_tau[d] * attn_out[d];
             }
 
-            // 360° Softmax Router over K = 6 Differentiable Logic MLU Cells
-            let route_logits = matvec(
+            // 360° Softmax Router over K = 6 Differentiable Logic MLU Cells (+ optional 360° Arena Spoke Prior)
+            let mut route_logits = matvec(
                 &self.w_route.w,
                 NUM_LOGIC_CELLS,
                 D_MODEL,
                 &h,
                 Some(&self.b_route.w),
             );
+            if let Some(prior) = spoke_prior {
+                for k in 0..NUM_LOGIC_CELLS {
+                    route_logits[k] += 3.50 * prior[k];
+                }
+            }
             let route_probs = softmax_slice(&route_logits);
 
             let mut cell_a = Vec::with_capacity(NUM_LOGIC_CELLS);
@@ -690,11 +717,23 @@ impl NeuralSpiderWebMlu {
     /// Analytical Backpropagation + AdamW update over a single sequence of token IDs `seq`.
     /// Returns the average cross-entropy loss across the sequence.
     pub fn train_sequence_step(&mut self, seq: &[usize], lr: f32) -> f32 {
+        self.train_sequence_step_with_spoke_prior(seq, lr, None, false)
+    }
+
+    /// Analytical Backpropagation + AdamW update over `seq` with optional 360° Arena spoke prior
+    /// and fast/slow continual learning separation for online single-sequence adaptation.
+    pub fn train_sequence_step_with_spoke_prior(
+        &mut self,
+        seq: &[usize],
+        lr: f32,
+        spoke_prior: Option<&[f32; NUM_LOGIC_CELLS]>,
+        online_single_seq: bool,
+    ) -> f32 {
         let len = seq.len().min(MAX_SEQ_LEN);
         if len < 2 {
             return 0.0;
         }
-        let caches = self.forward_sequence(&seq[..len]);
+        let caches = self.forward_sequence_with_spoke_prior(&seq[..len], spoke_prior);
         let v_size = self.id_to_vocab.len();
         let scale_qk = 1.0 / (D_MODEL as f32).sqrt();
         let qmark_id = self.vocab_to_id.get("?").copied();
@@ -731,6 +770,9 @@ impl NeuralSpiderWebMlu {
             // 1. dL / d_logits = (probs - one_hot(target)) * step_scale
             let mut d_o = vec![0.0f32; D_MODEL];
             for v in 0..v_size {
+                if online_single_seq && v != target_id && cache.probs[v] < 0.035 && !seq.contains(&v) {
+                    continue;
+                }
                 let mut dl = cache.probs[v];
                 if v == target_id {
                     dl -= 1.0;
@@ -849,7 +891,10 @@ impl NeuralSpiderWebMlu {
                 dot_r += cache.route_probs[k] * d_route_probs[k];
             }
             for k in 0..NUM_LOGIC_CELLS {
-                let d_rl = cache.route_probs[k] * (d_route_probs[k] - dot_r);
+                let mut d_rl = cache.route_probs[k] * (d_route_probs[k] - dot_r);
+                if let Some(prior) = spoke_prior {
+                    d_rl += 0.40 * step_scale * (cache.route_probs[k] - prior[k]);
+                }
                 self.b_route.grad[k] += d_rl;
                 let row_off = k * D_MODEL;
                 for d in 0..D_MODEL {
@@ -963,23 +1008,41 @@ impl NeuralSpiderWebMlu {
             }
         }
 
-        // AdamW parameter update step
+        // AdamW parameter update step (Fast prompt-bound weights vs. Slow shared backbone for online adaptation)
         self.step_count += 1;
         let st = self.step_count;
-        self.token_emb.step_adamw(lr, 0.9, 0.999, 1e-8, 1e-4, st);
-        self.pos_emb.step_adamw(lr, 0.9, 0.999, 1e-8, 1e-4, st);
-        self.w_q.step_adamw(lr, 0.9, 0.999, 1e-8, 1e-4, st);
-        self.w_k.step_adamw(lr, 0.9, 0.999, 1e-8, 1e-4, st);
-        self.w_v.step_adamw(lr, 0.9, 0.999, 1e-8, 1e-4, st);
-        self.w_tau.step_adamw(lr, 0.9, 0.999, 1e-8, 1e-4, st);
-        self.b_tau.step_adamw(lr, 0.9, 0.999, 1e-8, 0.0, st);
-        self.w_route.step_adamw(lr, 0.9, 0.999, 1e-8, 1e-4, st);
-        self.b_route.step_adamw(lr, 0.9, 0.999, 1e-8, 0.0, st);
-        for cell in &mut self.logic_cells {
-            cell.step_adamw(lr, st);
+        if online_single_seq {
+            let slow_lr = lr * 0.02;
+            self.token_emb.step_adamw_sparse(lr, 0.9, 0.999, 1e-8, 1e-4, st);
+            self.pos_emb.step_adamw_sparse(slow_lr, 0.9, 0.999, 1e-8, 1e-4, st);
+            self.w_q.step_adamw(slow_lr, 0.9, 0.999, 1e-8, 1e-4, st);
+            self.w_k.step_adamw(slow_lr, 0.9, 0.999, 1e-8, 1e-4, st);
+            self.w_v.step_adamw(slow_lr, 0.9, 0.999, 1e-8, 1e-4, st);
+            self.w_tau.step_adamw(slow_lr, 0.9, 0.999, 1e-8, 1e-4, st);
+            self.b_tau.step_adamw(slow_lr, 0.9, 0.999, 1e-8, 0.0, st);
+            self.w_route.step_adamw(lr * 0.5, 0.9, 0.999, 1e-8, 1e-4, st);
+            self.b_route.step_adamw(lr * 0.15, 0.9, 0.999, 1e-8, 0.0, st);
+            for cell in &mut self.logic_cells {
+                cell.step_adamw(slow_lr, st);
+            }
+            self.lm_head_w.step_adamw_sparse(lr * 0.55, 0.9, 0.999, 1e-8, 1e-4, st);
+            self.lm_head_b.zero_grad();
+        } else {
+            self.token_emb.step_adamw(lr, 0.9, 0.999, 1e-8, 1e-4, st);
+            self.pos_emb.step_adamw(lr, 0.9, 0.999, 1e-8, 1e-4, st);
+            self.w_q.step_adamw(lr, 0.9, 0.999, 1e-8, 1e-4, st);
+            self.w_k.step_adamw(lr, 0.9, 0.999, 1e-8, 1e-4, st);
+            self.w_v.step_adamw(lr, 0.9, 0.999, 1e-8, 1e-4, st);
+            self.w_tau.step_adamw(lr, 0.9, 0.999, 1e-8, 1e-4, st);
+            self.b_tau.step_adamw(lr, 0.9, 0.999, 1e-8, 0.0, st);
+            self.w_route.step_adamw(lr, 0.9, 0.999, 1e-8, 1e-4, st);
+            self.b_route.step_adamw(lr, 0.9, 0.999, 1e-8, 0.0, st);
+            for cell in &mut self.logic_cells {
+                cell.step_adamw(lr, st);
+            }
+            self.lm_head_w.step_adamw(lr, 0.9, 0.999, 1e-8, 1e-4, st);
+            self.lm_head_b.step_adamw(lr, 0.9, 0.999, 1e-8, 0.0, st);
         }
-        self.lm_head_w.step_adamw(lr, 0.9, 0.999, 1e-8, 1e-4, st);
-        self.lm_head_b.step_adamw(lr, 0.9, 0.999, 1e-8, 0.0, st);
 
         total_loss * inv_steps
     }
@@ -1083,6 +1146,16 @@ impl NeuralSpiderWebMlu {
 
     /// Generate a response token-by-token purely from the Neural 360° Spider-Web MLU weights.
     pub fn generate_response(&self, prompt: &str, max_new_tokens: usize) -> NeuralGenerationDto {
+        self.generate_response_with_spoke_prior(prompt, max_new_tokens, None)
+    }
+
+    /// Generate a response token-by-token conditioned on an optional 360° Arena spoke prior.
+    pub fn generate_response_with_spoke_prior(
+        &self,
+        prompt: &str,
+        max_new_tokens: usize,
+        spoke_prior: Option<&[f32; NUM_LOGIC_CELLS]>,
+    ) -> NeuralGenerationDto {
         let sents = Self::tokenize_text(prompt);
         let mut prompt_toks: Vec<String> = Vec::new();
         for (idx, s) in sents.iter().enumerate() {
@@ -1129,7 +1202,7 @@ impl NeuralSpiderWebMlu {
             if seq.len() >= MAX_SEQ_LEN {
                 break;
             }
-            let caches = self.forward_sequence(&seq);
+            let caches = self.forward_sequence_with_spoke_prior(&seq, spoke_prior);
             let Some(last) = caches.last() else {
                 break;
             };
@@ -1265,5 +1338,83 @@ impl NeuralSpiderWebMlu {
             active_spoke_weights,
             dominant_logic_gates,
         }
+    }
+
+    /// Phase 55: Arena-Conditioned Neural Generation (360° Spider-Web Graph <-> Differentiable Neural MLU Fusion).
+    ///
+    /// Conditions the 6 Differentiable Logic MLU Cells (`CELL_0_TAXONOMY..CELL_5_DYNAMICS`) with the
+    /// 360° Arena's active `spoke_prior` distribution, optionally performs fast online backpropagation
+    /// adaptation on the Arena-deduced multi-hop Chain-of-Thought sequence (`arena_cot_sequence`) with
+    /// episodic replay protection, and autoregressively generates the `think ... answer ...` response
+    /// from the neural weights.
+    pub fn generate_arena_conditioned(
+        &mut self,
+        prompt: &str,
+        arena_cot_sequence: &str,
+        spoke_prior: &[f32; NUM_LOGIC_CELLS],
+        adapt_epochs: usize,
+        adapt_lr: f32,
+        max_new_tokens: usize,
+    ) -> NeuralGenerationDto {
+        if !arena_cot_sequence.trim().is_empty() && adapt_epochs > 0 {
+            let raw_sents = Self::tokenize_text(arena_cot_sequence);
+            let bos_id = self.ensure_token("<bos>");
+            let eos_id = self.ensure_token("<eos>");
+            let mut adapt_seqs: Vec<Vec<usize>> = Vec::new();
+            for s in &raw_sents {
+                let mut seq = Vec::with_capacity(s.len() + 2);
+                seq.push(bos_id);
+                for tok in s {
+                    seq.push(self.ensure_token(tok));
+                }
+                seq.push(eos_id);
+                if seq.len() <= MAX_SEQ_LEN {
+                    adapt_seqs.push(seq);
+                }
+            }
+            if !adapt_seqs.is_empty() {
+                let prior_replay: Vec<Vec<usize>> = self
+                    .replay_buffer
+                    .iter()
+                    .filter(|r| !adapt_seqs.contains(r))
+                    .cloned()
+                    .collect();
+                for seq in &adapt_seqs {
+                    if !self.replay_buffer.contains(seq) {
+                        if self.replay_buffer.len() >= 160 {
+                            self.replay_buffer.remove(0);
+                        }
+                        self.replay_buffer.push(seq.clone());
+                    }
+                }
+                let ep_count = adapt_epochs.clamp(1, 60);
+                for ep in 0..ep_count {
+                    let curr_lr = adapt_lr * (0.97f32).powi(ep as i32);
+                    if !prior_replay.is_empty() && ep % 2 == 0 && ep + 1 < ep_count {
+                        let r_len = prior_replay.len();
+                        let batch = r_len.min(18);
+                        let offset = ((self.step_count as usize) * 13 + ep * 19) % r_len;
+                        for k in 0..batch {
+                            let r_seq = &prior_replay[(offset + k) % r_len];
+                            let _ = self.train_sequence_step_with_spoke_prior(
+                                r_seq,
+                                curr_lr * 0.75,
+                                None,
+                                true,
+                            );
+                        }
+                    }
+                    for seq in &adapt_seqs {
+                        let _ = self.train_sequence_step_with_spoke_prior(
+                            seq,
+                            curr_lr,
+                            Some(spoke_prior),
+                            true,
+                        );
+                    }
+                }
+            }
+        }
+        self.generate_response_with_spoke_prior(prompt, max_new_tokens, Some(spoke_prior))
     }
 }

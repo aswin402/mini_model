@@ -425,6 +425,18 @@ class RustAccelerationCore:
                 ]
                 lib.little_core_neural_mlu_generate.restype = ctypes.c_void_p
 
+            if hasattr(lib, "little_core_neural_mlu_generate_arena_conditioned"):
+                lib.little_core_neural_mlu_generate_arena_conditioned.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.POINTER(ctypes.c_float),
+                    ctypes.c_size_t,
+                    ctypes.c_float,
+                    ctypes.c_size_t,
+                ]
+                lib.little_core_neural_mlu_generate_arena_conditioned.restype = ctypes.c_void_p
+
             if hasattr(lib, "little_core_neural_mlu_dump_json"):
                 lib.little_core_neural_mlu_dump_json.argtypes = [ctypes.c_void_p]
                 lib.little_core_neural_mlu_dump_json.restype = ctypes.c_void_p
@@ -1564,6 +1576,44 @@ class RustNeuralMlu:
         ptr = self._lib.little_core_neural_mlu_generate(
             self._handle,
             prompt.encode("utf-8"),
+            max(1, int(max_new_tokens)),
+        )
+        if not ptr:
+            return {}
+        res_str = ctypes.cast(ptr, ctypes.c_char_p).value.decode("utf-8")
+        self._lib.little_core_free_string(ptr)
+        return dict(json.loads(res_str))
+
+    def generate_arena_conditioned(
+        self,
+        prompt: str,
+        arena_cot_sequence: str = "",
+        spoke_prior: Sequence[float] | None = None,
+        adapt_epochs: int = 18,
+        adapt_lr: float = 0.045,
+        max_new_tokens: int = 36,
+    ) -> dict[str, Any]:
+        """Phase 55: Autoregressively generate response tokens conditioned on 360° Arena spoke priors and multi-hop CoT proof traces."""
+        if (
+            self._lib is None
+            or not self._handle
+            or not hasattr(self._lib, "little_core_neural_mlu_generate_arena_conditioned")
+        ):
+            return self.generate(prompt, max_new_tokens=max_new_tokens)
+        prior_vals = [0.0] * 6
+        if spoke_prior is not None:
+            for i in range(min(6, len(spoke_prior))):
+                val = float(spoke_prior[i])
+                if math.isfinite(val):
+                    prior_vals[i] = val
+        c_prior = (ctypes.c_float * 6)(*prior_vals)
+        ptr = self._lib.little_core_neural_mlu_generate_arena_conditioned(
+            self._handle,
+            prompt.encode("utf-8"),
+            arena_cot_sequence.encode("utf-8"),
+            c_prior,
+            max(0, int(adapt_epochs)),
+            ctypes.c_float(adapt_lr),
             max(1, int(max_new_tokens)),
         )
         if not ptr:

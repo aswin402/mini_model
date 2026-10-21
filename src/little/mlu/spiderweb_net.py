@@ -922,7 +922,7 @@ class SpiderWebMLM:
         return base
 
     def _collect_360_predictions(
-        self, focal_unit: MiniLearningUnit, max_hops: int = 3
+        self, focal_unit: MiniLearningUnit, max_hops: int = 5
     ) -> tuple[list[MLUSpokePrediction], list[str]]:
         """Traverse the 360° Spider-Web around `focal_unit` (including transitive taxonomic inheritance)."""
         candidate_vecs = {cid: u.anchor_vec for cid, u in self.nodes.items()}
@@ -940,7 +940,7 @@ class SpiderWebMLM:
         self._last_rust_beam: dict[str, Any] = {}
         if self.rust_arena.is_native:
             beam_dto = self.rust_arena.query_360_beam(
-                focal_unit.concept_id, max_hops=max_hops, top_k=12
+                focal_unit.concept_id, max_hops=max_hops, top_k=16
             )
             self._last_rust_beam = beam_dto
             for cell_name in beam_dto.get("activated_cells", []):
@@ -1101,10 +1101,16 @@ class SpiderWebMLM:
                 )
 
         op_tuples = {ptoks for ptoks, _, _ in self._operator_codebook}
-        has_leading_operator = focal_pos > 0 and any(
-            tuple(tokens[:k]) in op_tuples
-            for k in (1, 2, 3)
-            if k <= focal_pos
+        has_leading_operator = focal_pos > 0 and (
+            any(
+                tuple(tokens[:k]) in op_tuples
+                for k in (1, 2, 3)
+                if k <= focal_pos
+            )
+            or (
+                self._operator_token_mass.get(tokens[0], 0.0) > 0.0
+                and tokens[0] not in self.frame_policy.stop_determiners
+            )
         )
 
         # Multi-Turn Liquid Context Resonance for elliptic / follow-up inquiries
@@ -1861,8 +1867,156 @@ class SpiderWebMLM:
             "\n".join(lines), epochs=epochs, learning_rate=learning_rate, persist=persist
         )
 
+    def _build_arena_conditioning(
+        self, prompt: str, q_res: MLMQueryResult
+    ) -> tuple[str, list[float]]:
+        """Phase 55: Extract 6-spoke neural cell priors and multi-hop Chain-of-Thought proof sequences from a 360° Arena wave."""
+        # Map 360° predicates & wave traces to NeuralSpiderWebMlu's 6 logic cells:
+        # 0: TAXONOMY, 1: MEREOLOGY, 2: CAUSALITY, 3: SPATIAL, 4: CAPABILITY, 5: DYNAMICS
+        pred_to_cell: dict[str, tuple[int, str]] = {
+            "is_a": (0, "taxonomy"),
+            "subclass_of": (0, "taxonomy"),
+            "instance_of": (0, "taxonomy"),
+            "disjoint_with": (0, "taxonomy"),
+            "not_a": (0, "taxonomy"),
+            "has_part": (1, "mereology"),
+            "part_of": (1, "mereology"),
+            "has_property": (1, "mereology"),
+            "has": (1, "mereology"),
+            "causes": (2, "causality"),
+            "requires": (2, "causality"),
+            "produces": (2, "causality"),
+            "located_in": (3, "spatial"),
+            "orbits": (3, "spatial"),
+            "lives_in": (3, "spatial"),
+            "can": (4, "capability"),
+            "capable_of": (4, "capability"),
+            "greater_than": (5, "dynamics"),
+            "less_than": (5, "dynamics"),
+            "before": (5, "dynamics"),
+            "after": (5, "dynamics"),
+        }
+        raw_prior = [0.02] * 6
+        for p in q_res.spoke_predictions[:6]:
+            cell_idx, _ = pred_to_cell.get(p.predicate, (0, "taxonomy"))
+            raw_prior[cell_idx] += float(p.combined_confidence) * 0.5
+        tr = q_res.inspectable_trace
+        matched_trace_spoke: str | None = None
+        for pred_k, (c_idx, s_label) in pred_to_cell.items():
+            if f"({pred_k})" in tr:
+                raw_prior[c_idx] += 3.0
+                matched_trace_spoke = s_label
+        if q_res.status == "REFUTED" or "I_MUTEX" in tr or "[MLU-360-COMPARE]" in tr:
+            raw_prior[0] += 3.0
+            matched_trace_spoke = "taxonomy"
+        elif (
+            "[MLU-360-DIAGNOSE]" in tr
+            or "[MLU-360-COUNTERFACTUAL]" in tr
+            or "[MLU-360-CAUSAL-WAVE]" in tr
+            or "[MLU-360-BRIDGE]" in tr
+        ):
+            raw_prior[2] += 3.0
+            matched_trace_spoke = "causality"
+        elif "[MLU-360-PLAN]" in tr:
+            raw_prior[4] += 3.0
+            matched_trace_spoke = "capability"
+
+        prior_sum = sum(raw_prior) or 1.0
+        spoke_prior = [round(v / prior_sum, 4) for v in raw_prior]
+
+        if q_res.status == "UNKNOWN":
+            return "", spoke_prior
+
+        p_words = _tokenize_words(prompt)[:14]
+        if not p_words:
+            return "", spoke_prior
+        p_clause = " ".join(p_words) + "?"
+        focal_w = " ".join(_tokenize_words(q_res.focal_concept)) or "entity"
+        raw_fluent = (q_res.fluent_english or q_res.answer).split("(Liquid stream:")[0]
+        raw_fluent = raw_fluent.split("(Refuted")[0]
+        ans_words = _tokenize_words(raw_fluent)[:16]
+        if not ans_words:
+            return "", spoke_prior
+
+        if q_res.status == "REFUTED":
+            think_clause = (
+                f"think 360 invariant gate refutes {focal_w} via mutual exclusivity on taxonomy spoke"
+            )
+        elif "[MLU-360-DIAGNOSE]" in tr:
+            obs_words = [
+                w
+                for w in p_words
+                if self._token_salience(w) >= 2.1 and w not in focal_w.split()
+            ][:4]
+            obs_str = " and ".join(obs_words) if obs_words else "observations"
+            think_clause = (
+                f"think 360 abductive wave over {obs_str} converges on root cause {focal_w}"
+            )
+        elif "[MLU-360-COMPARE]" in tr:
+            think_clause = (
+                f"think intersecting 360 radial waves from {focal_w} across shared attractors"
+            )
+        elif "[MLU-360-COUNTERFACTUAL]" in tr:
+            think_clause = (
+                f"think 360 counterfactual intervention suppresses causal branch from {focal_w}"
+            )
+        elif "[MLU-360-PLAN]" in tr:
+            think_clause = (
+                f"think 360 backward chaining goal planner traces prerequisites for {focal_w}"
+            )
+        else:
+            hop_nodes = [
+                " ".join(_tokenize_words(c))
+                for c in q_res.activated_mlus
+                if c != "CORE_ROOT" and not c.startswith("SUBCORE_")
+            ]
+            best_spoke = (
+                matched_trace_spoke
+                or (q_res.spoke_predictions[0].spoke if q_res.spoke_predictions else "taxonomy")
+            )
+            if len(hop_nodes) >= 2:
+                hop_chain = " to ".join(hop_nodes[:5])
+                think_clause = (
+                    f"think 360 multi hop wave traverses {hop_chain} on {best_spoke} spoke"
+                )
+            else:
+                think_clause = f"think 360 spider web activates {focal_w} on {best_spoke} spoke"
+
+        ans_clause = f"answer {' '.join(ans_words)}."
+        return f"{p_clause} {think_clause} {ans_clause}", spoke_prior
+
+    def generate_arena_conditioned_neural(
+        self,
+        prompt: str,
+        q_res: MLMQueryResult | None = None,
+        adapt_epochs: int = 18,
+        adapt_lr: float = 0.045,
+        max_new_tokens: int = 42,
+        persist: bool = False,
+    ) -> dict[str, Any]:
+        """Phase 55: Fuse 360° Spider-Web Arena multi-hop deductions and spoke priors directly into NeuralSpiderWebMlu generation."""
+        resolved_q = q_res if q_res is not None else self.query_360(prompt)
+        arena_cot, spoke_prior = self._build_arena_conditioning(prompt, resolved_q)
+        gen = self.neural_mlu.generate_arena_conditioned(
+            prompt,
+            arena_cot_sequence=arena_cot,
+            spoke_prior=spoke_prior,
+            adapt_epochs=adapt_epochs if arena_cot else 0,
+            adapt_lr=adapt_lr,
+            max_new_tokens=max_new_tokens,
+        )
+        if arena_cot and adapt_epochs > 0:
+            self._dirty_since_save = True
+            if persist:
+                self.save_nodes([])
+        gen["arena_status"] = resolved_q.status
+        gen["arena_focal_concept"] = resolved_q.focal_concept
+        gen["arena_spoke_prior"] = spoke_prior
+        gen["arena_cot_sequence"] = arena_cot
+        return gen
+
     def chat_turn_360(self, user_input: str, persist: bool = True) -> dict[str, Any]:
-        """Phase 34, 52 & 53: Execute a unified 360° conversational turn combining Differentiable Neural Thinking + 360° Spider-Web Arena."""
+        """Phase 34, 52, 53 & 55: Execute a unified 360° conversational turn combining Differentiable Neural Thinking + 360° Spider-Web Arena."""
         clean_in = user_input.strip()
         if not clean_in:
             return {
@@ -1876,10 +2030,16 @@ class SpiderWebMLM:
         op_tuples = {ptoks for ptoks, _, _ in self._operator_codebook}
         has_leading_op = bool(
             tokens
-            and any(
-                tuple(tokens[:k]) in op_tuples
-                for k in (1, 2, 3)
-                if k <= len(tokens)
+            and (
+                any(
+                    tuple(tokens[:k]) in op_tuples
+                    for k in (1, 2, 3)
+                    if k <= len(tokens)
+                )
+                or (
+                    self._operator_token_mass.get(tokens[0], 0.0) > 0.0
+                    and tokens[0] not in self.frame_policy.stop_determiners
+                )
             )
         )
         has_interior_op = any(
@@ -1911,6 +2071,26 @@ class SpiderWebMLM:
             trace = q_res.inspectable_trace
             conf = q_res.confidence
 
+            # Phase 55: When the 360° Arena resolves a multi-hop/abductive/comparative/refuted query
+            # that NeuralSpiderWebMlu has not yet grounded on its own, fuse the Arena proof + 6-spoke prior into NeuralSpiderWebMlu!
+            if not neural_grounded and status in ("VERIFIED", "NEURAL_GROUNDED", "REFUTED"):
+                neural_gen = self.generate_arena_conditioned_neural(
+                    clean_in,
+                    q_res=q_res,
+                    adapt_epochs=18,
+                    adapt_lr=0.045,
+                    max_new_tokens=42,
+                    persist=persist,
+                )
+                n_conf = float(neural_gen.get("mean_token_confidence", 0.0))
+                n_think = str(neural_gen.get("neural_thinking", "")).strip()
+                n_ans = str(neural_gen.get("neural_answer", "")).strip()
+                neural_grounded = bool(n_ans and n_conf >= 0.75)
+                spoke_weights = neural_gen.get("active_spoke_weights", [])
+                if spoke_weights:
+                    top_cell, top_w = spoke_weights[0]
+                    trace = f"{trace} | [ARENA-NEURAL-FUSION] {top_cell}={top_w:.2f}"
+
             if neural_grounded:
                 if n_think:
                     trace = f"{trace} | [NEURAL-THINK] {n_think}"
@@ -1921,6 +2101,7 @@ class SpiderWebMLM:
                 )
                 is_structured_wave = (
                     has_leading_op
+                    or status == "REFUTED"
                     or "[MLU-360-DIAGNOSE]" in q_res.inspectable_trace
                     or "[MLU-360-COMPARE]" in q_res.inspectable_trace
                     or "[MLU-360-COUNTERFACTUAL]" in q_res.inspectable_trace
@@ -1929,10 +2110,10 @@ class SpiderWebMLM:
                         and q_res.confidence >= 0.72
                     )
                 )
-                if (
+                if status != "REFUTED" and (
                     status == "UNKNOWN"
                     or not is_question
-                    or not explicit_concept_in_prompt
+                    or (not explicit_concept_in_prompt and not is_structured_wave)
                     or (not is_structured_wave and n_conf >= 0.90 and n_conf > q_res.confidence + 0.12)
                 ):
                     status = "VERIFIED"
@@ -1952,6 +2133,8 @@ class SpiderWebMLM:
                 "reply": reply,
                 "neural_thinking": n_think if neural_grounded else "",
                 "neural_answer": n_ans if neural_grounded else "",
+                "active_spoke_weights": neural_gen.get("active_spoke_weights", []),
+                "dominant_logic_gates": neural_gen.get("dominant_logic_gates", []),
                 "trace": trace,
                 "confidence": conf,
             }

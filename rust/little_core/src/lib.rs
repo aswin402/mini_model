@@ -1539,6 +1539,63 @@ pub unsafe extern "C" fn little_core_neural_mlu_generate(
 }
 
 /// # Safety
+/// `ptr` must be valid, `prompt_ptr` and `arena_cot_ptr` must be valid C strings,
+/// and `spoke_prior_ptr` (if non-null) must point to at least 6 `f32` values.
+#[no_mangle]
+pub unsafe extern "C" fn little_core_neural_mlu_generate_arena_conditioned(
+    ptr: *mut NeuralSpiderWebMlu,
+    prompt_ptr: *const c_char,
+    arena_cot_ptr: *const c_char,
+    spoke_prior_ptr: *const f32,
+    adapt_epochs: usize,
+    adapt_lr: f32,
+    max_new_tokens: usize,
+) -> *mut c_char {
+    let empty = neural_mlu::NeuralGenerationDto {
+        prompt: String::new(),
+        generated_text: String::new(),
+        neural_thinking: String::new(),
+        neural_answer: String::new(),
+        generated_tokens: Vec::new(),
+        mean_token_confidence: 0.0,
+        known_prompt_tokens: 0,
+        total_prompt_tokens: 0,
+        active_spoke_weights: Vec::new(),
+        dominant_logic_gates: Vec::new(),
+    };
+    if ptr.is_null() || prompt_ptr.is_null() {
+        return to_c_string(&empty);
+    }
+    let Ok(prompt) = (unsafe { CStr::from_ptr(prompt_ptr) }).to_str() else {
+        return to_c_string(&empty);
+    };
+    let arena_cot = if arena_cot_ptr.is_null() {
+        ""
+    } else {
+        (unsafe { CStr::from_ptr(arena_cot_ptr) }).to_str().unwrap_or("")
+    };
+    let mut spoke_prior = [0.0f32; neural_mlu::NUM_LOGIC_CELLS];
+    if !spoke_prior_ptr.is_null() {
+        let slice = unsafe { std::slice::from_raw_parts(spoke_prior_ptr, neural_mlu::NUM_LOGIC_CELLS) };
+        for k in 0..neural_mlu::NUM_LOGIC_CELLS {
+            if slice[k].is_finite() {
+                spoke_prior[k] = slice[k];
+            }
+        }
+    }
+    let model = unsafe { &mut *ptr };
+    let res = model.generate_arena_conditioned(
+        prompt,
+        arena_cot,
+        &spoke_prior,
+        adapt_epochs,
+        adapt_lr,
+        max_new_tokens,
+    );
+    to_c_string(&res)
+}
+
+/// # Safety
 /// `ptr` must be a valid pointer returned by `little_core_neural_mlu_create`.
 #[no_mangle]
 pub unsafe extern "C" fn little_core_neural_mlu_dump_json(
@@ -1736,6 +1793,21 @@ mod tests {
 
         let gen3 = model.generate_response("what causes crop failure?", 10);
         assert!(gen3.generated_text.to_lowercase().contains("drought"));
+
+        // Phase 55: Arena-Conditioned Multi-Hop Neural Fusion + Spoke Prior Gating
+        let spoke_prior = [0.60f32, 0.40, 0.0, 0.0, 0.0, 0.0];
+        let arena_cot = "does an orca have warm_blood? think 360 multi hop wave traverses orca to cetacean to mammal to warm blood on mereology spoke answer yes an orca has warm_blood.";
+        let gen_fused = model.generate_arena_conditioned(
+            "does an orca have warm_blood?",
+            arena_cot,
+            &spoke_prior,
+            18,
+            0.045,
+            28,
+        );
+        assert!(gen_fused.neural_thinking.to_lowercase().contains("cetacean"));
+        assert!(gen_fused.neural_answer.to_lowercase().contains("warm_blood"));
+        assert!(gen_fused.mean_token_confidence > 0.85);
     }
 }
 

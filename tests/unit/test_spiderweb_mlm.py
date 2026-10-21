@@ -946,6 +946,74 @@ def test_spiderweb_mlm_phase54_kaggle_and_huggingface_neural_training(tmp_path) 
         mlm.close()
 
 
+def test_spiderweb_mlm_phase55_arena_conditioned_neural_fusion(tmp_path) -> None:
+    """Verify Phase 55: Deep Neural <-> 360° Arena Fusion (spoke prior gating + multi-hop proof distillation into NeuralSpiderWebMlu)."""
+    db_file = str(tmp_path / "phase55_arena_neural_fusion.db")
+    with MemoryStore(db_file, seed_ontology=False) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+
+        # Teach 1-hop statements forming a 4-hop taxonomic & property inheritance chain + disjointness + causal symptoms
+        mlm.train_on_text(
+            "A felis is a felidae. "
+            "A felidae is a carnivora. "
+            "A carnivora is a mammalia. "
+            "A mammalia is an animalia. "
+            "A mammalia has warm_blood. "
+            "An animalia is not a plant. "
+            "A fern is a plant. "
+            "Influenza causes fever. "
+            "Influenza causes cough. "
+            "Influenza causes fatigue.",
+            persist=False,
+        )
+
+        # 1. Ask a 4-hop taxonomic question never seen as a direct 1-hop triple
+        q_tax = mlm.chat_turn_360("Is a felis an animalia?", persist=False)
+        assert q_tax["status"] == "VERIFIED"
+        assert "[ARENA-NEURAL-FUSION]" in q_tax["trace"]
+        assert "multi hop wave traverses" in q_tax["neural_thinking"].lower()
+        assert "felis" in q_tax["neural_thinking"].lower()
+        assert "yes" in q_tax["neural_answer"].lower()
+        assert "animalia" in q_tax["neural_answer"].lower()
+        assert q_tax["active_spoke_weights"][0][0] == "CELL_0_TAXONOMY"
+
+        # 2. Ask a 4-hop property inheritance question never seen as a direct 1-hop triple
+        q_prop = mlm.chat_turn_360("Does a felis have warm_blood?", persist=False)
+        assert q_prop["status"] == "VERIFIED"
+        assert "[ARENA-NEURAL-FUSION]" in q_prop["trace"]
+        assert "multi hop wave" in q_prop["neural_thinking"].lower()
+        assert "warm blood" in q_prop["neural_answer"].lower()
+        assert q_prop["active_spoke_weights"][0][0] == "CELL_1_MEREOLOGY"
+
+        # 3. Ask a multi-hop I_MUTEX refutation question ("Is a felis a fern?")
+        q_ref = mlm.chat_turn_360("Is a felis a fern?", persist=False)
+        assert q_ref["status"] == "REFUTED"
+        assert "[ARENA-NEURAL-FUSION]" in q_ref["trace"]
+        assert "mutual exclusivity" in q_ref["neural_thinking"].lower()
+        assert "no" in q_ref["neural_answer"].lower()
+        assert q_ref["active_spoke_weights"][0][0] == "CELL_0_TAXONOMY"
+
+        # 4. Ask a 3-observation abductive root-cause diagnosis question
+        q_abd = mlm.chat_turn_360("What explains fever, cough, and fatigue?", persist=False)
+        assert q_abd["status"] == "VERIFIED"
+        assert "[ARENA-NEURAL-FUSION]" in q_abd["trace"]
+        assert "abductive wave" in q_abd["neural_thinking"].lower()
+        assert "influenza" in q_abd["neural_answer"].lower()
+        assert q_abd["active_spoke_weights"][0][0] == "CELL_2_CAUSALITY"
+
+        # 4. Verify that NeuralSpiderWebMlu has consolidated both multi-hop proofs into its own neural weights
+        pure_neural_tax = mlm.generate_neural_mlu("Is a felis an animalia?", max_new_tokens=36)
+        assert "multi hop wave" in pure_neural_tax["neural_thinking"].lower()
+        assert "yes" in pure_neural_tax["neural_answer"].lower()
+        assert "animalia" in pure_neural_tax["neural_answer"].lower()
+
+        pure_neural_prop = mlm.generate_neural_mlu("Does a felis have warm_blood?", max_new_tokens=36)
+        assert "warm blood" in pure_neural_prop["neural_answer"].lower()
+        assert pure_neural_prop["mean_token_confidence"] > 0.85
+        mlm.close()
+
+
+
 
 
 
