@@ -1310,6 +1310,65 @@ def test_spiderweb_mlm_phase60_non_monotonic_exception_override_and_belief_revis
         mlm.close()
 
 
+def test_spiderweb_mlm_phase61_cross_domain_proportional_analogy_and_neural_fusion(
+    tmp_path,
+) -> None:
+    """Verify Phase 61: Cross-Domain Proportional Analogy Solving ('A : B :: C : ?'), Multi-Hop Inherited Spoke Alignment, 64-D Vector Offset Scoring, Neural Fusion, and 'Why?' Proof Explanation."""
+    db_file = str(tmp_path / "phase61_proportional_analogy.db")
+    with MemoryStore(db_file, seed_ontology=False) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+
+        # 1. Teach cross-domain facts across aerial, marine, and mereological spokes
+        mlm.chat_turn_360(
+            "An eagle lives in the sky. "
+            "An eagle has wings. "
+            "A cetacean lives in the ocean. "
+            "A dolphin is a cetacean. "
+            "A fish has fins.",
+            persist=False,
+        )
+
+        # 2. Multi-hop cross-domain spatial analogy: EAGLE : SKY :: DOLPHIN : ? (DOLPHIN -> CETACEAN -> OCEAN)
+        q_spatial = mlm.chat_turn_360(
+            "Eagle is to sky as dolphin is to what?", persist=False
+        )
+        assert q_spatial["status"] == "VERIFIED"
+        assert q_spatial["focal_concept"] == "OCEAN"
+        assert "[MLU-360-ANALOGY]" in q_spatial["trace"]
+        assert "EAGLE:SKY :: DOLPHIN:OCEAN" in q_spatial["trace"]
+        assert "ocean" in q_spatial["reply"].lower()
+        assert "proportional analogy maps" in q_spatial["neural_thinking"].lower()
+        assert "ocean" in q_spatial["neural_answer"].lower()
+        top_cell, top_w = q_spatial["active_spoke_weights"][0]
+        assert top_cell == "CELL_3_SPATIAL"
+        assert top_w > 0.25
+
+        # 3. Multi-turn "Why?" explains the combined analogy proof chain (EAGLE->SKY and DOLPHIN->CETACEAN->OCEAN)
+        q_why = mlm.chat_turn_360("Why?", persist=False)
+        assert q_why["status"] == "VERIFIED"
+        assert "[MLU-360-EXPLAIN]" in q_why["trace"]
+        assert "eagle located in sky" in q_why["reply"].lower()
+        assert "dolphin is a cetacean" in q_why["reply"].lower()
+        assert "cetacean located in ocean" in q_why["reply"].lower()
+        assert "cetacean located in ocean" in q_why["neural_answer"].lower()
+
+        # 4. Mereological cross-domain analogy: EAGLE : WINGS :: FISH : ? (FISH -> FINS)
+        q_mereo = mlm.chat_turn_360(
+            "Eagle is to wings as fish is to what?", persist=False
+        )
+        assert q_mereo["status"] == "VERIFIED"
+        assert q_mereo["focal_concept"] == "FINS"
+        assert "[MLU-360-ANALOGY]" in q_mereo["trace"]
+        assert "EAGLE:WINGS :: FISH:FINS" in q_mereo["trace"]
+        assert "fins" in q_mereo["reply"].lower()
+        assert "fins" in q_mereo["neural_answer"].lower()
+        top_cell_m, top_w_m = q_mereo["active_spoke_weights"][0]
+        assert top_cell_m == "CELL_1_MEREOLOGY"
+        assert top_w_m > 0.25
+        mlm.close()
+
+
+
 
 
 

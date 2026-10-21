@@ -1275,6 +1275,23 @@ class SpiderWebMLM:
             if direct_or_hop:
                 return direct_or_hop
 
+        if "[MLU-360-ANALOGY]" in res.inspectable_trace:
+            non_root = [
+                c
+                for c in res.activated_mlus
+                if c != "CORE_ROOT" and not c.startswith("SUBCORE_")
+            ]
+            if len(non_root) >= 4:
+                cid_a, cid_b, cid_c, cid_d = non_root[:4]
+                p_ab = self._find_verified_spoke_path(
+                    cid_a, cid_b, max_hops=5
+                ) or self._find_verified_spoke_path(cid_b, cid_a, max_hops=5)
+                p_cd = self._find_verified_spoke_path(
+                    cid_c, cid_d, max_hops=5
+                ) or self._find_verified_spoke_path(cid_d, cid_c, max_hops=5)
+                if p_ab or p_cd:
+                    return [*p_ab, *p_cd]
+
         if "[MLU-360-DIAGNOSE]" in res.inspectable_trace:
             steps: list[tuple[str, str, str]] = []
             for obs_cid in res.activated_mlus:
@@ -1424,6 +1441,40 @@ class SpiderWebMLM:
                     focal_pos = i
                 elif single_cid != focal_cid and target_cid is None:
                     target_cid = single_cid
+
+        # Phase 61: Cross-Domain Proportional Analogy Routing (A : B :: C : ?) when 3 concepts are present
+        if len(matched_cids) == 3:
+            analogy_dto = self.solve_analogy_360(
+                matched_cids[0], matched_cids[1], matched_cids[2], max_hops=4
+            )
+            if analogy_dto.get("resolved") and analogy_dto.get("target_concept"):
+                best_d = str(analogy_dto["target_concept"])
+                an_synth = str(analogy_dto.get("analogy_synthesis", ""))
+                an_conf = float(analogy_dto.get("confidence", 0.88))
+                an_spoke = str(analogy_dto.get("mapped_spoke", "taxonomy"))
+                an_pred = str(analogy_dto.get("mapped_predicate", "is_a"))
+                sp_pred = analogy_dto.get("spoke_prediction")
+                self._update_conversation_context(best_d)
+                return MLMQueryResult(
+                    query=clean_q,
+                    focal_concept=best_d,
+                    status="VERIFIED",
+                    answer=an_synth,
+                    confidence=an_conf,
+                    epistemic_entropy=round(1.0 - an_conf, 4),
+                    active_subcore=(
+                        self.nodes[best_d].parent_hub
+                        if best_d in self.nodes and self.nodes[best_d].parent_hub
+                        else "CORE_ROOT"
+                    ),
+                    activated_mlus=["CORE_ROOT", *matched_cids, best_d],
+                    spoke_predictions=[sp_pred] if sp_pred is not None else [],
+                    inspectable_trace=(
+                        f"[MLU-360-ANALOGY] {matched_cids[0]}:{matched_cids[1]} :: "
+                        f"{matched_cids[2]}:{best_d} | spoke={an_spoke}({an_pred})"
+                    ),
+                    fluent_english=an_synth,
+                )
 
         # Phase 41a: Multi-Observation Abductive Diagnosis Routing (>= 3 distinct concepts in inquiry)
         if len(matched_cids) >= 3:
@@ -2264,6 +2315,214 @@ class SpiderWebMLM:
             "full_discourse": "",
         }
 
+    def solve_analogy_360(
+        self,
+        concept_a: str,
+        concept_b: str,
+        concept_c: str,
+        max_hops: int = 4,
+    ) -> dict[str, Any]:
+        """Phase 61: Solve proportional 360° analogies (A : B :: C : ?) via spoke role alignment and 64-D vector offset scoring."""
+        cid_a = concept_a.strip().upper().replace(" ", "_")
+        cid_b = concept_b.strip().upper().replace(" ", "_")
+        cid_c = concept_c.strip().upper().replace(" ", "_")
+        empty_res: dict[str, Any] = {
+            "resolved": False,
+            "concept_a": cid_a,
+            "concept_b": cid_b,
+            "concept_c": cid_c,
+            "target_concept": "",
+            "mapped_predicate": "",
+            "mapped_spoke": "",
+            "confidence": 0.0,
+            "vector_similarity": 0.0,
+            "ab_path": [],
+            "cd_path": [],
+            "analogy_synthesis": "",
+        }
+        if (
+            cid_a not in self.nodes
+            or cid_b not in self.nodes
+            or cid_c not in self.nodes
+            or len({cid_a, cid_b, cid_c}) < 3
+        ):
+            return empty_res
+
+        preds_a, _ = self._collect_360_predictions(self.nodes[cid_a], max_hops=max_hops)
+        ab_matches = [
+            p
+            for p in preds_a
+            if p.target_concept == cid_b
+            and p.verified
+            and p.predicate not in ("co_occurs_with", "disjoint_with", "not_a")
+        ]
+        inverse_role = False
+        if not ab_matches:
+            preds_b, _ = self._collect_360_predictions(self.nodes[cid_b], max_hops=max_hops)
+            ab_matches = [
+                p
+                for p in preds_b
+                if p.target_concept == cid_a
+                and p.verified
+                and p.predicate not in ("co_occurs_with", "disjoint_with", "not_a")
+            ]
+            if ab_matches:
+                inverse_role = True
+        if not ab_matches:
+            return empty_res
+
+        vec_a = self.nodes[cid_a].hidden_state
+        vec_b = self.nodes[cid_b].hidden_state
+        vec_c = self.nodes[cid_c].hidden_state
+        dim = min(len(vec_a), len(vec_b), len(vec_c))
+        offset_vec = [vec_b[i] - vec_a[i] + vec_c[i] for i in range(dim)]
+        norm_off = math.sqrt(sum(v * v for v in offset_vec)) or 1.0
+        target_vec = [v / norm_off for v in offset_vec]
+
+        def _cos_sim(vec_x: list[float]) -> float:
+            nx = math.sqrt(sum(x * x for x in vec_x)) or 1.0
+            return sum(
+                (x / nx) * ty for x, ty in zip(vec_x, target_vec, strict=False)
+            )
+
+        best_score = -1.0
+        best_ab: MLUSpokePrediction | None = None
+        best_cd: MLUSpokePrediction | None = None
+        best_d = ""
+        best_vsim = 0.0
+
+        if not inverse_role:
+            preds_c, _ = self._collect_360_predictions(self.nodes[cid_c], max_hops=max_hops)
+            for ab in ab_matches:
+                for cd in preds_c:
+                    cand_d = cd.target_concept
+                    if (
+                        not cd.verified
+                        or cd.predicate in ("co_occurs_with", "disjoint_with", "not_a")
+                        or cand_d in (cid_a, cid_b, cid_c, "CORE_ROOT")
+                        or cand_d.startswith("SUBCORE_")
+                        or cand_d not in self.nodes
+                    ):
+                        continue
+                    pred_match = cd.predicate == ab.predicate
+                    spoke_match = cd.spoke == ab.spoke
+                    if not pred_match and not spoke_match:
+                        continue
+                    v_d = self.nodes[cand_d].hidden_state[:dim]
+                    v_sim = max(0.0, _cos_sim(v_d))
+                    role_bonus = 2.5 if pred_match else 0.85
+                    cd_steps = self._find_verified_spoke_path(cid_c, cand_d, max_hops=max_hops)
+                    hop_pen = 0.06 * max(0, len(cd_steps) - 1)
+                    score = (
+                        role_bonus
+                        + 0.5 * (ab.combined_confidence + cd.combined_confidence)
+                        + 0.35 * v_sim
+                        - hop_pen
+                    )
+                    if score > best_score:
+                        best_score = score
+                        best_ab = ab
+                        best_cd = cd
+                        best_d = cand_d
+                        best_vsim = v_sim
+        else:
+            for cand_d, node_d in self.nodes.items():
+                if (
+                    cand_d in (cid_a, cid_b, cid_c, "CORE_ROOT")
+                    or cand_d.startswith("SUBCORE_")
+                ):
+                    continue
+                preds_d, _ = self._collect_360_predictions(node_d, max_hops=max_hops)
+                dc_matches = [
+                    p
+                    for p in preds_d
+                    if p.target_concept == cid_c
+                    and p.verified
+                    and p.predicate not in ("co_occurs_with", "disjoint_with", "not_a")
+                ]
+                if not dc_matches:
+                    continue
+                v_d = node_d.hidden_state[:dim]
+                v_sim = max(0.0, _cos_sim(v_d))
+                dc_steps = self._find_verified_spoke_path(cand_d, cid_c, max_hops=max_hops)
+                hop_pen = 0.06 * max(0, len(dc_steps) - 1)
+                for ab in ab_matches:
+                    for dc in dc_matches:
+                        pred_match = dc.predicate == ab.predicate
+                        spoke_match = dc.spoke == ab.spoke
+                        if not pred_match and not spoke_match:
+                            continue
+                        role_bonus = 2.5 if pred_match else 0.85
+                        score = (
+                            role_bonus
+                            + 0.5 * (ab.combined_confidence + dc.combined_confidence)
+                            + 0.35 * v_sim
+                            - hop_pen
+                        )
+                        if score > best_score:
+                            best_score = score
+                            best_ab = ab
+                            best_cd = dc
+                            best_d = cand_d
+                            best_vsim = v_sim
+
+        if best_ab is None or best_cd is None or not best_d:
+            return empty_res
+
+        def _pred_verb(pred: str, inv: bool) -> str:
+            if inv:
+                return f"is linked via {pred.replace('_', ' ')} from"
+            if pred in ("located_in", "lives_in"):
+                return "lives in"
+            if pred in ("has_part", "has_property", "has"):
+                return "has"
+            if pred in ("can", "capable_of"):
+                return "can"
+            if pred in ("is_a", "subclass_of", "instance_of"):
+                return "is a"
+            return pred.replace("_", " ")
+
+        a_w = cid_a.lower().replace("_", " ")
+        b_w = cid_b.lower().replace("_", " ")
+        c_w = cid_c.lower().replace("_", " ")
+        d_w = best_d.lower().replace("_", " ")
+        ab_verb = _pred_verb(best_ab.predicate, inverse_role)
+        cd_verb = _pred_verb(best_cd.predicate, inverse_role)
+        synthesis = f"{a_w.capitalize()} {ab_verb} {b_w}, just as {c_w} {cd_verb} {d_w}."
+        conf = round(
+            min(
+                0.99,
+                0.5 * (best_ab.combined_confidence + best_cd.combined_confidence)
+                + (0.08 if best_cd.predicate == best_ab.predicate else 0.0),
+            ),
+            4,
+        )
+        ab_steps = (
+            self._find_verified_spoke_path(cid_b, cid_a, max_hops=max_hops)
+            if inverse_role
+            else self._find_verified_spoke_path(cid_a, cid_b, max_hops=max_hops)
+        )
+        cd_steps = (
+            self._find_verified_spoke_path(best_d, cid_c, max_hops=max_hops)
+            if inverse_role
+            else self._find_verified_spoke_path(cid_c, best_d, max_hops=max_hops)
+        )
+        return {
+            "resolved": True,
+            "concept_a": cid_a,
+            "concept_b": cid_b,
+            "concept_c": cid_c,
+            "target_concept": best_d,
+            "mapped_predicate": best_cd.predicate,
+            "mapped_spoke": best_cd.spoke,
+            "confidence": conf,
+            "vector_similarity": round(best_vsim, 4),
+            "ab_path": ab_steps,
+            "cd_path": cd_steps,
+            "analogy_synthesis": synthesis,
+            "spoke_prediction": best_cd,
+        }
+
     def train_neural_mlu(
         self,
         text: str,
@@ -2513,6 +2772,17 @@ class SpiderWebMLM:
             chain_w = " to ".join(hop_nodes[:5]) if len(hop_nodes) >= 2 else focal_w
             think_clause = (
                 f"think 360 transitive poset order traverses {chain_w} on dynamics spoke"
+            )
+        elif "[MLU-360-ANALOGY]" in tr:
+            hop_nodes = [
+                " ".join(_tokenize_words(c))
+                for c in q_res.activated_mlus
+                if c != "CORE_ROOT" and not c.startswith("SUBCORE_")
+            ]
+            an_spoke = matched_trace_spoke or "taxonomy"
+            chain_w = " to ".join(hop_nodes[:4]) if len(hop_nodes) >= 2 else focal_w
+            think_clause = (
+                f"think 360 proportional analogy maps {chain_w} on {an_spoke} spoke"
             )
         elif "[MLU-360-EXPLAIN]" in tr:
             hop_nodes = [
@@ -2950,6 +3220,7 @@ class SpiderWebMLM:
                 "[MLU-360-EXPLAIN]" in trace
                 or "[MLU-360-COMPARE]" in trace
                 or "[MLU-360-ORDER]" in trace
+                or "[MLU-360-ANALOGY]" in trace
                 or status == "REFUTED"
             ):
                 neural_grounded = False
@@ -2988,6 +3259,7 @@ class SpiderWebMLM:
                     or "[MLU-360-EXPLAIN]" in q_res.inspectable_trace
                     or "[MLU-360-DIAGNOSE]" in q_res.inspectable_trace
                     or "[MLU-360-COMPARE]" in q_res.inspectable_trace
+                    or "[MLU-360-ANALOGY]" in q_res.inspectable_trace
                     or "[MLU-360-COUNTERFACTUAL]" in q_res.inspectable_trace
                     or (
                         "[MLU-360-PLAN]" in q_res.inspectable_trace
