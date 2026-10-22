@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -227,12 +226,11 @@ class ActiveInquisitor:
             return user_response
 
         candidate = clean_response
-        match = re.search(
-            r"(?:is\s+(?:a|an)\s+|kind\s+of\s+|type\s+of\s+)(.+)",
-            candidate,
-        )
-        if match:
-            candidate = match.group(1).strip()
+        for marker in ("is a ", "is an ", "kind of ", "type of "):
+            idx = candidate.find(marker)
+            if idx != -1:
+                candidate = candidate[idx + len(marker) :].strip()
+                break
         from little.language.parser import SimpleParser
 
         candidate = SimpleParser.clean_noun(candidate)

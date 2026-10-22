@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -340,7 +339,17 @@ class LatentKnotInducer:
             name_candidate = f"latent_{primary_hyper}_cluster".lower()
 
         # Clean string
-        clean_name = re.sub(r"[^a-z0-9_]+", "_", name_candidate).strip("_")
+        cleaned_parts: list[str] = []
+        buf: list[str] = []
+        for ch in name_candidate:
+            if ("a" <= ch <= "z") or ("0" <= ch <= "9"):
+                buf.append(ch)
+            elif buf:
+                cleaned_parts.append("".join(buf))
+                buf.clear()
+        if buf:
+            cleaned_parts.append("".join(buf))
+        clean_name = "_".join(cleaned_parts)
         return clean_name
 
     def induce_latent_knots(

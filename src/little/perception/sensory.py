@@ -2,15 +2,49 @@
 
 from __future__ import annotations
 
-import json
-import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from little.core.concept_knot import ContinuousPhysicalState
-from little.core.models import Entity
+from little.core.models import Entity  # noqa: F401
 from little.memory.store import MemoryStore
+
+
+def _extract_sensory_body(clean: str) -> str | None:
+    """Extract body from sensory observation directive without regex."""
+    if ":" not in clean:
+        return None
+    head, tail = clean.split(":", 1)
+    head_norm = " ".join(head.lower().split())
+    if head_norm not in ("sensory observation", "observe sensor", "perceive sensor"):
+        return None
+    body = tail.strip().removeprefix("[")
+    if "]" in body:
+        body = body[: body.find("]")]
+    return body.strip() or None
+
+
+def _parse_numeric_sensor_value(val_str: str) -> float | None:
+    """Parse numeric sensor value with optional unit (g, grams, kg, c, °c, celsius) without regex."""
+    s = val_str.strip().lower()
+    if not s:
+        return None
+    i = 0
+    n = len(s)
+    has_dot = False
+    while i < n and (s[i].isdigit() or (s[i] == "." and not has_dot)):
+        if s[i] == ".":
+            has_dot = True
+        i += 1
+    if i == 0 or s[:i] == ".":
+        return None
+    num = float(s[:i])
+    unit = s[i:].strip()
+    if unit not in ("", "g", "gram", "grams", "kg", "c", "°c", "celsius"):
+        return None
+    if unit == "kg":
+        num *= 1000.0
+    return num
 
 
 @dataclass
@@ -63,19 +97,14 @@ class SensoryGroundingEngine:
     def parse_sensory_directive(self, text: str) -> SensoryObservation | None:
         """Parse natural language or structured directive into a SensoryObservation."""
         clean = text.strip()
-        pattern = re.compile(
-            r"^(?:sensory\s+observation|observe\s+sensor|perceive\s+sensor):\s*\[?(?P<body>[^\]]+)\]?",
-            re.IGNORECASE,
-        )
-        match = pattern.search(clean)
-        if not match:
+        body = _extract_sensory_body(clean)
+        if not body:
             return None
 
-        body = match.group("body").strip()
         features: dict[str, Any] = {}
 
         # Parse key-value pairs (comma or semicolon separated)
-        pairs = re.split(r"[,;]", body)
+        pairs = body.replace(";", ",").split(",")
         for pair in pairs:
             if ":" not in pair and "=" not in pair:
                 continue
@@ -91,12 +120,9 @@ class SensoryGroundingEngine:
                 key = "temperature_c"
 
             # Parse numeric values with units
-            val_num_match = re.match(r"^([0-9]+(?:\.[0-9]+)?)\s*(?:g|grams?|kg|°?c|celsius)?$", val_str, re.IGNORECASE)
-            if val_num_match:
-                num = float(val_num_match.group(1))
-                if "kg" in val_str.lower():
-                    num *= 1000.0
-                features[key] = num
+            num_val = _parse_numeric_sensor_value(val_str)
+            if num_val is not None:
+                features[key] = num_val
             else:
                 features[key] = val_str.lower().strip("\"'")
 

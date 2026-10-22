@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -12,6 +11,101 @@ from little.dynamics.counterfactual_policy import CounterfactualPolicy
 
 if TYPE_CHECKING:
     from little.memory.store import MemoryStore
+
+
+def _parse_leading_float(s: str) -> tuple[float, str] | None:
+    """Parse a leading signed float and return (value, remaining_suffix)."""
+    s = s.strip()
+    if not s:
+        return None
+    i = 0
+    if s[0] == "-":
+        i = 1
+    start_digits = i
+    has_dot = False
+    while i < len(s) and (s[i].isdigit() or (s[i] == "." and not has_dot)):
+        if s[i] == ".":
+            has_dot = True
+        i += 1
+    if i == start_digits or s[start_digits:i] == ".":
+        return None
+    return float(s[:i]), s[i:].strip()
+
+
+def _extract_temperature_value(clean: str) -> tuple[float, str] | None:
+    """Scan clean lowercase text for '<num> (°, deg, degrees, celsius, fahrenheit, c, f)' without regex."""
+    n = len(clean)
+    i = 0
+    while i < n:
+        if clean[i].isdigit() or (clean[i] == "-" and i + 1 < n and clean[i + 1].isdigit()):
+            parsed = _parse_leading_float(clean[i:])
+            if parsed is not None:
+                val, rest = parsed
+                if rest.startswith("°"):
+                    rest_u = rest[1:].lstrip()
+                    if rest_u.startswith("c"):
+                        return val, "c"
+                    if rest_u.startswith("f"):
+                        return val, "f"
+                for prefix, unit_code in (
+                    ("degrees c", "c"),
+                    ("degrees f", "f"),
+                    ("degree c", "c"),
+                    ("degree f", "f"),
+                    ("deg c", "c"),
+                    ("deg f", "f"),
+                    ("degrees", "c"),
+                    ("degree", "c"),
+                    ("celsius", "c"),
+                    ("fahrenheit", "f"),
+                    ("deg", "c"),
+                ):
+                    if rest.startswith(prefix):
+                        after = rest[len(prefix) :]
+                        if not after or not after[0].isalnum():
+                            return val, unit_code
+                if rest.startswith("c") and (len(rest) == 1 or not rest[1].isalnum()):
+                    return val, "c"
+                if rest.startswith("f") and (len(rest) == 1 or not rest[1].isalnum()):
+                    return val, "f"
+        i += 1
+    return None
+
+
+def _extract_unit_number(clean: str, units: tuple[str, ...]) -> float | None:
+    """Extract float immediately preceding one of the given unit tokens without regex."""
+    n = len(clean)
+    i = 0
+    while i < n:
+        if clean[i].isdigit():
+            parsed = _parse_leading_float(clean[i:])
+            if parsed is not None:
+                val, rest = parsed
+                for u in units:
+                    if rest.startswith(u):
+                        after = rest[len(u) :]
+                        if not after or not after[0].isalnum():
+                            return val
+        i += 1
+    return None
+
+
+def _extract_subject_before_markers(text: str, markers: tuple[str, ...]) -> str | None:
+    """Extract subject noun phrase before any marker word without regex."""
+    s = text.strip()
+    for art in ("an ", "a "):
+        if s.startswith(art):
+            s = s[len(art) :].strip()
+            break
+    words = s.split()
+    subj_words: list[str] = []
+    for w in words:
+        if w in markers:
+            if subj_words:
+                return " ".join(subj_words)
+            return None
+        subj_words.append(w)
+    return None
 
 
 @dataclass
@@ -53,14 +147,9 @@ class CounterfactualDynamicsEngine:
     def resolve_temperature(self, text: str, default: float = 20.0) -> float:
         """Resolve numeric temperature in Celsius or text alias from data-driven policy."""
         clean = text.lower().strip()
-        # Direct regex for numbers with explicit temperature units: e.g. 4C, 4°C, 68F, 68°F, 4 degrees, 30 deg
-        m = re.search(
-            r"(-?\d+(?:\.\d+)?)\s*(?:°\s*([cf])|deg(?:rees?)?(?:\s*([cf]))?|(celsius|fahrenheit)|([cf])\b)",
-            clean,
-        )
-        if m:
-            val = float(m.group(1))
-            unit = (m.group(2) or m.group(3) or m.group(4) or m.group(5) or "").lower()
+        extracted = _extract_temperature_value(clean)
+        if extracted is not None:
+            val, unit = extracted
             if unit in ("f", "fahrenheit"):
                 return (val - 32.0) * 5.0 / 9.0
             return val
@@ -69,25 +158,25 @@ class CounterfactualDynamicsEngine:
             if alias in clean:
                 return temp
 
-        m_bare = re.match(r"^(-?\d+(?:\.\d+)?)$", clean)
-        if m_bare:
-            return float(m_bare.group(1))
+        bare = _parse_leading_float(clean)
+        if bare is not None and bare[1] == "":
+            return bare[0]
         return default
 
     def resolve_duration_hours(self, text: str, default: float = 2.0) -> float:
         """Extract duration in hours from natural language query."""
         clean = text.lower().strip()
-        m_day = re.search(r"(\d+(?:\.\d+)?)\s*(?:day|days|d\b)", clean)
-        if m_day:
-            return float(m_day.group(1)) * 24.0
+        val_day = _extract_unit_number(clean, ("days", "day", "d"))
+        if val_day is not None:
+            return val_day * 24.0
 
-        m_hr = re.search(r"(\d+(?:\.\d+)?)\s*(?:hour|hours|hr|hrs|h\b)", clean)
-        if m_hr:
-            return float(m_hr.group(1))
+        val_hr = _extract_unit_number(clean, ("hours", "hour", "hrs", "hr", "h"))
+        if val_hr is not None:
+            return val_hr
 
-        m_min = re.search(r"(\d+(?:\.\d+)?)\s*(?:minute|minutes|min|mins|m\b)", clean)
-        if m_min:
-            return float(m_min.group(1)) / 60.0
+        val_min = _extract_unit_number(clean, ("minutes", "minute", "mins", "min", "m"))
+        if val_min is not None:
+            return val_min / 60.0
 
         return default
 
@@ -234,8 +323,10 @@ class CounterfactualDynamicsEngine:
             dur = self.resolve_duration_hours(body, default=self.policy.default_duration_hours)
 
             # Determine subject: extract first noun before 'at' or 'in'
-            m_subj = re.search(r"^(?:an?\s+)?([a-z0-9_ ]+?)(?:\s+at|\s+in|\s+kept|\s+left|\s+stored|\s+refrigerated)", part_a)
-            subject = m_subj.group(1).strip() if m_subj else "apple slice"
+            extracted_subj = _extract_subject_before_markers(
+                part_a, ("at", "in", "kept", "left", "stored", "refrigerated")
+            )
+            subject = extracted_subj if extracted_subj else "apple slice"
 
             temp1 = self.resolve_temperature(part_a, default=self.policy.default_counterfactual_temperature_c)
             temp2 = self.resolve_temperature(part_b, default=self.policy.default_baseline_temperature_c)
@@ -270,11 +361,23 @@ class CounterfactualDynamicsEngine:
         )
         temp = self.resolve_temperature(body, default=default_temp)
 
-        m_subj = re.search(
-            r"^(?:an?\s+)?([a-z0-9_ ]+?)(?:\s+is|\s+was|\s+were|\s+at|\s+in|\s+kept|\s+left|\s+decay|\s+oxidation|\s+over|\s+for)",
+        extracted_subj = _extract_subject_before_markers(
             body,
+            (
+                "is",
+                "was",
+                "were",
+                "at",
+                "in",
+                "kept",
+                "left",
+                "decay",
+                "oxidation",
+                "over",
+                "for",
+            ),
         )
-        subject = m_subj.group(1).strip() if m_subj else "apple slice"
+        subject = extracted_subj if extracted_subj else "apple slice"
 
         sc = self.simulate_scenario(subject, temp, dur)
         rendered = self.policy.single_hypothetical_template.format(

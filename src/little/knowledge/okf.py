@@ -9,10 +9,32 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+
+def _extract_okf_wikilinks(body: str) -> list[tuple[str, str]]:
+    """Extract [[target]] or [[target|display]] wikilinks from markdown body without regex."""
+    results: list[tuple[str, str]] = []
+    i = 0
+    n = len(body)
+    while i < n - 3:
+        start = body.find("[[", i)
+        if start == -1:
+            break
+        end = body.find("]]", start + 2)
+        if end == -1:
+            break
+        inner = body[start + 2 : end]
+        if "[" not in inner and "]" not in inner and inner.strip():
+            if "|" in inner:
+                tgt, dsp = inner.split("|", 1)
+                results.append((tgt, dsp))
+            else:
+                results.append((inner, ""))
+        i = end + 2
+    return results
 
 from little.core.contracts import (
     CandidateClaim,
@@ -115,7 +137,12 @@ def serialize_yaml_value(val: Any, indent: int = 0) -> str:
         return "null"
     else:
         s = str(val)
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z_ -]*", s) or s.lower() in (
+        is_plain_yaml_str = (
+            bool(s)
+            and (s[0].isalpha() or s[0] == "_")
+            and all(ch.isalpha() or ch in "_ -" for ch in s)
+        )
+        if not is_plain_yaml_str or s.lower() in (
             "true",
             "false",
             "null",
@@ -290,12 +317,11 @@ class OKFEngine:
         self.policy = policy or OKFPolicy.default()
         self.registry = registry or SchemaRegistry.default()
         self.verifier = DeepSeekInvariantVerifier(memory, self.registry)
-        self.wikilink_re = re.compile(self.policy.wikilink_pattern)
 
     def parse_document(self, text: str) -> OKFDocument:
         """Parse raw text into an OKFDocument with extracted frontmatter and wikilinks."""
         fm, body = parse_yaml_frontmatter(text)
-        matches = self.wikilink_re.findall(body)
+        matches = _extract_okf_wikilinks(body)
         links = []
         for target, display in matches:
             tgt = target.strip().lower()

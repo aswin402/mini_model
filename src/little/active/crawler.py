@@ -11,10 +11,35 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+def _unwrap_wikilinks(sentence: str) -> str:
+    """Replace [[target]] or [[target|display]] with target without regex."""
+    out: list[str] = []
+    i = 0
+    n = len(sentence)
+    last = 0
+    while i < n - 3:
+        start = sentence.find("[[", i)
+        if start == -1:
+            break
+        end = sentence.find("]]", start + 2)
+        if end == -1:
+            break
+        inner = sentence[start + 2 : end]
+        if "[" not in inner and "]" not in inner:
+            out.append(sentence[last:start])
+            target = inner.split("|", 1)[0]
+            out.append(target)
+            last = end + 2
+            i = end + 2
+        else:
+            i = start + 2
+    out.append(sentence[last:])
+    return "".join(out)
 
 from little.active.self_study import AutonomousSelfStudyEngine, CuriosityStepResult
 from little.core.contracts import (
@@ -63,16 +88,32 @@ class KnowledgeCrawler:
         self.frame_extractor = frame_extractor or NeuralFrameExtractor()
         self.verifier = DeepSeekInvariantVerifier(memory)
         self.self_study = self_study or AutonomousSelfStudyEngine(memory)
-        self.wikilink_re = re.compile(r"\[\[([^\]\|]+)(?:\|([^\]]+))?\]\]")
 
     def _split_into_sentences(self, text: str) -> list[str]:
         """Split text into sentences, stripping empty lines."""
-        raw_chunks = re.split(r"(?<=[.!?])\s+|\n+", text)
-        sentences = []
-        for c in raw_chunks:
-            cleaned = c.strip()
-            if len(cleaned) >= 5:
-                sentences.append(cleaned)
+        sentences: list[str] = []
+        for line in text.splitlines():
+            line_s = line.strip()
+            if not line_s:
+                continue
+            n = len(line_s)
+            last = 0
+            i = 0
+            while i < n:
+                if line_s[i] in ".!?" and i + 1 < n and line_s[i + 1].isspace():
+                    j = i + 1
+                    while j < n and line_s[j].isspace():
+                        j += 1
+                    cleaned = line_s[last : i + 1].strip()
+                    if len(cleaned) >= 5:
+                        sentences.append(cleaned)
+                    last = j
+                    i = j
+                    continue
+                i += 1
+            tail = line_s[last:].strip()
+            if len(tail) >= 5:
+                sentences.append(tail)
         return sentences
 
     def crawl_text(
@@ -92,7 +133,7 @@ class KnowledgeCrawler:
         candidates: dict[tuple[str, str, str, bool, str], CandidateClaim] = {}
         for sentence in sentences:
             # Parse wikilinks as text once rather than invent a second assertion.
-            normalized = self.wikilink_re.sub(lambda match: match.group(1), sentence)
+            normalized = _unwrap_wikilinks(sentence)
             try:
                 claims = self.frame_extractor.extract_candidate_claims(normalized)
             except Exception as exc:

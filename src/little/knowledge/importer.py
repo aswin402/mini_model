@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import csv
 import json
-import re
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -92,11 +91,22 @@ class ConceptNetNormalizer:
         term = term.replace("_", " ").strip().lower()
 
         # Remove trailing POS markers if accidentally retained: "dog.n.01" -> "dog"
-        term = re.sub(r"\.[nvarsp]\.\d+$", "", term)
+        dot_parts = term.rsplit(".", 2)
+        if (
+            len(dot_parts) == 3
+            and len(dot_parts[1]) == 1
+            and dot_parts[1] in "nvarsp"
+            and dot_parts[2].isdigit()
+        ):
+            term = dot_parts[0]
 
-        # Remove special characters, keep letters, numbers, and single spaces
-        term = re.sub(r"[^a-z0-9\s-]", "", term).strip()
-        term = re.sub(r"\s+", " ", term)
+        # Remove special characters, keep letters, numbers, hyphens, and single spaces
+        cleaned_chars = [
+            ch
+            for ch in term
+            if ("a" <= ch <= "z") or ("0" <= ch <= "9") or ch.isspace() or ch == "-"
+        ]
+        term = " ".join("".join(cleaned_chars).split())
 
         # Filters
         if not term or term in active_policy.discard_concepts:

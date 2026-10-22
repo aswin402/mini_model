@@ -1581,3 +1581,43 @@ def test_spiderweb_mlm_phase65_dynamic_arena_conditioning_and_zero_regex_languag
         mlm.close()
 
 
+def test_spiderweb_mlm_phase66_zero_regex_across_8_cognitive_packages(
+    tmp_path,
+) -> None:
+    """Verify Phase 66: SchemaRegistry Axis-Driven Neural Cell Routing & Zero Regex Across 8 Full Packages (mlu, neural, reasoning, memory, perception, dynamics, knowledge, active) + core/models.py."""
+    from pathlib import Path
+
+    db_file = str(tmp_path / "phase66_zero_regex_packages.db")
+    with MemoryStore(db_file, seed_ontology=False) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+
+        # 1. Verify SchemaRegistry axis-driven neural cell routing
+        assert mlm._predicate_to_neural_cell("orbits") == (3, "spatial")
+        assert mlm._predicate_to_neural_cell("cannot_be") == (0, "taxonomy")
+        assert mlm._predicate_to_neural_cell("larger_than") == (5, "dynamics")
+
+        # 2. Verify zero 'import re' across all 8 cognitive packages + core/models.py
+        repo_root = Path(__file__).resolve().parents[2]
+        zero_regex_packages = (
+            "mlu",
+            "neural",
+            "reasoning",
+            "memory",
+            "perception",
+            "dynamics",
+            "knowledge",
+            "active",
+        )
+        for pkg in zero_regex_packages:
+            for py_file in (repo_root / "src" / "little" / pkg).glob("*.py"):
+                lines = [ln.strip() for ln in py_file.read_text(encoding="utf-8").splitlines()]
+                assert "import re" not in lines, f"Found 'import re' in {py_file}"
+
+        models_py = repo_root / "src" / "little" / "core" / "models.py"
+        models_lines = [ln.strip() for ln in models_py.read_text(encoding="utf-8").splitlines()]
+        assert "import re" not in models_lines, f"Found 'import re' in {models_py}"
+
+        mlm.close()
+
+
+

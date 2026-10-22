@@ -10,12 +10,39 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
-import re
 import sqlite3
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+
+def _split_corpus_sentences(text: str) -> list[str]:
+    """Split corpus text after [.!?] followed by whitespace or on newlines without regex."""
+    out: list[str] = []
+    for line in text.splitlines():
+        line_s = line.strip()
+        if not line_s:
+            continue
+        n = len(line_s)
+        last = 0
+        i = 0
+        while i < n:
+            if line_s[i] in ".!?" and i + 1 < n and line_s[i + 1].isspace():
+                j = i + 1
+                while j < n and line_s[j].isspace():
+                    j += 1
+                seg = line_s[last : i + 1].strip()
+                if seg:
+                    out.append(seg)
+                last = j
+                i = j
+                continue
+            i += 1
+        tail = line_s[last:].strip()
+        if tail:
+            out.append(tail)
+    return out
 
 from little.active.self_study_policy import SelfStudyPolicy
 from little.core.contracts import (
@@ -428,7 +455,7 @@ class AutonomousSelfStudyEngine:
             subject_map = cache.get(cache_key)
             if subject_map is None:
                 subject_map = {}
-                for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+                for sentence in _split_corpus_sentences(text):
                     sentence = sentence.strip()
                     if not sentence:
                         continue

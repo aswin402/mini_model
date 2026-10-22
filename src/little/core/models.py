@@ -6,7 +6,6 @@ Experiences, Beliefs, and Inference/Learning results.
 
 from __future__ import annotations
 
-import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -15,6 +14,30 @@ from typing import Any
 
 from little.core.response_policy import ResponsePolicy
 from little.core.semantic_predicate_policy import SemanticPredicatePolicy
+
+
+def _parse_evaluated_skill_evidence(eval_e: str) -> tuple[str, str] | None:
+    """Parse 'Evaluated skill NAME(args)' from evidence string without regex."""
+    prefix = "Evaluated skill "
+    idx = eval_e.find(prefix)
+    if idx == -1:
+        return None
+    rest = eval_e[idx + len(prefix) :]
+    open_p = rest.find("(")
+    if open_p <= 0:
+        return None
+    s_name = rest[:open_p].strip()
+    if not all(ch.isupper() or ch == "_" for ch in s_name):
+        return None
+    eq_idx = rest.find(") = ", open_p)
+    if eq_idx != -1:
+        args_str = rest[open_p + 1 : eq_idx]
+        return s_name, args_str
+    close_p = rest.find(")", open_p)
+    if close_p != -1:
+        args_str = rest[open_p + 1 : close_p]
+        return s_name, args_str
+    return None
 
 
 def _default_concept_confidence() -> float:
@@ -282,12 +305,9 @@ class InferenceResult:
         # 2. Procedural mathematics and algorithmic execution
         if self.evidence and any("Evaluated skill" in e for e in self.evidence):
             eval_e = next(e for e in self.evidence if "Evaluated skill" in e)
-            m_skill = re.search(
-                r"Evaluated skill ([A-Z_]+)\((.*)\) = ", eval_e
-            ) or re.search(r"Evaluated skill ([A-Z_]+)\((.*?)\)", eval_e)
-            if m_skill:
-                s_name = m_skill.group(1)
-                args_str = m_skill.group(2)
+            parsed_skill = _parse_evaluated_skill_evidence(eval_e)
+            if parsed_skill is not None:
+                s_name, args_str = parsed_skill
                 args_map = {}
                 for part in args_str.split(", "):
                     if "=" in part:

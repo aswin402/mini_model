@@ -14,12 +14,25 @@ Features:
 from __future__ import annotations
 
 import contextlib
-import re
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+
+def _extract_alnum_tokens(text: str) -> list[str]:
+    tokens: list[str] = []
+    buf: list[str] = []
+    for ch in text:
+        if ch.isalnum() or ch == "_":
+            buf.append(ch)
+        elif buf:
+            tokens.append("".join(buf))
+            buf.clear()
+    if buf:
+        tokens.append("".join(buf))
+    return tokens
 
 from little.active.plasticity import PlasticityController, PlasticityTelemetry
 from little.core.contracts import SourceType
@@ -89,8 +102,26 @@ class ContinuousStreamLearner:
         raw = text.strip()
         if not raw:
             return []
-        parts = re.split(r"(?<=[.!?])\s+", raw)
-        return [p.strip() for p in parts if p.strip()]
+        out: list[str] = []
+        n = len(raw)
+        last = 0
+        i = 0
+        while i < n:
+            if raw[i] in ".!?" and i + 1 < n and raw[i + 1].isspace():
+                j = i + 1
+                while j < n and raw[j].isspace():
+                    j += 1
+                seg = raw[last : i + 1].strip()
+                if seg:
+                    out.append(seg)
+                last = j
+                i = j
+                continue
+            i += 1
+        tail = raw[last:].strip()
+        if tail:
+            out.append(tail)
+        return out
 
     def ingest_chunk(
         self, text_chunk: str, source_id: str = "stream", *, source_type: SourceType = SourceType.DOCUMENT
@@ -147,7 +178,7 @@ class ContinuousStreamLearner:
 
                     # Update Paged Store: dirty-only invalidation is handled automatically; cast activation votes
                     if self.paged_store:
-                        tokens = [w for w in re.findall(r"[a-zA-Z0-9_]+", sentence)]
+                        tokens = _extract_alnum_tokens(sentence)
                         self.paged_store.vote_from_tokens(tokens)
 
                     # Synchronize Living Wiki

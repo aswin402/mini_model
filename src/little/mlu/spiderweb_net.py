@@ -3141,18 +3141,21 @@ class SpiderWebMLM:
         clean_p = self.frame_policy.operator_canonical_map.get(
             predicate.strip().lower(), predicate.strip().lower()
         )
-        if clean_p in ("has_part", "part_of", "has_property", "has"):
+        rel_schema = self.verifier.registry.relation(clean_p)
+        rel_axis = (rel_schema.axis or "") if rel_schema is not None else ""
+        if rel_axis == "mereology" or clean_p in ("has_part", "part_of", "has_property", "has"):
             return 1, "mereology"
         if clean_p in ("causes", "requires", "produces"):
             return 2, "causality"
-        if clean_p in ("located_in", "orbits", "lives_in"):
+        if rel_axis == "astronomy" or clean_p in ("located_in", "orbits", "lives_in"):
             return 3, "spatial"
         if clean_p in ("can", "capable_of"):
             return 4, "capability"
-        if clean_p in ("larger_than", "greater_than", "less_than", "before", "after"):
+        if rel_axis == "dynamics" or clean_p in ("larger_than", "greater_than", "less_than", "before", "after"):
             return 5, "dynamics"
         if (
-            clean_p in self.verifier.disjoint_predicates
+            rel_axis in ("taxonomy", "invariants")
+            or clean_p in self.verifier.disjoint_predicates
             or clean_p in ("is_a", "subclass_of", "instance_of", "disjoint_with", "not_a")
         ):
             return 0, "taxonomy"

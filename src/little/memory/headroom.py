@@ -10,7 +10,6 @@ fully reversible pointers to raw episodic experiences in SQLite MemoryStore.
 from __future__ import annotations
 
 import math
-import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -86,7 +85,16 @@ class HeadroomContextManager:
 
     def _tokenize(self, text: str) -> tuple[str, ...]:
         clean = text.lower().strip()
-        words = re.findall(r"[a-z0-9_]+", clean)
+        words: list[str] = []
+        buf: list[str] = []
+        for ch in clean:
+            if ("a" <= ch <= "z") or ("0" <= ch <= "9") or ch == "_":
+                buf.append(ch)
+            elif buf:
+                words.append("".join(buf))
+                buf.clear()
+        if buf:
+            words.append("".join(buf))
         return tuple(words)
 
     def record_turn(
