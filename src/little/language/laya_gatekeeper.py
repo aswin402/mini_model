@@ -7,12 +7,26 @@ with calibrated probabilities and policy-driven normalized entropy gating.
 from __future__ import annotations
 
 import math
-import re
 from dataclasses import dataclass
 from enum import Enum
 
 from little.knowledge.policy import LanguagePolicy
 from little.language.laya_policy import LayaDecisionPolicy
+
+
+def _extract_words(text: str) -> list[str]:
+    """Extract contiguous alphanumeric/underscore tokens without regex."""
+    words: list[str] = []
+    buf: list[str] = []
+    for ch in text:
+        if ch.isalnum() or ch == "_":
+            buf.append(ch)
+        elif buf:
+            words.append("".join(buf))
+            buf.clear()
+    if buf:
+        words.append("".join(buf))
+    return words
 
 
 class QueryIntent(str, Enum):
@@ -90,7 +104,7 @@ class LayaSystem1Gatekeeper:
 
         lower_state = state.lower()
         lower_q = question.lower()
-        state_words = set(re.findall(r"\w+", lower_state))
+        state_words = set(_extract_words(lower_state))
 
         scores = []
         for opt in options:
@@ -98,7 +112,7 @@ class LayaSystem1Gatekeeper:
             minimum_token_length = self.decision_policy.choice.minimum_token_length
             opt_words = [
                 w
-                for w in re.findall(r"\w+", opt_lower)
+                for w in _extract_words(opt_lower)
                 if len(w) > minimum_token_length
             ]
             score = self.decision_policy.choice.baseline_prior
@@ -206,7 +220,7 @@ class LayaSystem1Gatekeeper:
         minimum_token_length = self.decision_policy.proposition.minimum_token_length
         prop_words = [
             w
-            for w in re.findall(r"\w+", lower_prop)
+            for w in _extract_words(lower_prop)
             if len(w) > minimum_token_length
         ]
         matches = sum(1 for w in prop_words if w in lower_ctx)

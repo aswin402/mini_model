@@ -3,12 +3,79 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from little.core.runtime_paths import RuntimePaths
+
+
+def _split_conjunction_pattern(
+    text: str, pattern: str, case_insensitive: bool
+) -> list[str]:
+    """Split text on declarative conjunction boundaries without regex."""
+    if not text:
+        return [text]
+
+    def _match_word(s: str, idx: int, word: str) -> int:
+        end = idx + len(word)
+        if end > len(s):
+            return -1
+        seg = s[idx:end]
+        if (seg.lower() == word.lower()) if case_insensitive else (seg == word):
+            return end
+        return -1
+
+    allow_comma = "," in pattern
+    # Extract conjunction keyword (e.g. "and" or injected "plus")
+    cleaned = (
+        pattern.replace(r",\s*(?:and\s+)?|", "")
+        .replace(r"\s+", " ")
+        .replace(r"\b", "")
+        .strip()
+    )
+    conj_word = cleaned if cleaned else "and"
+
+    out: list[str] = []
+    n = len(text)
+    last = 0
+    i = 0
+    while i < n:
+        if allow_comma and text[i] == ",":
+            j = i + 1
+            while j < n and text[j].isspace():
+                j += 1
+            after_and = _match_word(text, j, conj_word)
+            if after_and != -1 and after_and < n and text[after_and].isspace():
+                k = after_and
+                while k < n and text[k].isspace():
+                    k += 1
+                out.append(text[last:i])
+                last = k
+                i = k
+                continue
+            out.append(text[last:i])
+            last = j
+            i = j
+            continue
+
+        if text[i].isspace():
+            j = i
+            while j < n and text[j].isspace():
+                j += 1
+            after_word = _match_word(text, j, conj_word)
+            if after_word != -1 and after_word < n and text[after_word].isspace():
+                k = after_word
+                while k < n and text[k].isspace():
+                    k += 1
+                out.append(text[last:i])
+                last = k
+                i = k
+                continue
+        i += 1
+
+    out.append(text[last:])
+    return out
 
 
 def _required_text(
@@ -77,10 +144,11 @@ class ConjunctionPolicy:
     def split(self, text: str) -> list[str]:
         parts = [text]
         for pattern in self.patterns:
-            flags = re.IGNORECASE if pattern.case_insensitive else 0
             parts = [
                 part
                 for current in parts
-                for part in re.split(pattern.pattern, current, flags=flags)
+                for part in _split_conjunction_pattern(
+                    current, pattern.pattern, pattern.case_insensitive
+                )
             ]
         return parts

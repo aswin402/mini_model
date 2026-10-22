@@ -3,12 +3,67 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from little.core.runtime_paths import RuntimePaths
+
+
+def _split_number_pattern(
+    text: str, pattern: str, case_insensitive: bool
+) -> list[str]:
+    """Split numeric argument strings on declarative separator patterns without regex."""
+    if not text:
+        return [text]
+
+    if pattern == r"\s*(?:,|\band\b)\s*|\s+":
+        norm = text.replace(",", " ")
+        tokens = norm.split()
+        out: list[str] = []
+        for tok in tokens:
+            is_and = (tok.lower() == "and") if case_insensitive else (tok == "and")
+            if not is_and:
+                out.append(tok)
+        return out if out else [""]
+
+    cleaned = (
+        pattern.replace(r"\s+", " ")
+        .replace(r"\s*", "")
+        .replace(r"\b", "")
+        .strip()
+    )
+    if not cleaned:
+        return text.split()
+
+    out = []
+    n = len(text)
+    last = 0
+    i = 0
+    while i < n:
+        if text[i].isspace():
+            j = i
+            while j < n and text[j].isspace():
+                j += 1
+            end = j + len(cleaned)
+            if end <= n:
+                seg = text[j:end]
+                matched = (
+                    (seg.lower() == cleaned.lower())
+                    if case_insensitive
+                    else (seg == cleaned)
+                )
+                if matched and end < n and text[end].isspace():
+                    k = end
+                    while k < n and text[k].isspace():
+                        k += 1
+                    out.append(text[last:i])
+                    last = k
+                    i = k
+                    continue
+        i += 1
+    out.append(text[last:])
+    return out
 
 
 def _required_text(
@@ -77,10 +132,11 @@ class NumberTokenPolicy:
     def split(self, text: str) -> list[str]:
         parts = [text]
         for pattern in self.patterns:
-            flags = re.IGNORECASE if pattern.case_insensitive else 0
             parts = [
                 part
                 for current in parts
-                for part in re.split(pattern.pattern, current, flags=flags)
+                for part in _split_number_pattern(
+                    current, pattern.pattern, pattern.case_insensitive
+                )
             ]
         return parts

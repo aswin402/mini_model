@@ -12,7 +12,6 @@ Core components:
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,6 +19,170 @@ from little.core.construction_policy import ConstructionPolicy
 from little.core.models import Construction
 from little.language.parser_policy import ParserPolicy
 from little.memory.store import MemoryStore
+
+
+def _is_word_char(ch: str) -> bool:
+    return ch.isalnum() or ch == "_"
+
+
+def _replace_word_boundary_ci(text: str, source: str, replacement: str) -> str:
+    """Replace whole-word occurrences of source with replacement (case-insensitive) without regex."""
+    if not text or not source:
+        return text
+    src_l = source.lower()
+    src_len = len(source)
+    text_l = text.lower()
+    out: list[str] = []
+    n = len(text)
+    last = 0
+    i = 0
+    while i <= n - src_len:
+        idx = text_l.find(src_l, i)
+        if idx == -1:
+            break
+        end = idx + src_len
+        left_ok = idx == 0 or not _is_word_char(text[idx - 1])
+        right_ok = end == n or not _is_word_char(text[end])
+        if left_ok and right_ok:
+            out.append(text[last:idx])
+            out.append(replacement)
+            last = end
+            i = end
+        else:
+            i = idx + 1
+    out.append(text[last:])
+    return "".join(out)
+
+
+def _split_sentences_on_punct(text: str) -> list[str]:
+    """Split text after [.!?] followed by whitespace without regex."""
+    out: list[str] = []
+    n = len(text)
+    last = 0
+    i = 0
+    while i < n:
+        if text[i] in ".!?" and i + 1 < n and text[i + 1].isspace():
+            j = i + 1
+            while j < n and text[j].isspace():
+                j += 1
+            seg = text[last : i + 1].strip()
+            if seg:
+                out.append(seg)
+            last = j
+            i = j
+            continue
+        i += 1
+    tail = text[last:].strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
+_COMMA_SUBORDINATORS = frozenset(
+    {
+        "where",
+        "which",
+        "who",
+        "whom",
+        "whose",
+        "although",
+        "because",
+        "while",
+        "since",
+        "but",
+    }
+)
+_COMMA_AND_PRONOUNS = frozenset(
+    {"it", "he", "she", "they", "we", "this", "that", "there"}
+)
+_BARE_SUBORDINATORS = frozenset({"until", "whereas"})
+
+
+def _split_clause_delimiters(sent_clean: str, pattern: str) -> list[str]:
+    """Split a sentence on declarative clause delimiters without regex."""
+    if not sent_clean or not pattern:
+        return [sent_clean]
+
+    out: list[str] = []
+    n = len(sent_clean)
+    last = 0
+    i = 0
+    while i < n:
+        ch = sent_clean[i]
+        if ch == ";":
+            out.append(sent_clean[last:i].strip())
+            j = i + 1
+            while j < n and sent_clean[j].isspace():
+                j += 1
+            last = j
+            i = j
+            continue
+
+        if ch == ",":
+            j = i + 1
+            while j < n and sent_clean[j].isspace():
+                j += 1
+            w_end = j
+            while w_end < n and sent_clean[w_end].isalpha():
+                w_end += 1
+            word1 = sent_clean[j:w_end].lower()
+            if (
+                word1 in _COMMA_SUBORDINATORS
+                and w_end < n
+                and sent_clean[w_end].isspace()
+            ):
+                k = w_end
+                while k < n and sent_clean[k].isspace():
+                    k += 1
+                out.append(sent_clean[last:i].strip())
+                last = k
+                i = k
+                continue
+            if word1 == "and" and w_end < n and sent_clean[w_end].isspace():
+                k = w_end
+                while k < n and sent_clean[k].isspace():
+                    k += 1
+                w2_end = k
+                while w2_end < n and sent_clean[w2_end].isalpha():
+                    w2_end += 1
+                word2 = sent_clean[k:w2_end].lower()
+                if (
+                    word2 in _COMMA_AND_PRONOUNS
+                    and w2_end < n
+                    and sent_clean[w2_end].isspace()
+                ):
+                    m = w2_end
+                    while m < n and sent_clean[m].isspace():
+                        m += 1
+                    out.append(sent_clean[last:i].strip())
+                    last = m
+                    i = m
+                    continue
+
+        if ch.isspace():
+            j = i
+            while j < n and sent_clean[j].isspace():
+                j += 1
+            w_end = j
+            while w_end < n and sent_clean[w_end].isalpha():
+                w_end += 1
+            word = sent_clean[j:w_end].lower()
+            if (
+                word in _BARE_SUBORDINATORS
+                and w_end < n
+                and sent_clean[w_end].isspace()
+            ):
+                k = w_end
+                while k < n and sent_clean[k].isspace():
+                    k += 1
+                out.append(sent_clean[last:i].strip())
+                last = k
+                i = k
+                continue
+        i += 1
+
+    out.append(sent_clean[last:].strip())
+    return out
 
 
 @dataclass
@@ -55,19 +218,18 @@ class ConstructionEngine:
         """Expand English contractions and strip irregular whitespace."""
         s = text.strip()
         for source, replacement in cls._policy().normalization_replacements:
-            token_pattern = rf"(?<!\w){re.escape(source)}(?!\w)"
-            s = re.sub(token_pattern, replacement, s, flags=re.IGNORECASE)
+            s = _replace_word_boundary_ci(s, source, replacement)
         return s
 
     @classmethod
     def clean_noun(cls, text: str) -> str:
         """Strip articles, auxiliary adverbs, and normalize plural forms."""
-        articles = "|".join(
-            re.escape(article) for article in cls._policy().leading_articles
-        )
-        s = re.sub(
-            rf"^(?:{articles})\s+", "", text.strip().lower(), flags=re.IGNORECASE
-        ).strip()
+        s = text.strip().lower()
+        for article in sorted(cls._policy().leading_articles, key=len, reverse=True):
+            art_l = article.lower()
+            if s.startswith(art_l) and len(s) > len(art_l) and s[len(art_l)].isspace():
+                s = s[len(art_l) :].strip()
+                break
         for aux in cls._policy().noun_auxiliaries:
             if s.endswith(f" {aux}"):
                 s = s[: -len(aux) - 1].strip()
@@ -104,25 +266,44 @@ class ConstructionEngine:
     @classmethod
     def tokenize(cls, text: str) -> list[str]:
         """Convert normalized string into lowercase tokens, stripping sentence punctuation."""
-        clean = cls.normalize_text(text).rstrip(".!?").strip()
+        clean = cls.normalize_text(text).rstrip(".!?").strip().lower()
         # Keep commas as list-boundary tokens so a slot can later normalize
         # "wheels, an engine, and headlights" into separate objects.
-        tokens = re.findall(r"[a-zA-Z0-9_\-\+\*\/\^]+|,", clean.lower())
+        tokens: list[str] = []
+        buf: list[str] = []
+        for ch in clean:
+            if ch == ",":
+                if buf:
+                    tokens.append("".join(buf))
+                    buf.clear()
+                tokens.append(",")
+            elif ch.isalnum() or ch in "_-+*/^":
+                buf.append(ch)
+            elif buf:
+                tokens.append("".join(buf))
+                buf.clear()
+        if buf:
+            tokens.append("".join(buf))
         return tokens
 
     @classmethod
     def segment_clauses(cls, text: str) -> list[str]:
         """Decompose compound or complex sentences into primary declarative clauses."""
         clean = cls.normalize_text(text).strip()
-        clean = re.sub(r"^unlike\s+[^,]+,\s*", "", clean, flags=re.IGNORECASE)
-        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", clean) if s.strip()]
+        if (
+            clean.lower().startswith("unlike")
+            and len(clean) > 6
+            and clean[6].isspace()
+            and "," in clean
+        ):
+            clean = clean[clean.find(",") + 1 :].lstrip()
+        sentences = _split_sentences_on_punct(clean)
         clauses: list[str] = []
         for sent in sentences:
             sent_clean = sent.rstrip(".!?").strip()
-            parts = re.split(
-                cls._policy().clause_delimiter_pattern,
+            parts = _split_clause_delimiters(
                 sent_clean,
-                flags=re.IGNORECASE,
+                cls._policy().clause_delimiter_pattern,
             )
             for p in parts:
                 p_str = p.strip()

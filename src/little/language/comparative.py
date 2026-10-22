@@ -6,7 +6,6 @@ extremum (superlative) queries, and dual-polarity refutations.
 
 from __future__ import annotations
 
-import re
 from collections import defaultdict, deque
 from typing import TYPE_CHECKING
 
@@ -16,6 +15,139 @@ from little.language.comparative_policy import (
 
 if TYPE_CHECKING:
     from little.memory.store import MemoryStore
+
+
+def _strip_leading_article(text: str) -> str:
+    s = text.strip()
+    lower = s.lower()
+    for art in ("a ", "an ", "the "):
+        if lower.startswith(art):
+            return s[len(art) :].strip()
+    return s
+
+
+def _split_comparative_clauses(text: str) -> list[str]:
+    """Split comparative text on [.;\\n] or ', (and )?' without regex."""
+    out: list[str] = []
+    n = len(text)
+    last = 0
+    i = 0
+    while i < n:
+        ch = text[i]
+        if ch in ".;\n":
+            seg = text[last:i].strip()
+            if seg:
+                out.append(seg)
+            last = i + 1
+            i += 1
+            continue
+        if ch == ",":
+            seg = text[last:i].strip()
+            if seg:
+                out.append(seg)
+            j = i + 1
+            while j < n and text[j].isspace():
+                j += 1
+            if j + 3 <= n and text[j : j + 3].lower() == "and" and (
+                j + 3 == n or text[j + 3].isspace()
+            ):
+                j += 3
+                while j < n and text[j].isspace():
+                    j += 1
+            last = j
+            i = j
+            continue
+        i += 1
+    tail = text[last:].strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
+def _parse_comparative_statement(part: str) -> tuple[str, str, str] | None:
+    """Parse '<A> is <comp> than <B>' without regex."""
+    s = part.strip()
+    if not s or "?" in s:
+        return None
+    lower = s.lower()
+    for prefix in ("consider that ", "given that ", "suppose that "):
+        if lower.startswith(prefix):
+            s = s[len(prefix) :].strip()
+            lower = s.lower()
+            break
+    s = _strip_leading_article(s)
+    lower = s.lower()
+    than_idx = lower.find(" than ")
+    if than_idx == -1:
+        return None
+    lhs = s[:than_idx].strip()
+    rhs = _strip_leading_article(s[than_idx + 6 :].strip())
+    lhs_lower = lhs.lower()
+    is_idx = lhs_lower.rfind(" is ")
+    if is_idx == -1:
+        return None
+    entity_a = _strip_leading_article(lhs[:is_idx].strip())
+    comp = lhs[is_idx + 4 :].strip()
+    comp_words = comp.split()
+    if not (1 <= len(comp_words) <= 2 and all(w.isalpha() for w in comp_words)):
+        return None
+    if not entity_a or not rhs:
+        return None
+    return entity_a, comp, rhs
+
+
+def _parse_extremum_query(segment: str) -> str | None:
+    """Parse 'Who/Which is (the) <superlative> ...?' without regex."""
+    s = segment.strip().rstrip("?").strip()
+    words = s.split()
+    if len(words) < 3:
+        return None
+    if words[0].lower() not in ("who", "which") or words[1].lower() != "is":
+        return None
+    idx = 2
+    if words[idx].lower() == "the":
+        idx += 1
+    if idx >= len(words):
+        return None
+    # Check for 2-word superlative before 'between/among/of' or end
+    rem = words[idx:]
+    stop_idx = len(rem)
+    for k, w in enumerate(rem):
+        if w.lower() in ("between", "among", "of"):
+            stop_idx = k
+            break
+    sup_tokens = rem[:stop_idx]
+    if 1 <= len(sup_tokens) <= 2 and all(w.isalpha() for w in sup_tokens):
+        return " ".join(sup_tokens)
+    return None
+
+
+def _parse_transitive_query(segment: str) -> tuple[str, str, str] | None:
+    """Parse 'Is <A> <comp> than <B>?' without regex."""
+    s = segment.strip().rstrip("?").strip()
+    lower = s.lower()
+    if not lower.startswith("is "):
+        return None
+    body = _strip_leading_article(s[3:].strip())
+    body_lower = body.lower()
+    than_idx = body_lower.find(" than ")
+    if than_idx == -1:
+        return None
+    lhs = body[:than_idx].strip()
+    entity_b = _strip_leading_article(body[than_idx + 6 :].strip())
+    lhs_words = lhs.split()
+    if len(lhs_words) < 2 or not entity_b:
+        return None
+    # Check 2-word comparative (e.g. "more expensive", "less expensive") first
+    if len(lhs_words) >= 3 and lhs_words[-2].lower() in ("more", "less") and lhs_words[-1].isalpha():
+        entity_a = " ".join(lhs_words[:-2]).strip()
+        comp = " ".join(lhs_words[-2:]).strip()
+        return entity_a, comp, entity_b
+    if lhs_words[-1].isalpha():
+        entity_a = " ".join(lhs_words[:-1]).strip()
+        comp = lhs_words[-1].strip()
+        return entity_a, comp, entity_b
+    return None
 
 
 class ComparativeOrderReasoner:
@@ -218,14 +350,14 @@ class ComparativeOrderReasoner:
 
         # Check for compound premises + query:
         # e.g. "John is taller than Mary, and Mary is taller than Peter. Who is the tallest?"
-        parts = [p.strip() for p in re.split(r"[.;\n]|,\s*(?:and\s+)?", clean) if p.strip()]
+        parts = _split_comparative_clauses(clean)
 
         # Learn all premise parts
-        for part in parts:
-            for pat in self.policy.statement_patterns:
-                m = re.search(pat, part, re.IGNORECASE)
-                if m:
-                    entity_a, comp, entity_b = m.group(1), m.group(2), m.group(3)
+        if self.policy.statement_patterns:
+            for part in parts:
+                parsed_stmt = _parse_comparative_statement(part)
+                if parsed_stmt is not None:
+                    entity_a, comp, entity_b = parsed_stmt
                     if self.policy.find_dimension_by_comparative(comp):
                         success, msg = self.assert_comparison(entity_a, entity_b, comp)
                         if not success:
@@ -234,21 +366,17 @@ class ComparativeOrderReasoner:
         # Evaluate question in parts or clean
         ext_pat = self.policy.question_patterns.get("extremum", "")
         if ext_pat:
-            clean_ext_pat = ext_pat.lstrip("^").rstrip("$")
             for segment in parts + [clean]:
-                m_ext = re.search(clean_ext_pat, segment, re.IGNORECASE)
-                if m_ext:
-                    sup = m_ext.group(1).strip()
-                    if self.policy.find_dimension_by_superlative(sup):
-                        return self.query_extremum(sup)
+                sup = _parse_extremum_query(segment)
+                if sup and self.policy.find_dimension_by_superlative(sup):
+                    return self.query_extremum(sup)
 
         trans_pat = self.policy.question_patterns.get("transitive", "")
         if trans_pat:
-            clean_trans_pat = trans_pat.lstrip("^").rstrip("$")
             for segment in parts + [clean]:
-                m_trans = re.search(clean_trans_pat, segment, re.IGNORECASE)
-                if m_trans:
-                    e_a, comp, e_b = m_trans.group(1).strip(), m_trans.group(2).strip(), m_trans.group(3).strip()
+                parsed_trans = _parse_transitive_query(segment)
+                if parsed_trans is not None:
+                    e_a, comp, e_b = parsed_trans
                     if self.policy.find_dimension_by_comparative(comp):
                         res = self.query_comparison(e_a, e_b, comp)
                         if not res.startswith("I do not recognize"):

@@ -3136,58 +3136,59 @@ class SpiderWebMLM:
             "\n".join(lines), epochs=epochs, learning_rate=learning_rate, persist=persist
         )
 
+    def _predicate_to_neural_cell(self, predicate: str) -> tuple[int, str]:
+        """Map any 360° relation predicate to its corresponding NeuralSpiderWebMlu logic cell (0..5)."""
+        clean_p = self.frame_policy.operator_canonical_map.get(
+            predicate.strip().lower(), predicate.strip().lower()
+        )
+        if clean_p in ("has_part", "part_of", "has_property", "has"):
+            return 1, "mereology"
+        if clean_p in ("causes", "requires", "produces"):
+            return 2, "causality"
+        if clean_p in ("located_in", "orbits", "lives_in"):
+            return 3, "spatial"
+        if clean_p in ("can", "capable_of"):
+            return 4, "capability"
+        if clean_p in ("larger_than", "greater_than", "less_than", "before", "after"):
+            return 5, "dynamics"
+        if (
+            clean_p in self.verifier.disjoint_predicates
+            or clean_p in ("is_a", "subclass_of", "instance_of", "disjoint_with", "not_a")
+        ):
+            return 0, "taxonomy"
+        spoke = map_predicate_to_spoke(clean_p)
+        spoke_idx = SPOKE_NAMES.index(spoke) if spoke in SPOKE_NAMES else 0
+        return spoke_idx, spoke
+
     def _build_arena_conditioning(
         self, prompt: str, q_res: MLMQueryResult
     ) -> tuple[str, list[float]]:
-        """Phase 55, 59 & 60: Extract 6-spoke neural cell priors and multi-hop Chain-of-Thought proof sequences from a 360° Arena wave."""
-        # Map 360° predicates & wave traces to NeuralSpiderWebMlu's 6 logic cells:
-        # 0: TAXONOMY, 1: MEREOLOGY, 2: CAUSALITY, 3: SPATIAL, 4: CAPABILITY, 5: DYNAMICS
-        pred_to_cell: dict[str, tuple[int, str]] = {
-            "is_a": (0, "taxonomy"),
-            "subclass_of": (0, "taxonomy"),
-            "instance_of": (0, "taxonomy"),
-            "disjoint_with": (0, "taxonomy"),
-            "not_a": (0, "taxonomy"),
-            "has_part": (1, "mereology"),
-            "part_of": (1, "mereology"),
-            "has_property": (1, "mereology"),
-            "has": (1, "mereology"),
-            "causes": (2, "causality"),
-            "requires": (2, "causality"),
-            "produces": (2, "causality"),
-            "located_in": (3, "spatial"),
-            "orbits": (3, "spatial"),
-            "lives_in": (3, "spatial"),
-            "can": (4, "capability"),
-            "capable_of": (4, "capability"),
-            "larger_than": (5, "dynamics"),
-            "greater_than": (5, "dynamics"),
-            "less_than": (5, "dynamics"),
-            "before": (5, "dynamics"),
-            "after": (5, "dynamics"),
-        }
+        """Phase 55, 59, 60 & 65: Extract 6-spoke neural cell priors and multi-hop Chain-of-Thought proof sequences from a 360° Arena wave."""
         raw_prior = [0.02] * 6
         for p in q_res.spoke_predictions[:6]:
-            cell_idx, _ = pred_to_cell.get(p.predicate, (0, "taxonomy"))
+            cell_idx, _ = self._predicate_to_neural_cell(p.predicate)
             raw_prior[cell_idx] += float(p.combined_confidence) * 0.5
         tr = q_res.inspectable_trace
         matched_trace_spoke: str | None = None
-        for pred_k, (c_idx, s_label) in pred_to_cell.items():
+        matched_trace_cell_idx: int | None = None
+        active_preds = set(self.verifier.registry.predicates()) | {
+            p for _, (p, _) in self._operator_polarity_map.items()
+        }
+        for pred_k in active_preds:
             if f"({pred_k})" in tr:
+                c_idx, s_label = self._predicate_to_neural_cell(pred_k)
                 raw_prior[c_idx] += 3.0
                 matched_trace_spoke = s_label
+                matched_trace_cell_idx = c_idx
         if "I_SORT" in tr or "[MLU-360-ORDER]" in tr:
             raw_prior[5] += 3.5
             matched_trace_spoke = "dynamics"
         elif "I_EXCEPTION" in tr:
-            if matched_trace_spoke is None:
+            if matched_trace_cell_idx is None:
                 raw_prior[4] += 3.5
                 matched_trace_spoke = "capability"
             else:
-                for c_idx, s_label in pred_to_cell.values():
-                    if s_label == matched_trace_spoke:
-                        raw_prior[c_idx] += 3.5
-                        break
+                raw_prior[matched_trace_cell_idx] += 3.5
         elif (
             q_res.status == "REFUTED"
             or "I_MUTEX" in tr

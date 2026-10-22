@@ -4,13 +4,53 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from little.core.contracts import CandidateAction, CandidateClaim, CandidateFrame
 from little.core.runtime_paths import RuntimePaths
+
+
+def _split_sentences_after_punct(text: str) -> list[str]:
+    """Split text into sentences after [.!?;\\n] followed by whitespace without regex."""
+    out: list[str] = []
+    n = len(text)
+    last = 0
+    i = 0
+    while i < n:
+        if text[i] in ".!?;\n" and i + 1 < n and text[i + 1].isspace():
+            j = i + 1
+            while j < n and text[j].isspace():
+                j += 1
+            seg = text[last : i + 1].strip()
+            if seg:
+                out.append(seg)
+            last = j
+            i = j
+            continue
+        i += 1
+    tail = text[last:].strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
+def _is_comparative_query(resolved_text: str) -> bool:
+    """Detect comparative/superlative query syntax without regex."""
+    stripped = resolved_text.strip()
+    words = stripped.rstrip("?.!").lower().split()
+    if len(words) >= 3 and words[0] in ("who", "which") and words[1] == "is":
+        if words[2] == "the" and len(words) >= 4 and words[3].isalpha():
+            return True
+        if words[2].isalpha():
+            return True
+    if stripped.endswith("?") and "is" in words and "than" in words:
+        is_idx = words.index("is")
+        than_idx = words.index("than")
+        if is_idx + 1 < than_idx < len(words) - 1:
+            return True
+    return False
 
 if TYPE_CHECKING:
     from little.language.dialogue import DialogueContext
@@ -133,11 +173,7 @@ class DeterministicPerceptionAdapter:
                 model_version=self.policy.version,
             )
 
-        sentences = [
-            sentence.strip()
-            for sentence in re.split(r"(?<=[.!?;\n])\s+", text)
-            if sentence.strip()
-        ]
+        sentences = _split_sentences_after_punct(text)
         if len(sentences) > 1:
             question_sentences = [
                 sentence
@@ -300,10 +336,7 @@ class DeterministicPerceptionAdapter:
                     model_version=self.policy.version,
                 )
 
-        is_comparative_query = bool(
-            re.match(r"^(?:who|which)\s+is\s+(?:the\s+)?[a-z]+", resolved_text.strip(), re.IGNORECASE)
-            or (re.search(r"\bis\s+.+?\s+than\s+.+", resolved_text, re.IGNORECASE) and resolved_text.strip().endswith("?"))
-        )
+        is_comparative_query = _is_comparative_query(resolved_text)
 
         if (
             question is not None

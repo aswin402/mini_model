@@ -1531,3 +1531,53 @@ def test_spiderweb_mlm_phase64_neural_embedding_sync_and_policy_driven_operators
 
         mlm.close()
 
+
+def test_spiderweb_mlm_phase65_dynamic_arena_conditioning_and_zero_regex_language_modules(
+    tmp_path,
+) -> None:
+    """Verify Phase 65: Schema-Driven Spoke-to-Neural-Cell Conditioning & Zero Regex in Language Perception/Construction/Gatekeeper/Comparative Modules."""
+    from pathlib import Path
+
+    db_file = str(tmp_path / "phase65_arena_conditioning.db")
+    with MemoryStore(db_file, seed_ontology=False) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
+
+        # 1. Verify _predicate_to_neural_cell dynamically routes canonical & open predicates without hardcoded pred_to_cell dict
+        assert mlm._predicate_to_neural_cell("is_a") == (0, "taxonomy")
+        assert mlm._predicate_to_neural_cell("part_of") == (1, "mereology")
+        assert mlm._predicate_to_neural_cell("causes") == (2, "causality")
+        assert mlm._predicate_to_neural_cell("located_in") == (3, "spatial")
+        assert mlm._predicate_to_neural_cell("can") == (4, "capability")
+        assert mlm._predicate_to_neural_cell("before") == (5, "dynamics")
+
+        # 2. Verify _build_arena_conditioning produces CoT conditioning prompt and 6-spoke neural cell prior
+        mlm.chat_turn_360(
+            "A bird is an animal. A bird has wings. A bird can fly.",
+            persist=False,
+        )
+        q_res = mlm.query_360("Can a bird fly?")
+        cot_prompt, spoke_prior = mlm._build_arena_conditioning("Can a bird fly?", q_res)
+        assert isinstance(cot_prompt, str) and "think 360" in cot_prompt
+        assert len(spoke_prior) == 6
+        assert abs(sum(spoke_prior) - 1.0) < 1e-3
+        assert spoke_prior[4] > spoke_prior[2]  # capability cell dominates causality cell
+
+        # 3. Verify zero 'import re' in cleaned language modules
+        repo_root = Path(__file__).resolve().parents[2]
+        cleaned_language_files = (
+            "laya_gatekeeper.py",
+            "conjunction_policy.py",
+            "number_policy.py",
+            "question_boundary_policy.py",
+            "perception.py",
+            "comparative.py",
+            "construction.py",
+        )
+        for fname in cleaned_language_files:
+            py_file = repo_root / "src" / "little" / "language" / fname
+            lines = [ln.strip() for ln in py_file.read_text(encoding="utf-8").splitlines()]
+            assert "import re" not in lines, f"Found 'import re' in {py_file}"
+
+        mlm.close()
+
+
