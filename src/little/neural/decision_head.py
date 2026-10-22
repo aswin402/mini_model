@@ -8,7 +8,6 @@ Shannon entropy and strictly proper scoring rules (Brier score & RPS).
 from __future__ import annotations
 
 import math
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -16,6 +15,21 @@ from enum import Enum
 from little.memory.store import MemoryStore
 from little.neural.encoder import NeuralStateEncoder
 from little.neural.models import NeuralState
+
+
+def _extract_word_tokens(text: str) -> set[str]:
+    """Extract lowercase alphanumeric word tokens without regular expressions."""
+    tokens: set[str] = set()
+    buf: list[str] = []
+    for ch in text.lower():
+        if ("a" <= ch <= "z") or ("0" <= ch <= "9") or ch == "_":
+            buf.append(ch)
+        elif buf:
+            tokens.add("".join(buf))
+            buf.clear()
+    if buf:
+        tokens.add("".join(buf))
+    return tokens
 
 
 class EpistemicBeliefState(str, Enum):
@@ -292,7 +306,7 @@ class LayaDecisionHead:
         prompt_text = (
             text_or_state if isinstance(text_or_state, str) else text_or_state.text
         )
-        prompt_tokens = set(re.findall(r"[a-z0-9_]+", prompt_text.lower()))
+        prompt_tokens = _extract_word_tokens(prompt_text)
 
         grounded_targets: set[str] = set()
         if self.memory:
@@ -308,7 +322,7 @@ class LayaDecisionHead:
 
         for k, opt in enumerate(options):
             opt_lower = opt.lower()
-            opt_words = set(re.findall(r"[a-z0-9_]+", opt_lower))
+            opt_words = _extract_word_tokens(opt_lower)
             direct_overlap = len(opt_words & prompt_tokens)
             if direct_overlap:
                 logits[k] += direct_overlap * 2.0

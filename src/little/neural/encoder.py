@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import math
-import re
 from typing import Any
 
 from little.neural.models import NeuralState
@@ -90,9 +89,33 @@ class NeuralStateEncoder:
         )
 
     def _tokenize(self, text: str) -> list[str]:
-        """Extract alphanumeric words and math symbols as tokens."""
+        """Extract alphanumeric words and math symbols as tokens without regular expressions."""
         clean = text.lower().strip()
-        return [t for t in re.findall(r"[a-z0-9_]+|[\+\-\*\/\^=><]+", clean) if t]
+        tokens: list[str] = []
+        buf: list[str] = []
+        mode: str = ""  # "word" | "math" | ""
+        math_chars = "+-*/^=<>"
+        for ch in clean:
+            if ("a" <= ch <= "z") or ("0" <= ch <= "9") or ch == "_":
+                if mode != "word" and buf:
+                    tokens.append("".join(buf))
+                    buf.clear()
+                mode = "word"
+                buf.append(ch)
+            elif ch in math_chars:
+                if mode != "math" and buf:
+                    tokens.append("".join(buf))
+                    buf.clear()
+                mode = "math"
+                buf.append(ch)
+            else:
+                if buf:
+                    tokens.append("".join(buf))
+                    buf.clear()
+                mode = ""
+        if buf:
+            tokens.append("".join(buf))
+        return tokens
 
     def _project_string(self, s: str, weight: float, vec: list[float]) -> None:
         """Project string into pseudo-orthogonal dimensions using deterministic double hashing."""

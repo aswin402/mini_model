@@ -204,6 +204,7 @@ class MiniLearningUnit:
         self.last_surprise: float = 0.0
         self.created_cycle: int = 0
         self.last_active_cycle: int = 0
+        self.neural_sync_steps: int = 0
 
     @property
     def is_trunk(self) -> bool:
@@ -252,6 +253,38 @@ class MiniLearningUnit:
 
         self.hidden_state = _normalize_vec(new_hidden)
         return list(self.hidden_state)
+
+    def sync_neural_embedding(
+        self,
+        neural_vec: list[float],
+        blend: float = 0.20,
+    ) -> list[float]:
+        """Synchronize this MLU's 64-D concept anchor and liquid state with a backprop-learned NeuralSpiderWebMlu embedding."""
+        n_dim = len(neural_vec)
+        if n_dim == 0:
+            return list(self.anchor_vec)
+        lifted = [
+            float(neural_vec[i])
+            if i < n_dim
+            else float(neural_vec[i % n_dim]) * math.cos(float(i + 1) * math.pi / 8.0)
+            for i in range(self.dim)
+        ]
+        norm_lifted = _normalize_vec(lifted)
+        eff_blend = max(0.01, min(0.50, blend * (0.25 if self.is_trunk else 1.0)))
+        self.anchor_vec = _normalize_vec(
+            [
+                (1.0 - eff_blend) * a + eff_blend * nv
+                for a, nv in zip(self.anchor_vec, norm_lifted, strict=False)
+            ]
+        )
+        self.hidden_state = _normalize_vec(
+            [
+                (1.0 - 0.5 * eff_blend) * h + 0.5 * eff_blend * self.anchor_vec[i]
+                for i, h in enumerate(self.hidden_state)
+            ]
+        )
+        self.neural_sync_steps += 1
+        return list(self.anchor_vec)
 
     def learn_spoke_relation(
         self,
@@ -461,6 +494,7 @@ class MiniLearningUnit:
             "verified_hits": self.verified_hits,
             "refuted_hits": self.refuted_hits,
             "cumulative_surprise": round(self.cumulative_surprise, 4),
+            "neural_sync_steps": self.neural_sync_steps,
         }
 
     @classmethod
@@ -493,4 +527,5 @@ class MiniLearningUnit:
         unit.verified_hits = float(data.get("verified_hits", 0.0))
         unit.refuted_hits = float(data.get("refuted_hits", 0.0))
         unit.cumulative_surprise = float(data.get("cumulative_surprise", 0.0))
+        unit.neural_sync_steps = int(data.get("neural_sync_steps", 0))
         return unit

@@ -163,7 +163,9 @@ class SpiderWebMLM:
         self.episodic_working_memory: list[dict[str, Any]] = []
         self.pending_curiosity_slot: dict[str, Any] | None = None
         self._operator_codebook: list[tuple[tuple[str, ...], str, list[float]]] = []
+        self._operator_polarity_map: dict[tuple[str, ...], tuple[str, int]] = {}
         self._operator_token_mass: dict[str, float] = {}
+        self._cached_neural_vocab: dict[str, list[float]] = {}
         self._build_operator_codebook()
 
         from little.rust.engine import RustMluArena, RustNeuralMlu
@@ -271,6 +273,7 @@ class SpiderWebMLM:
             nrow = cursor.fetchone()
             if nrow and nrow[0]:
                 self.neural_mlu.restore_json(str(nrow[0]))
+                self.sync_neural_embeddings_to_arena(blend=0.20)
 
     def save_nodes(self, concept_ids: list[str] | None = None) -> None:
         """Persist modified MLU nodes and the native Rust 360° Arena snapshot to SQLite."""
@@ -406,16 +409,24 @@ class SpiderWebMLM:
 
                 has_neg = _contains_negation(ptoks)
                 phrase_key = " ".join(ptoks)
-                if has_neg:
-                    canonical = disjoint_pred
-                else:
-                    canonical = self.frame_policy.operator_canonical_map.get(
-                        phrase_key,
-                        self.frame_policy.operator_canonical_map.get(ptoks[0], base_rel),
-                    )
+                base_canonical = self.frame_policy.operator_canonical_map.get(
+                    phrase_key,
+                    self.frame_policy.operator_canonical_map.get(
+                        ptoks[0],
+                        self.frame_policy.operator_canonical_map.get(base_rel, base_rel),
+                    ),
+                )
+                if self.verifier.registry.relation(base_canonical) is None:
+                    base_canonical = self.verifier.taxonomy_predicate or "is_a"
 
-                if self.verifier.registry.relation(canonical) is None:
-                    canonical = self.verifier.taxonomy_predicate or "is_a"
+                if has_neg and base_rel == "is_a":
+                    canonical = disjoint_pred
+                elif has_neg:
+                    canonical = base_canonical
+                else:
+                    canonical = base_canonical
+
+                polarity = -1 if has_neg else 1
 
                 for candidate_toks in (
                     ptoks,
@@ -423,7 +434,16 @@ class SpiderWebMLM:
                     if len(ptoks) > 1 and ptoks[-1] in self.frame_policy.stop_determiners
                     else ptoks,
                 ):
-                    if candidate_toks and candidate_toks not in seen_tuples:
+                    if not candidate_toks:
+                        continue
+                    if candidate_toks not in self._operator_polarity_map:
+                        self._operator_polarity_map[candidate_toks] = (
+                            canonical,
+                            polarity,
+                        )
+                    if (
+                        not has_neg or base_rel == "is_a"
+                    ) and candidate_toks not in seen_tuples:
                         seen_tuples.add(candidate_toks)
                         vec = deterministic_seed_vector("_".join(candidate_toks), self.dim)
                         self._operator_codebook.append((candidate_toks, canonical, vec))
@@ -436,6 +456,8 @@ class SpiderWebMLM:
                     self._operator_token_mass[tok] = self._operator_token_mass.get(tok, 0.0) + 1.5
                 vec = deterministic_seed_vector(reg_pred, self.dim)
                 self._operator_codebook.append((ptoks, reg_pred, vec))
+                pol = -1 if reg_pred in self.verifier.disjoint_predicates else 1
+                self._operator_polarity_map.setdefault(ptoks, (reg_pred, pol))
 
     def _token_salience(self, token: str) -> float:
         """Compute Shannon character-entropy & epistemic anchor salience for a token."""
@@ -486,6 +508,18 @@ class SpiderWebMLM:
             for j in range(i + 1, min(n + 1, i + 5)):
                 sub = tuple(span_tokens[i:j])
                 core_sub = tuple(t for t in sub if t not in self.frame_policy.stop_determiners)
+                matched_pol_entry = self._operator_polarity_map.get(sub) or (
+                    self._operator_polarity_map.get(core_sub) if core_sub else None
+                )
+                if matched_pol_entry is not None:
+                    cand_pred, cand_pol = matched_pol_entry
+                    cand_len = len(core_sub) if core_sub and core_sub in self._operator_polarity_map else len(sub)
+                    if cand_len > best_len or (cand_len == best_len and cand_pol < polarity):
+                        best_len = cand_len
+                        best_pred = cand_pred
+                        polarity = cand_pol
+                        best_sim = 1.0
+                    continue
                 probe_vec = (
                     deterministic_seed_vector("_".join(core_sub or sub), self.dim)
                     if (core_sub or sub)
@@ -506,6 +540,14 @@ class SpiderWebMLM:
                             best_pred = canonical_pred
                             if canonical_pred in self.verifier.disjoint_predicates:
                                 polarity = -1
+        if any(t in self.frame_policy.negation_tokens for t in span_tokens):
+            polarity = -1
+            if best_pred in (None, *self.verifier.disjoint_predicates):
+                for tok in span_tokens:
+                    mapped = self.frame_policy.operator_canonical_map.get(tok)
+                    if mapped:
+                        best_pred = mapped
+                        break
         return best_pred, polarity
 
     def _route_to_subcore(self, preferred_spoke: str, concept_vec: list[float]) -> str:
@@ -522,6 +564,55 @@ class SpiderWebMLM:
                 best_score = sim + bonus
                 best_hub = hub_id
         return best_hub
+
+    def sync_neural_embeddings_to_arena(self, blend: float = 0.20) -> int:
+        """Synchronize backprop-learned token embeddings from NeuralSpiderWebMlu into 360° MiniLearningUnit concept anchors."""
+        if not self.neural_mlu.is_native:
+            return 0
+        raw_json = self.neural_mlu.dump_json()
+        if not raw_json or raw_json == "{}":
+            return 0
+        try:
+            payload = json.loads(raw_json)
+        except json.JSONDecodeError:
+            return 0
+        vocab_to_id = payload.get("vocab_to_id", {})
+        token_emb_w = payload.get("token_emb", {}).get("w", [])
+        if not isinstance(vocab_to_id, dict) or not isinstance(token_emb_w, list) or not vocab_to_id:
+            return 0
+        d_model = len(token_emb_w) // max(1, len(vocab_to_id))
+        if d_model <= 0:
+            return 0
+
+        self._cached_neural_vocab.clear()
+        for tok, tid in vocab_to_id.items():
+            idx = int(tid)
+            start = idx * d_model
+            end = start + d_model
+            if end <= len(token_emb_w):
+                self._cached_neural_vocab[str(tok)] = [
+                    float(x) for x in token_emb_w[start:end]
+                ]
+
+        synced_count = 0
+        for cid, unit in self.nodes.items():
+            if cid == "CORE_ROOT" or cid in DEFAULT_SUBCORES:
+                continue
+            toks = _tokenize_words(cid)
+            matched_vecs = [
+                self._cached_neural_vocab[t]
+                for t in toks
+                if t in self._cached_neural_vocab
+            ]
+            if not matched_vecs:
+                continue
+            pooled = [
+                sum(v[d] for v in matched_vecs) / float(len(matched_vecs))
+                for d in range(d_model)
+            ]
+            unit.sync_neural_embedding(pooled, blend=blend)
+            synced_count += 1
+        return synced_count
 
     def get_or_create_mlu(self, concept_name: str, preferred_spoke: str = "taxonomy") -> MiniLearningUnit:
         """Retrieve an existing MLU or spawn a new Leaf MLU attached to its nearest Sub-Core Hub."""
@@ -541,6 +632,20 @@ class SpiderWebMLM:
             parent_hub=hub_id,
             dim=self.dim,
         )
+        if self._cached_neural_vocab:
+            toks = _tokenize_words(cid)
+            matched_vecs = [
+                self._cached_neural_vocab[t]
+                for t in toks
+                if t in self._cached_neural_vocab
+            ]
+            if matched_vecs:
+                d_model = len(matched_vecs[0])
+                pooled = [
+                    sum(v[d] for v in matched_vecs) / float(len(matched_vecs))
+                    for d in range(d_model)
+                ]
+                unit.sync_neural_embedding(pooled, blend=0.20)
         unit.created_cycle = self.cycle_step
         unit.last_active_cycle = self.cycle_step
         self.nodes[cid] = unit
@@ -615,80 +720,55 @@ class SpiderWebMLM:
     def _extract_negated_triples(
         self, sentence: str, active_subject_fallback: str | None = None
     ) -> list[tuple[str, str, str]]:
-        """Phase 60: Extract non-monotonic exception / negated relation triples (e.g., 'A penguin cannot fly', 'A whale does not have gills')."""
-        tokens = _tokenize_words(sentence)
+        """Phase 60: Extract non-monotonic exception / negated relation triples via SemanticFramePolicy and the 64-D operator polarity codebook."""
+        clean_sent = self.frame_policy.clean_filler(sentence)
+        tokens = _tokenize_words(clean_sent)
         if len(tokens) < 3:
             return []
 
         n = len(tokens)
-        discourse_prefixes = {
-            "actually",
-            "however",
-            "but",
-            "yet",
-            "still",
-            "no",
-            "aux",
-            "does",
-            "do",
-            "did",
-            "can",
-            "is",
-            "are",
+        filler_tokens = {
+            tok
+            for phrase in self.frame_policy.filler_prefixes
+            for tok in _tokenize_words(phrase)
         }
 
-        def _build_pair(left_idx: int, right_idx: int, pred: str) -> list[tuple[str, str, str]]:
-            subj_toks = [t for t in tokens[:left_idx] if t not in discourse_prefixes]
-            subj_c, subj_sal = self._extract_salient_concept(subj_toks)
-            if (not subj_c or subj_sal < 2.25) and active_subject_fallback:
-                subj_c = active_subject_fallback.lower()
-            obj_c, _ = self._extract_salient_concept(tokens[right_idx:])
-            if subj_c and obj_c and subj_c != obj_c:
-                return [(subj_c, pred, obj_c)]
-            return []
-
-        # 1. Explicit 'cannot <verb/target>' or 'can not <verb/target>' (when not 'cannot be')
-        for k in range(1, n - 1):
-            if tokens[k] == "cannot" and tokens[k + 1] != "be":
-                res = _build_pair(k, k + 1, "can")
-                if res:
-                    return res
-            if (
-                tokens[k] == "can"
-                and k + 2 < n
-                and tokens[k + 1] in ("not", "never")
-                and tokens[k + 2] != "be"
-            ):
-                res = _build_pair(k, k + 2, "can")
-                if res:
-                    return res
-            if tokens[k] in ("without", "lack", "lacks"):
-                res = _build_pair(k, k + 1, "has_part")
-                if res:
-                    return res
-
-        # 2. Multi-word negated non-taxonomic phrases ('does not have', 'does not cause', 'is not located in', etc.)
-        neg_patterns: list[tuple[tuple[str, ...], str]] = [
-            (("does", "not", "have"), "has_part"),
-            (("do", "not", "have"), "has_part"),
-            (("did", "not", "have"), "has_part"),
-            (("has", "no"), "has_part"),
-            (("have", "no"), "has_part"),
-            (("does", "not", "cause"), "causes"),
-            (("do", "not", "cause"), "causes"),
-            (("is", "not", "capable", "of"), "can"),
-            (("are", "not", "capable", "of"), "can"),
-            (("is", "not", "located", "in"), "located_in"),
-            (("are", "not", "located", "in"), "located_in"),
-            (("does", "not", "live", "in"), "located_in"),
-        ]
-        for pat, pred in neg_patterns:
-            plen = len(pat)
-            for k in range(1, n - plen):
-                if tuple(tokens[k : k + plen]) == pat:
-                    res = _build_pair(k, k + plen, pred)
-                    if res:
-                        return res
+        for i in range(1, n - 1):
+            best_j = -1
+            best_pred: str | None = None
+            best_pol = 1
+            best_len = 0
+            for j in range(i + 1, min(n, i + 6)):
+                bridge = tuple(tokens[i:j])
+                core_bridge = tuple(
+                    t for t in bridge if t not in self.frame_policy.stop_determiners
+                )
+                entry = self._operator_polarity_map.get(bridge) or (
+                    self._operator_polarity_map.get(core_bridge) if core_bridge else None
+                )
+                if entry is not None:
+                    cand_pred, cand_pol = entry
+                    cand_len = j - i
+                    if cand_len > best_len:
+                        best_len = cand_len
+                        best_j = j
+                        best_pred = cand_pred
+                        best_pol = cand_pol
+            if best_j > i and best_pol < 0 and best_pred is not None:
+                if best_pred in self.verifier.disjoint_predicates or best_pred == "is_a":
+                    return []
+                subj_toks = [
+                    t
+                    for t in tokens[:i]
+                    if t not in filler_tokens
+                    and t not in self.frame_policy.negation_tokens
+                ]
+                subj_c, subj_sal = self._extract_salient_concept(subj_toks)
+                if (not subj_c or subj_sal < 2.25) and active_subject_fallback:
+                    subj_c = active_subject_fallback.lower()
+                obj_c, _ = self._extract_salient_concept(tokens[best_j:])
+                if subj_c and obj_c and subj_c != obj_c:
+                    return [(subj_c, best_pred, obj_c)]
 
         return []
 
@@ -1221,6 +1301,18 @@ class SpiderWebMLM:
                         queue.append((t_cid, next_path))
         return []
 
+    def _has_taxonomic_subtypes(self, category_cid: str, max_hops: int = 4) -> bool:
+        """Return True if at least one concept node in the 360° Arena has a verified taxonomic path to category_cid."""
+        if not category_cid or category_cid not in self.nodes:
+            return False
+        return any(
+            cid != category_cid
+            and cid != "CORE_ROOT"
+            and not cid.startswith("SUBCORE_")
+            and bool(self._find_taxonomic_path(cid, category_cid, max_hops=max_hops))
+            for cid in self.nodes
+        )
+
     def _extract_arena_proof_steps(
         self, res: MLMQueryResult, target_cid: str | None
     ) -> list[tuple[str, str, str]]:
@@ -1498,8 +1590,13 @@ class SpiderWebMLM:
                     target_cid = single_cid
 
         # Phase 62: Compositional Set & Conjunctive Constraint Intersection ("Which mammal can echolocate?", "Which bird cannot fly?")
-        if len(matched_spans) >= 2 and (
-            matched_spans[0][1] == 0 or (tokens and tokens[0] in ("which", "what", "who"))
+        if (
+            len(matched_spans) >= 2
+            and all(
+                t in self.frame_policy.stop_determiners
+                for t in tokens[: matched_spans[0][1]]
+            )
+            and self._has_taxonomic_subtypes(matched_spans[0][0])
         ):
             cat_cid, _, prev_end = matched_spans[0]
             constraints: list[tuple[int, str | None, str]] = []
@@ -1507,25 +1604,7 @@ class SpiderWebMLM:
             for c_cid, s_idx, e_idx in matched_spans[1:]:
                 span_toks = tokens[prev_end:s_idx]
                 prev_end = e_idx
-                has_neg_tok = any(
-                    t in self.frame_policy.negation_tokens
-                    or t in ("cannot", "not", "never", "without")
-                    for t in span_toks
-                )
-                clean_span = [
-                    t
-                    for t in span_toks
-                    if t not in ("and", "that", "which", "who", "also")
-                    and t not in self.frame_policy.negation_tokens
-                    and t not in ("cannot", "not", "never", "without")
-                ]
-                pred_k, pol_k = self._resolve_operator_span(
-                    clean_span if clean_span else span_toks
-                )
-                if has_neg_tok:
-                    pol_k = -1
-                    if pred_k in (None, "disjoint_with", "not_a"):
-                        pred_k = "can" if "cannot" in span_toks else None
+                pred_k, pol_k = self._resolve_operator_span(span_toks)
                 if pred_k is None and pol_k > 0:
                     valid_constraints = False
                     break
@@ -1716,180 +1795,177 @@ class SpiderWebMLM:
         preds, activated = self._collect_360_predictions(focal_unit)
         active_subcore = focal_unit.parent_hub or "CORE_ROOT"
 
-        query_pred: str | None = None
-        query_pol: int = 1
-        if target_cid is not None:
-            non_concept_toks = [
-                t
-                for t in tokens
-                if t.upper() not in (focal_cid, target_cid)
+        non_concept_toks = [
+            t
+            for t in tokens
+            if t.upper() not in (focal_cid, target_cid or "")
+        ]
+        query_pred, query_pol = self._resolve_operator_span(non_concept_toks)
+        if target_cid is not None and has_leading_operator:
+            matching = [
+                p
+                for p in preds
+                if p.target_concept == target_cid
+                and p.predicate not in self.verifier.disjoint_predicates
             ]
-            query_pred, query_pol = self._resolve_operator_span(non_concept_toks)
-            if has_leading_operator:
-                matching = [
-                    p
-                    for p in preds
-                    if p.target_concept == target_cid
-                    and p.predicate not in self.verifier.disjoint_predicates
-                ]
-                if matching:
-                    best = matching[0]
-                    verb = best.predicate.replace("_", " ")
-                    order_tag = (
-                        " | [MLU-360-ORDER]"
-                        if best.predicate in ("larger_than", "greater_than", "before", "after")
-                        else ""
-                    )
-                    ans = (
-                        f"Yes — {focal_cid.lower().replace('_', ' ')} {verb} "
-                        f"{target_cid.lower().replace('_', ' ')} "
-                        f"(spoke={best.spoke}, confidence={best.combined_confidence:.2f}, "
-                        f"subcore={active_subcore})."
-                    )
-                    fluent = (
+            if matching:
+                best = matching[0]
+                verb = best.predicate.replace("_", " ")
+                order_tag = (
+                    " | [MLU-360-ORDER]"
+                    if best.predicate in ("larger_than", "greater_than", "before", "after")
+                    else ""
+                )
+                ans = (
+                    f"Yes — {focal_cid.lower().replace('_', ' ')} {verb} "
+                    f"{target_cid.lower().replace('_', ' ')} "
+                    f"(spoke={best.spoke}, confidence={best.combined_confidence:.2f}, "
+                    f"subcore={active_subcore})."
+                )
+                fluent = (
+                    f"Yes, {focal_cid.lower().replace('_', ' ')} {verb} "
+                    f"{target_cid.lower().replace('_', ' ')}."
+                )
+                trace = (
+                    f"[MLU-360] Core -> {active_subcore} -> {' -> '.join(activated[2:])} | "
+                    f"spoke={best.spoke}({best.predicate}) -> {target_cid} "
+                    f"[neural={best.neural_score:.2f}, nars={best.nars_confidence:.2f}, "
+                    f"H={best.epistemic_entropy:.2f}]{order_tag}"
+                )
+                return MLMQueryResult(
+                    query=clean_q,
+                    focal_concept=focal_cid,
+                    status="VERIFIED" if best.verified else "NEURAL_GROUNDED",
+                    answer=ans,
+                    confidence=best.combined_confidence,
+                    epistemic_entropy=best.epistemic_entropy,
+                    active_subcore=active_subcore,
+                    activated_mlus=activated,
+                    spoke_predictions=preds[:6],
+                    inspectable_trace=trace,
+                    fluent_english=fluent,
+                )
+
+            # Phase 59: Multi-hop Transitive Poset Order verification via evaluate_order_360
+            if query_pred in ("larger_than", "causes", "requires") and self.rust_arena.is_native:
+                ord_dto = self.evaluate_order_360(
+                    query_pred, start_concept=focal_cid, max_hops=6
+                )
+                if f"{focal_cid} -> {target_cid}" in ord_dto.get("transitive_pairs", []):
+                    chain_list = [str(c) for c in ord_dto.get("ordered_chain", [])]
+                    verb = query_pred.replace("_", " ")
+                    fluent_ord = (
                         f"Yes, {focal_cid.lower().replace('_', ' ')} {verb} "
                         f"{target_cid.lower().replace('_', ' ')}."
                     )
-                    trace = (
-                        f"[MLU-360] Core -> {active_subcore} -> {' -> '.join(activated[2:])} | "
-                        f"spoke={best.spoke}({best.predicate}) -> {target_cid} "
-                        f"[neural={best.neural_score:.2f}, nars={best.nars_confidence:.2f}, "
-                        f"H={best.epistemic_entropy:.2f}]{order_tag}"
-                    )
                     return MLMQueryResult(
                         query=clean_q,
                         focal_concept=focal_cid,
-                        status="VERIFIED" if best.verified else "NEURAL_GROUNDED",
-                        answer=ans,
-                        confidence=best.combined_confidence,
-                        epistemic_entropy=best.epistemic_entropy,
+                        status="VERIFIED",
+                        answer=fluent_ord,
+                        confidence=0.90,
+                        epistemic_entropy=0.06,
                         active_subcore=active_subcore,
-                        activated_mlus=activated,
+                        activated_mlus=chain_list or activated,
                         spoke_predictions=preds[:6],
-                        inspectable_trace=trace,
-                        fluent_english=fluent,
+                        inspectable_trace=(
+                            f"[MLU-360-ORDER] {focal_cid} -({query_pred})-> {target_cid} | "
+                            f"chain={chain_list}"
+                        ),
+                        fluent_english=fluent_ord,
                     )
 
-                # Phase 59: Multi-hop Transitive Poset Order verification via evaluate_order_360
-                if query_pred in ("larger_than", "causes", "requires") and self.rust_arena.is_native:
-                    ord_dto = self.evaluate_order_360(
-                        query_pred, start_concept=focal_cid, max_hops=6
-                    )
-                    if f"{focal_cid} -> {target_cid}" in ord_dto.get("transitive_pairs", []):
-                        chain_list = [str(c) for c in ord_dto.get("ordered_chain", [])]
-                        verb = query_pred.replace("_", " ")
-                        fluent_ord = (
-                            f"Yes, {focal_cid.lower().replace('_', ' ')} {verb} "
-                            f"{target_cid.lower().replace('_', ' ')}."
-                        )
-                        return MLMQueryResult(
-                            query=clean_q,
-                            focal_concept=focal_cid,
-                            status="VERIFIED",
-                            answer=fluent_ord,
-                            confidence=0.90,
-                            epistemic_entropy=0.06,
-                            active_subcore=active_subcore,
-                            activated_mlus=chain_list or activated,
-                            spoke_predictions=preds[:6],
-                            inspectable_trace=(
-                                f"[MLU-360-ORDER] {focal_cid} -({query_pred})-> {target_cid} | "
-                                f"chain={chain_list}"
-                            ),
-                            fluent_english=fluent_ord,
-                        )
-
-                # Check if DeepSeekInvariantVerifier, Rust Arena, or local I_EXCEPTION override refutes the link
-                local_exception_pred: str | None = None
-                for sp in focal_unit.spokes.values():
-                    rec = sp.target_affinities.get(target_cid)
-                    if (
-                        isinstance(rec, list)
-                        and len(rec) >= 4
-                        and float(rec[1]) > float(rec[0])
-                        and str(rec[3])
-                        not in (
-                            "is_a",
-                            "subclass_of",
-                            "instance_of",
-                            "disjoint_with",
-                            "not_a",
-                            "co_occurs_with",
-                        )
-                    ):
-                        local_exception_pred = str(rec[3])
-                        break
-
-                gate_check = self.verifier.verify_relation(focal_cid, "is_a", target_cid)
-                rust_inv = (
-                    self.rust_arena.verify_invariants(focal_cid, "is_a", target_cid)
-                    if self.rust_arena.is_native
-                    else {"passed": True, "gate": "OK"}
-                )
+            # Check if DeepSeekInvariantVerifier, Rust Arena, or local I_EXCEPTION override refutes the link
+            local_exception_pred: str | None = None
+            for sp in focal_unit.spokes.values():
+                rec = sp.target_affinities.get(target_cid)
                 if (
-                    bool(rust_inv.get("passed", True))
-                    and query_pred
-                    and query_pred not in ("is_a", "disjoint_with")
-                    and self.rust_arena.is_native
+                    isinstance(rec, list)
+                    and len(rec) >= 4
+                    and float(rec[1]) > float(rec[0])
+                    and str(rec[3])
+                    not in (
+                        "is_a",
+                        "subclass_of",
+                        "instance_of",
+                        "disjoint_with",
+                        "not_a",
+                        "co_occurs_with",
+                    )
                 ):
-                    rust_inv = self.rust_arena.verify_invariants(
-                        focal_cid, query_pred, target_cid
-                    )
-                rust_passed = bool(rust_inv.get("passed", True))
-                rust_gate = str(rust_inv.get("gate", "I_MUTEX"))
-                if not gate_check.passed or not rust_passed or local_exception_pred is not None:
-                    v_gate = (
-                        gate_check.violated_gate
-                        if not gate_check.passed
-                        else ("I_EXCEPTION" if local_exception_pred is not None else rust_gate)
-                    )
-                    eff_pred = query_pred or local_exception_pred or "can"
-                    v_msg = (
-                        gate_check.error_message
-                        if not gate_check.passed
+                    local_exception_pred = str(rec[3])
+                    break
+
+            gate_check = self.verifier.verify_relation(focal_cid, "is_a", target_cid)
+            rust_inv = (
+                self.rust_arena.verify_invariants(focal_cid, "is_a", target_cid)
+                if self.rust_arena.is_native
+                else {"passed": True, "gate": "OK"}
+            )
+            if (
+                bool(rust_inv.get("passed", True))
+                and query_pred
+                and query_pred not in ("is_a", "disjoint_with")
+                and self.rust_arena.is_native
+            ):
+                rust_inv = self.rust_arena.verify_invariants(
+                    focal_cid, query_pred, target_cid
+                )
+            rust_passed = bool(rust_inv.get("passed", True))
+            rust_gate = str(rust_inv.get("gate", "I_MUTEX"))
+            if not gate_check.passed or not rust_passed or local_exception_pred is not None:
+                v_gate = (
+                    gate_check.violated_gate
+                    if not gate_check.passed
+                    else ("I_EXCEPTION" if local_exception_pred is not None else rust_gate)
+                )
+                eff_pred = query_pred or local_exception_pred or "can"
+                v_msg = (
+                    gate_check.error_message
+                    if not gate_check.passed
+                    else (
+                        f"360° Arena I_EXCEPTION non-monotonic override for {focal_cid} on {eff_pred} -> {target_cid}"
+                        if v_gate == "I_EXCEPTION"
                         else (
-                            f"360° Arena I_EXCEPTION non-monotonic override for {focal_cid} on {eff_pred} -> {target_cid}"
-                            if v_gate == "I_EXCEPTION"
-                            else (
-                                f"360° Arena {rust_gate} poset antisymmetry violation between {focal_cid} and {target_cid} along {query_pred}"
-                                if v_gate == "I_SORT"
-                                else f"360° Arena {rust_gate} disjointness between {focal_cid} and {target_cid}"
-                            )
+                            f"360° Arena {rust_gate} poset antisymmetry violation between {focal_cid} and {target_cid} along {query_pred}"
+                            if v_gate == "I_SORT"
+                            else f"360° Arena {rust_gate} disjointness between {focal_cid} and {target_cid}"
                         )
                     )
-                    if v_gate == "I_EXCEPTION":
-                        ref_verb = (
-                            "cannot"
-                            if eff_pred in ("can", "capable_of")
-                            else (
-                                "does not have"
-                                if eff_pred in ("has_part", "has_property", "has")
-                                else f"does not {eff_pred.replace('_', ' ')}"
-                            )
+                )
+                if v_gate == "I_EXCEPTION":
+                    ref_verb = (
+                        "cannot"
+                        if eff_pred in ("can", "capable_of")
+                        else (
+                            "does not have"
+                            if eff_pred in ("has_part", "has_property", "has")
+                            else f"does not {eff_pred.replace('_', ' ')}"
                         )
-                    elif v_gate == "I_SORT" and query_pred:
-                        ref_verb = f"cannot {query_pred.replace('_', ' ')}"
-                    else:
-                        ref_verb = "cannot be"
-                    ans_ref = (
-                        f"No — {focal_cid.lower().replace('_', ' ')} {ref_verb} "
-                        f"{target_cid.lower().replace('_', ' ')} "
-                        f"(Refuted by {v_gate}: {v_msg})."
                     )
-                    pred_tag = f" ({eff_pred})" if v_gate == "I_EXCEPTION" else ""
-                    return MLMQueryResult(
-                        query=clean_q,
-                        focal_concept=focal_cid,
-                        status="REFUTED",
-                        answer=ans_ref,
-                        confidence=0.95,
-                        epistemic_entropy=0.0,
-                        active_subcore=active_subcore,
-                        activated_mlus=activated,
-                        spoke_predictions=preds[:6],
-                        inspectable_trace=f"[MLU-360] Refuted by {v_gate}{pred_tag}: {v_msg}",
-                        fluent_english=ans_ref,
-                    )
+                elif v_gate == "I_SORT" and query_pred:
+                    ref_verb = f"cannot {query_pred.replace('_', ' ')}"
+                else:
+                    ref_verb = "cannot be"
+                ans_ref = (
+                    f"No — {focal_cid.lower().replace('_', ' ')} {ref_verb} "
+                    f"{target_cid.lower().replace('_', ' ')} "
+                    f"(Refuted by {v_gate}: {v_msg})."
+                )
+                pred_tag = f" ({eff_pred})" if v_gate == "I_EXCEPTION" else ""
+                return MLMQueryResult(
+                    query=clean_q,
+                    focal_concept=focal_cid,
+                    status="REFUTED",
+                    answer=ans_ref,
+                    confidence=0.95,
+                    epistemic_entropy=0.0,
+                    active_subcore=active_subcore,
+                    activated_mlus=activated,
+                    spoke_predictions=preds[:6],
+                    inspectable_trace=f"[MLU-360] Refuted by {v_gate}{pred_tag}: {v_msg}",
+                    fluent_english=ans_ref,
+                )
 
         if not preds:
             if target_cid is not None and target_cid in self.nodes:
@@ -1957,32 +2033,7 @@ class SpiderWebMLM:
             )
 
         # Case A: 360° Counterfactual Intervention, Comparative Wave Intersection & Relational Bridge
-        has_cf_cue = any(
-            t
-            in (
-                "without",
-                "removed",
-                "remove",
-                "stops",
-                "stop",
-                "disappears",
-                "disappear",
-                "fails",
-                "fail",
-                "absent",
-                "prevented",
-                "suppressed",
-                "eliminated",
-                "lacks",
-            )
-            for t in tokens
-        ) or (
-            "if" in tokens
-            and any(
-                t in self.frame_policy.negation_tokens or t in ("not", "no", "never")
-                for t in tokens
-            )
-        )
+        has_cf_cue = query_pol < 0
         if target_cid is not None and target_cid in self.nodes:
             if query_pol < 0 or has_cf_cue:
                 cf_root, cf_supp = focal_cid, target_cid
@@ -2955,6 +3006,7 @@ class SpiderWebMLM:
     ) -> dict[str, Any]:
         """Phase 50: Train the True End-to-End Differentiable 360° Spider-Web Neural MLU via Backpropagation + AdamW."""
         report = self.neural_mlu.train(text, epochs=epochs, learning_rate=learning_rate)
+        self.sync_neural_embeddings_to_arena(blend=0.20)
         self._dirty_since_save = True
         if persist:
             self.save_nodes([])

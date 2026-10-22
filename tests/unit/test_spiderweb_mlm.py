@@ -1493,10 +1493,41 @@ def test_spiderweb_mlm_phase63_causal_cascade_counterfactual_intervention_and_ne
         mlm.close()
 
 
+def test_spiderweb_mlm_phase64_neural_embedding_sync_and_policy_driven_operators(
+    tmp_path,
+) -> None:
+    """Verify Phase 64: Backprop-Learned Neural Embedding Synchronization into MiniLearningUnits, Policy-Driven Operator Polarity Resolution, and Zero Regex in MLU + Neural Modules."""
+    from pathlib import Path
 
+    db_file = str(tmp_path / "phase64_neural_sync.db")
+    with MemoryStore(db_file, seed_ontology=False) as mem:
+        mlm = SpiderWebMLM(mem, mitosis_min_activations=2, mitosis_min_verified_spokes=2)
 
+        # 1. Verify chat_turn_360 distills into NeuralSpiderWebMlu and synchronizes learned embeddings back to Arena MiniLearningUnits
+        mlm.chat_turn_360(
+            "A reptile is an animal. "
+            "A snake is a reptile. "
+            "A reptile has legs.",
+            persist=False,
+        )
+        assert "SNAKE" in mlm.nodes
+        assert mlm.nodes["SNAKE"].neural_sync_steps >= 1
+        assert len(mlm._cached_neural_vocab) > 0
 
+        # 2. Policy-driven non-monotonic exception via 'without' (no hardcoded tuple in spiderweb_net.py)
+        rev = mlm.chat_turn_360("However, a snake is without legs.", persist=False)
+        assert rev["relations_refuted"] >= 1
+        q_legs = mlm.chat_turn_360("Does a snake have legs?", persist=False)
+        assert q_legs["status"] == "REFUTED"
+        assert "I_EXCEPTION" in q_legs["trace"]
+        assert "does not have legs" in q_legs["reply"].lower()
 
+        # 3. Verify zero 'import re' in src/little/mlu/ and src/little/neural/
+        repo_root = Path(__file__).resolve().parents[2]
+        for pkg in ("mlu", "neural"):
+            for py_file in (repo_root / "src" / "little" / pkg).glob("*.py"):
+                lines = [ln.strip() for ln in py_file.read_text(encoding="utf-8").splitlines()]
+                assert "import re" not in lines, f"Found 'import re' in {py_file}"
 
-
+        mlm.close()
 
