@@ -48,7 +48,7 @@ from little.memory.paged_store import PagedConceptStore
 from little.memory.store import MemoryStore
 from little.mlu import SpiderWebMLM
 from little.mlu.spiderweb_net import _tokenize_words
-from little.neural import NeuralRouter, RoutingDecision
+from little.neural import NeuralRouter, Pathway, RoutingDecision
 from little.perception.sensory import SensoryGroundingEngine
 from little.procedural.code_synthesizer import ASTCodeSynthesizer, SynthesizedProgram
 from little.procedural.math_cas import UnitConversionGraph
@@ -440,6 +440,11 @@ class CognitiveKernel:
         if tool_call is not None:
             exec_result = self.tool_executor.execute(tool_call)
             self.tool_grounder.ground(exec_result)
+            if exec_result.success:
+                target_pw = (
+                    Pathway.MATH if tool_call.tool_name == "calculator" else Pathway.TOOL
+                )
+                self._adapt_router_from_outcome(routing, target_pw, learning_rate=0.12)
             body = self.dialogue_surface.verbalize_tool_result(exec_result)
             reply = self.dialogue_surface.compose_reply(greeting_word, body)
             self.headroom.record_turn(role="assistant", text=reply)
@@ -507,6 +512,22 @@ class CognitiveKernel:
         self.headroom.record_turn(role="assistant", text=reply)
         return reply
 
+    def _adapt_router_from_outcome(
+        self,
+        routing: RoutingDecision | None,
+        target_pathway: Pathway,
+        learning_rate: float = 0.04,
+    ) -> None:
+        """Online self-supervised cross-entropy feedback into NeuralRouter from verified execution."""
+        if (
+            routing is not None
+            and routing.latent_state is not None
+            and target_pathway in self.neural_router.pathways
+        ):
+            self.neural_router.learn(
+                routing.latent_state, target_pathway, learning_rate=learning_rate
+            )
+
     def process(
         self,
         text: str,
@@ -522,6 +543,8 @@ class CognitiveKernel:
         if tool_call is not None:
             exec_result = self.tool_executor.execute(tool_call)
             self.tool_grounder.ground(exec_result)
+            if exec_result.success:
+                self._adapt_router_from_outcome(routing, Pathway.TOOL)
             return KernelOutcome(
                 frame=CandidateFrame(
                     frame_id=generate_id("frame"),
@@ -535,25 +558,12 @@ class CognitiveKernel:
                 routing_decision=routing,
             )
 
-        # Check programming & AST code synthesis pathway
-        has_code_intent = any(
-            kw in text.lower()
-            for kw in (
-                "write code", "generate code", "python code", "write a function",
-                "synthesize code", "implement", "code for", "code to", "python function",
-                "program to", "script to",
-            )
-        ) or (
-            routing.pathway.value == "code"
-            and any(
-                kw in text.lower()
-                for kw in ("code", "function", "write", "generate", "synthesize", "implement", "script", "program")
-            )
-        )
-        if has_code_intent:
+        # Check programming & AST code synthesis pathway via policy-driven NeuralRouterPolicy
+        if self.neural_router.policy.is_code_intent(text, routing.pathway.value):
             prim = self.code_synthesizer.match_primitive(text)
             if prim is not None:
                 prog = self.code_synthesizer.synthesize(prim, verify=True)
+                self._adapt_router_from_outcome(routing, Pathway.CODE)
                 return KernelOutcome(
                     frame=CandidateFrame(
                         frame_id=generate_id("frame"),
@@ -589,12 +599,23 @@ class CognitiveKernel:
                 if parsed_subj
                 else ""
             )
-            if (
-                thinking.inference.status in (BeliefStatus.SUPPORTED, BeliefStatus.REFUTED)
-                and parsed_subj_cid
-                and parsed_subj_cid in self.mlm.nodes
-            ):
-                self.mlm._update_conversation_context(parsed_subj_cid)
+            if thinking.inference.status in (BeliefStatus.SUPPORTED, BeliefStatus.REFUTED):
+                reason_low = thinking.plan.reason.lower()
+                pred_str = (
+                    str(frame.parsed_query[1])
+                    if isinstance(frame.parsed_query, tuple) and len(frame.parsed_query) >= 2
+                    else ""
+                )
+                if "math" in reason_low or pred_str.startswith("__math"):
+                    self._adapt_router_from_outcome(routing, Pathway.MATH)
+                elif "poset" in reason_low or "comparative" in reason_low:
+                    self._adapt_router_from_outcome(routing, Pathway.POSET)
+                elif "counterfactual" in reason_low or pred_str.startswith("__sim"):
+                    self._adapt_router_from_outcome(routing, Pathway.PHYSICS)
+                else:
+                    self._adapt_router_from_outcome(routing, Pathway.CHAT, learning_rate=0.02)
+                if parsed_subj_cid and parsed_subj_cid in self.mlm.nodes:
+                    self.mlm._update_conversation_context(parsed_subj_cid)
             if (
                 thinking.inference.status == BeliefStatus.UNKNOWN
                 and hasattr(self, "mlm")

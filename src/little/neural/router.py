@@ -6,7 +6,7 @@ import math
 from dataclasses import replace
 from typing import Any
 
-from little.neural.encoder import GENERIC_WORDS, NeuralStateEncoder
+from little.neural.encoder import NeuralStateEncoder
 from little.neural.models import NeuralState, Pathway, RoutingDecision
 from little.neural.router_policy import NeuralRouterPolicy
 
@@ -233,7 +233,7 @@ class NeuralRouter:
             c_vec = [0.0] * in_dim
 
             for w_tok in words:
-                w_w = 0.5 if w_tok in GENERIC_WORDS else 2.0
+                w_w = 0.5 if w_tok in self.policy.generic_words else 2.0
                 self.encoder._project_string(w_tok, w_w, c_vec)
 
             # Strong pathway identity attractor

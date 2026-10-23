@@ -11,6 +11,22 @@ from typing import Any
 from little.core.runtime_paths import RuntimePaths
 from little.neural.models import Pathway
 
+_DEFAULT_GENERIC_WORDS: frozenset[str] = frozenset({
+    "who", "what", "is", "are", "you", "your", "today", "can",
+    "the", "a", "an", "or", "by", "in", "on", "of", "for", "to",
+    "with", "and", "me", "my", "please",
+})
+
+_DEFAULT_CODE_INTENT_PHRASES: tuple[str, ...] = (
+    "write code", "generate code", "python code", "write a function",
+    "synthesize code", "implement", "code for", "code to", "python function",
+    "program to", "script to",
+)
+
+_DEFAULT_CODE_INTENT_TOKENS: frozenset[str] = frozenset({
+    "code", "function", "write", "generate", "synthesize", "implement", "script", "program",
+})
+
 
 @dataclass(frozen=True)
 class NeuralRouterPolicy:
@@ -22,6 +38,16 @@ class NeuralRouterPolicy:
     entropy_threshold: float
     uncertainty_margin: float
     semantic_clusters: dict[Pathway, tuple[str, ...]]
+    generic_words: frozenset[str] = _DEFAULT_GENERIC_WORDS
+    code_intent_phrases: tuple[str, ...] = _DEFAULT_CODE_INTENT_PHRASES
+    code_intent_tokens: frozenset[str] = _DEFAULT_CODE_INTENT_TOKENS
+
+    def is_code_intent(self, text: str, routed_pathway: str = "") -> bool:
+        """Evaluate whether an input requests AST code synthesis via policy phrases or neural CODE routing."""
+        low = text.lower()
+        if any(phrase in low for phrase in self.code_intent_phrases):
+            return True
+        return routed_pathway == "code" and any(tok in low for tok in self.code_intent_tokens)
 
     def __post_init__(self) -> None:
         if type(self.input_dim) is not int or self.input_dim != 512:
@@ -79,6 +105,13 @@ class NeuralRouterPolicy:
             pw = Pathway(k.lower())
             clusters[pw] = tuple(str(w).lower() for w in words)
 
+        raw_generic = payload.get("generic_words", list(_DEFAULT_GENERIC_WORDS))
+        generic_words = frozenset(str(w).lower().strip() for w in raw_generic if str(w).strip())
+        raw_code_phrases = payload.get("code_intent_phrases", list(_DEFAULT_CODE_INTENT_PHRASES))
+        code_phrases = tuple(str(p).lower().strip() for p in raw_code_phrases if str(p).strip())
+        raw_code_tokens = payload.get("code_intent_tokens", list(_DEFAULT_CODE_INTENT_TOKENS))
+        code_tokens = frozenset(str(t).lower().strip() for t in raw_code_tokens if str(t).strip())
+
         return cls(
             input_dim=in_dim,
             hidden_dim=hid_dim,
@@ -86,6 +119,9 @@ class NeuralRouterPolicy:
             entropy_threshold=entropy_thresh,
             uncertainty_margin=uncert_margin,
             semantic_clusters=clusters,
+            generic_words=generic_words,
+            code_intent_phrases=code_phrases,
+            code_intent_tokens=code_tokens,
         )
 
     @classmethod

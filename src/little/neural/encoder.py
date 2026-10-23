@@ -7,14 +7,10 @@ import math
 from typing import Any
 
 from little.neural.models import NeuralState
-from little.neural.router_policy import NeuralRouterPolicy
+from little.neural.router_policy import _DEFAULT_GENERIC_WORDS, NeuralRouterPolicy
 
-# Stop words and broad interrogatives with lower domain specificity
-GENERIC_WORDS: frozenset[str] = frozenset({
-    "who", "what", "is", "are", "you", "your", "today", "can",
-    "the", "a", "an", "or", "by", "in", "on", "of", "for", "to",
-    "with", "and", "me", "my", "please"
-})
+# Backward-compatible export; runtime encoding reads `self.policy.generic_words`
+GENERIC_WORDS: frozenset[str] = _DEFAULT_GENERIC_WORDS
 
 
 class NeuralStateEncoder:
@@ -34,15 +30,16 @@ class NeuralStateEncoder:
         """Project text, dialogue context, and working memory into S in R^512."""
         tokens = self._tokenize(text)
         vec = [0.0] * self.dim
+        generic_words = self.policy.generic_words
 
         # 1. Project tokens and character n-grams into continuous vector space
         for pos, tok in enumerate(tokens):
-            w = 1.5 if tok not in GENERIC_WORDS else 0.5
+            w = 1.5 if tok not in generic_words else 0.5
             decayed_weight = w / (1.0 + 0.05 * pos)
             self._project_string(tok, decayed_weight, vec)
 
             # Character subword n-grams (lengths 3, 4) for typo tolerance on substantive tokens
-            if len(tok) >= 4 and tok not in GENERIC_WORDS:
+            if len(tok) >= 4 and tok not in generic_words:
                 for n in (3, 4):
                     for i in range(len(tok) - n + 1):
                         ngram = tok[i : i + n]
@@ -57,10 +54,10 @@ class NeuralStateEncoder:
         for pathway, cluster_words in self.policy.semantic_clusters.items():
             overlap = tok_set.intersection(cluster_words)
             if overlap:
-                score = sum(0.5 if w in GENERIC_WORDS else 2.5 for w in overlap)
+                score = sum(0.5 if w in generic_words else 2.5 for w in overlap)
                 self._project_string(f"pathway:{pathway.value}", 3.0 * score, vec)
                 for word in overlap:
-                    w_w = 0.5 if word in GENERIC_WORDS else 2.0
+                    w_w = 0.5 if word in generic_words else 2.0
                     self._project_string(f"cluster_word:{pathway.value}", w_w, vec)
 
         # 3. Fuse conversational dialogue context if present

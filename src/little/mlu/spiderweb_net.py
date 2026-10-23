@@ -3061,6 +3061,141 @@ class SpiderWebMLM:
             text, epochs=epochs, learning_rate=learning_rate, persist=persist
         )
 
+    _STRUCTURED_WAVE_TAGS: tuple[str, ...] = (
+        "[MLU-360-EXPLAIN]",
+        "[MLU-360-COMPARE]",
+        "[MLU-360-ORDER]",
+        "[MLU-360-ANALOGY]",
+        "[MLU-360-INTERSECT]",
+        "[MLU-360-COUNTERFACTUAL]",
+        "[MLU-360-CAUSAL-WAVE]",
+        "[MLU-360-DIAGNOSE]",
+    )
+
+    def _is_structured_arena_wave(
+        self, q_res: MLMQueryResult, *, has_leading_op: bool = False
+    ) -> bool:
+        """Phase 71: Unified arbitrator identifying whether a 360° Arena query result is a structured multi-wave proof."""
+        tr = q_res.inspectable_trace
+        return (
+            has_leading_op
+            or q_res.status == "REFUTED"
+            or any(tag in tr for tag in self._STRUCTURED_WAVE_TAGS)
+            or ("[MLU-360-PLAN]" in tr and q_res.confidence >= 0.72)
+        )
+
+    def _synthesize_cell_cot_sequences(
+        self,
+        subj: str,
+        pred: str,
+        obj: str,
+        *,
+        mode: str = "direct",
+        hop_str: str = "",
+        analog_source: str = "peer",
+        shared_attractor: str = "subcore",
+    ) -> list[str]:
+        """Phase 70: Synthesize cell-aligned Chain-of-Thought ('think ... answer ...') sequences routed via _predicate_to_neural_cell (0..5)."""
+        s = " ".join(_tokenize_words(subj)).strip()
+        p = pred.lower().replace("_", " ").strip()
+        o = " ".join(_tokenize_words(obj)).strip()
+        if not s or not o:
+            return []
+        sa = "an" if s[0] in "aeiou" else "a"
+        oa = "an" if o[0] in "aeiou" else "a"
+        clean_p = self.frame_policy.operator_canonical_map.get(
+            pred.strip().lower(), pred.strip().lower()
+        )
+        is_disjoint = (
+            clean_p in self.verifier.disjoint_predicates
+            or clean_p in ("disjoint_with", "cannot_be", "different_from", "not_a")
+        )
+        cell_idx, cell_label = self._predicate_to_neural_cell(clean_p)
+
+        if mode == "negated":
+            if cell_idx == 4:
+                return [
+                    f"can {sa} {s} {o}? think 360 non monotonic exception gate refutes {s} on capability spoke answer no {sa} {s} cannot {o}."
+                ]
+            if cell_idx == 1:
+                return [
+                    f"does {sa} {s} have {o}? think 360 non monotonic exception gate refutes {s} on mereology spoke answer no {sa} {s} does not have {o}."
+                ]
+            return [
+                f"does {sa} {s} {p} {o}? think 360 non monotonic exception gate refutes {s} on {cell_label} spoke answer no {sa} {s} does not {p} {o}."
+            ]
+
+        if mode == "sleep_analogical":
+            if cell_idx == 4:
+                return [
+                    f"can {sa} {s} {o}? think 360 sleep analogical capability transfer from {analog_source} via {shared_attractor} answer yes {sa} {s} can {o}."
+                ]
+            if cell_idx == 3:
+                return [
+                    f"where does {sa} {s} live? think 360 sleep analogical spatial transfer from {analog_source} via {shared_attractor} answer {sa} {s} lives in {o}."
+                ]
+            if cell_idx == 1:
+                return [
+                    f"does {sa} {s} have {o}? think 360 sleep analogical mereology transfer from {analog_source} via {shared_attractor} answer yes {sa} {s} has {o}."
+                ]
+            return [
+                f"is {sa} {s} {oa} {o}? think 360 sleep analogical {cell_label} transfer from {analog_source} via {shared_attractor} answer yes {sa} {s} is {oa} {o}."
+            ]
+
+        if mode == "sleep_multihop":
+            chain = hop_str or f"{s} to {o}"
+            if cell_idx == 0 and not is_disjoint:
+                return [
+                    f"is {sa} {s} {oa} {o}? think 360 sleep consolidation traces multi hop taxonomy from {chain} answer yes {sa} {s} is {oa} {o}."
+                ]
+            if cell_idx == 1:
+                return [
+                    f"does {sa} {s} have {o}? think 360 sleep consolidation inherits {o} on mereology spoke from {chain} answer yes {sa} {s} has {o}."
+                ]
+            if cell_idx == 4:
+                return [
+                    f"can {sa} {s} {o}? think 360 sleep consolidation inherits capability {o} from {chain} answer yes {sa} {s} can {o}."
+                ]
+            if cell_idx == 3:
+                return [
+                    f"where is {sa} {s}? think 360 sleep consolidation traces spatial spoke from {chain} answer {sa} {s} is in {o}."
+                ]
+            if cell_idx == 5:
+                return [
+                    f"is {s} {p} {o}? think 360 sleep consolidation traces transitive poset order from {chain} on dynamics spoke answer yes {s} is {p} {o}."
+                ]
+            return []
+
+        # mode == "direct"
+        if is_disjoint:
+            return [
+                f"is a {s} a {o}? think mutual exclusivity gate refutes {s} and {o} answer no a {s} is not a {o}."
+            ]
+        if cell_idx == 0:
+            return [
+                f"is a {s} a {o}? think {s} is a verified taxonomic child of {o} in the 360 spider web answer yes a {s} is a {o}.",
+                f"what is a {s}? think querying 360 taxonomy spoke for {s} answer a {s} is a {o}.",
+            ]
+        if cell_idx == 4:
+            return [
+                f"can a {s} {o}? think checking procedural spoke of {s} for {o} answer yes a {s} can {o}."
+            ]
+        if cell_idx == 1:
+            return [
+                f"does a {s} have {o}? think checking mereology and attribute spokes of {s} for {o} answer yes a {s} has {o}."
+            ]
+        if cell_idx == 2:
+            return [
+                f"what causes {o}? think tracing backward causal spoke to {s} answer {s} causes {o}."
+            ]
+        if cell_idx == 5:
+            return [
+                f"is {s} {p} {o}? think 360 poset order on dynamics spoke confirms {s} {p} {o} answer yes {s} is {p} {o}."
+            ]
+        return [
+            f"tell me about {s}? think activating 360 spokes around {s} answer {s} {p} {o}."
+        ]
+
     def distill_triples_to_neural_mlu(
         self,
         triples: list[tuple[str, str, str]],
@@ -3068,47 +3203,14 @@ class SpiderWebMLM:
         learning_rate: float = 0.04,
         persist: bool = False,
     ) -> dict[str, Any]:
-        """Phase 53: Automatically synthesize Chain-of-Thought ('think ... answer ...') sequences from verified 360° spoke triples and train the Differentiable Neural MLU via Backpropagation + AdamW."""
+        """Phase 53 & 70: Automatically synthesize cell-routed Chain-of-Thought ('think ... answer ...') sequences from verified 360° spoke triples and train the Differentiable Neural MLU via Backpropagation + AdamW."""
         if not triples:
             return {"epochs": 0, "sequences_trained": 0}
         lines: list[str] = []
         for subj, pred, obj in triples:
-            s = subj.lower().replace("_", " ").strip()
-            p = pred.lower().replace("_", " ").strip()
-            o = obj.lower().replace("_", " ").strip()
-            if not s or not o:
-                continue
-            if pred in ("is_a", "subclass_of", "instance_of"):
-                lines.append(
-                    f"is a {s} a {o}? think {s} is a verified taxonomic child of {o} in the 360 spider web answer yes a {s} is a {o}."
-                )
-                lines.append(
-                    f"what is a {s}? think querying 360 taxonomy spoke for {s} answer a {s} is a {o}."
-                )
-            elif pred in ("can", "capable_of"):
-                lines.append(
-                    f"can a {s} {o}? think checking procedural spoke of {s} for {o} answer yes a {s} can {o}."
-                )
-            elif pred in ("has_part", "has_property", "has"):
-                lines.append(
-                    f"does a {s} have {o}? think checking mereology and attribute spokes of {s} for {o} answer yes a {s} has {o}."
-                )
-            elif pred == "causes":
-                lines.append(
-                    f"what causes {o}? think tracing backward causal spoke to {s} answer {s} causes {o}."
-                )
-            elif pred in ("larger_than", "greater_than", "before", "after"):
-                lines.append(
-                    f"is {s} {p} {o}? think 360 poset order on dynamics spoke confirms {s} {p} {o} answer yes {s} is {p} {o}."
-                )
-            elif pred in ("disjoint_with", "cannot_be", "different_from"):
-                lines.append(
-                    f"is a {s} a {o}? think mutual exclusivity gate refutes {s} and {o} answer no a {s} is not a {o}."
-                )
-            else:
-                lines.append(
-                    f"tell me about {s}? think activating 360 spokes around {s} answer {s} {p} {o}."
-                )
+            lines.extend(
+                self._synthesize_cell_cot_sequences(subj, pred, obj, mode="direct")
+            )
         if not lines:
             return {"epochs": 0, "sequences_trained": 0}
         return self.train_neural_mlu(
@@ -3122,29 +3224,14 @@ class SpiderWebMLM:
         learning_rate: float = 0.045,
         persist: bool = False,
     ) -> dict[str, Any]:
-        """Phase 60: Distill non-monotonic exception & belief revision triples into NeuralSpiderWebMlu via Backpropagation + AdamW."""
+        """Phase 60 & 70: Distill non-monotonic exception & belief revision triples into NeuralSpiderWebMlu via cell-routed Backpropagation + AdamW."""
         if not negated_triples:
             return {"epochs": 0, "sequences_trained": 0}
         lines: list[str] = []
         for subj, pred, obj in negated_triples:
-            s = subj.lower().replace("_", " ").strip()
-            p = pred.lower().replace("_", " ").strip()
-            o = obj.lower().replace("_", " ").strip()
-            if not s or not o:
-                continue
-            sa = "an" if s and s[0] in "aeiou" else "a"
-            if pred in ("can", "capable_of"):
-                lines.append(
-                    f"can {sa} {s} {o}? think 360 non monotonic exception gate refutes {s} on capability spoke answer no {sa} {s} cannot {o}."
-                )
-            elif pred in ("has_part", "has_property", "has"):
-                lines.append(
-                    f"does {sa} {s} have {o}? think 360 non monotonic exception gate refutes {s} on mereology spoke answer no {sa} {s} does not have {o}."
-                )
-            else:
-                lines.append(
-                    f"does {sa} {s} {p} {o}? think 360 non monotonic exception gate refutes {s} on dynamics spoke answer no {sa} {s} does not {p} {o}."
-                )
+            lines.extend(
+                self._synthesize_cell_cot_sequences(subj, pred, obj, mode="negated")
+            )
         if not lines:
             return {"epochs": 0, "sequences_trained": 0}
         return self.train_neural_mlu(
@@ -3738,14 +3825,9 @@ class SpiderWebMLM:
             conf = q_res.confidence
 
             if (
-                "[MLU-360-EXPLAIN]" in trace
-                or "[MLU-360-COMPARE]" in trace
-                or "[MLU-360-ORDER]" in trace
-                or "[MLU-360-ANALOGY]" in trace
-                or "[MLU-360-INTERSECT]" in trace
-                or "[MLU-360-COUNTERFACTUAL]" in trace
-                or "[MLU-360-CAUSAL-WAVE]" in trace
-                or status == "REFUTED"
+                self._is_structured_arena_wave(q_res)
+                and "[MLU-360-DIAGNOSE]" not in trace
+                and "[MLU-360-PLAN]" not in trace
             ):
                 neural_grounded = False
 
@@ -3777,20 +3859,8 @@ class SpiderWebMLM:
                     or q_res.focal_concept in "_".join(t.upper() for t in tokens)
                     for t in tokens
                 )
-                is_structured_wave = (
-                    has_leading_op
-                    or status == "REFUTED"
-                    or "[MLU-360-EXPLAIN]" in q_res.inspectable_trace
-                    or "[MLU-360-DIAGNOSE]" in q_res.inspectable_trace
-                    or "[MLU-360-COMPARE]" in q_res.inspectable_trace
-                    or "[MLU-360-ANALOGY]" in q_res.inspectable_trace
-                    or "[MLU-360-INTERSECT]" in q_res.inspectable_trace
-                    or "[MLU-360-COUNTERFACTUAL]" in q_res.inspectable_trace
-                    or "[MLU-360-CAUSAL-WAVE]" in q_res.inspectable_trace
-                    or (
-                        "[MLU-360-PLAN]" in q_res.inspectable_trace
-                        and q_res.confidence >= 0.72
-                    )
+                is_structured_wave = self._is_structured_arena_wave(
+                    q_res, has_leading_op=has_leading_op
                 )
                 if status != "REFUTED" and (
                     status == "UNKNOWN"
@@ -3877,36 +3947,22 @@ class SpiderWebMLM:
                 seen.add(s_line)
                 lines.append(s_line)
 
-        def _art(phrase: str) -> str:
-            return "an" if phrase and phrase[0] in "aeiou" else "a"
-
         # 1. Consolidate analogical curiosity promotions discovered during sleep
         for hyp in promoted_hypotheses or []:
-            s = " ".join(_tokenize_words(str(hyp.get("subject_concept", ""))))
+            s_raw = str(hyp.get("subject_concept", ""))
             pred = str(hyp.get("predicate", "")).lower().strip()
-            o = " ".join(_tokenize_words(str(hyp.get("target_concept", ""))))
+            o_raw = str(hyp.get("target_concept", ""))
             src = " ".join(_tokenize_words(str(hyp.get("analog_source", "")))) or "peer"
             hub = " ".join(_tokenize_words(str(hyp.get("shared_attractor", "")))) or "subcore"
-            if not s or not pred or not o:
-                continue
-            sa = _art(s)
-            oa = _art(o)
-            if pred in ("can", "capable_of"):
-                _add_line(
-                    f"can {sa} {s} {o}? think 360 sleep analogical capability transfer from {src} via {hub} answer yes {sa} {s} can {o}."
-                )
-            elif pred in ("located_in", "lives_in", "orbits"):
-                _add_line(
-                    f"where does {sa} {s} live? think 360 sleep analogical spatial transfer from {src} via {hub} answer {sa} {s} lives in {o}."
-                )
-            elif pred in ("has_part", "has_property", "has"):
-                _add_line(
-                    f"does {sa} {s} have {o}? think 360 sleep analogical mereology transfer from {src} via {hub} answer yes {sa} {s} has {o}."
-                )
-            else:
-                _add_line(
-                    f"is {sa} {s} {oa} {o}? think 360 sleep analogical taxonomy transfer from {src} via {hub} answer yes {sa} {s} is {oa} {o}."
-                )
+            for seq in self._synthesize_cell_cot_sequences(
+                s_raw,
+                pred,
+                o_raw,
+                mode="sleep_analogical",
+                analog_source=src,
+                shared_attractor=hub,
+            ):
+                _add_line(seq)
 
         # 2. Consolidate multi-hop (>= 2 hops) transitive deductions across active concepts
         candidate_units = sorted(
@@ -3929,7 +3985,6 @@ class SpiderWebMLM:
             }
             preds, activated = self._collect_360_predictions(unit, max_hops=5)
             s = " ".join(_tokenize_words(unit.concept_id))
-            sa = _art(s)
             hop_nodes = [
                 " ".join(_tokenize_words(c))
                 for c in activated
@@ -3945,29 +4000,15 @@ class SpiderWebMLM:
                 o = " ".join(_tokenize_words(p.target_concept))
                 if not s or not o:
                     continue
-                oa = _art(o)
                 hop_str = " to ".join(hop_nodes) if len(hop_nodes) >= 2 else f"{s} to {o}"
-                if p.predicate in ("is_a", "subclass_of", "instance_of"):
-                    _add_line(
-                        f"is {sa} {s} {oa} {o}? think 360 sleep consolidation traces multi hop taxonomy from {hop_str} answer yes {sa} {s} is {oa} {o}."
-                    )
-                elif p.predicate in ("has_part", "has_property", "has"):
-                    _add_line(
-                        f"does {sa} {s} have {o}? think 360 sleep consolidation inherits {o} on mereology spoke from {hop_str} answer yes {sa} {s} has {o}."
-                    )
-                elif p.predicate in ("can", "capable_of"):
-                    _add_line(
-                        f"can {sa} {s} {o}? think 360 sleep consolidation inherits capability {o} from {hop_str} answer yes {sa} {s} can {o}."
-                    )
-                elif p.predicate in ("located_in", "lives_in", "orbits"):
-                    _add_line(
-                        f"where is {sa} {s}? think 360 sleep consolidation traces spatial spoke from {hop_str} answer {sa} {s} is in {o}."
-                    )
-                elif p.predicate in ("larger_than", "greater_than", "before", "after"):
-                    pred_w = p.predicate.replace("_", " ")
-                    _add_line(
-                        f"is {s} {pred_w} {o}? think 360 sleep consolidation traces transitive poset order from {hop_str} on dynamics spoke answer yes {s} is {pred_w} {o}."
-                    )
+                for seq in self._synthesize_cell_cot_sequences(
+                    unit.concept_id,
+                    p.predicate,
+                    p.target_concept,
+                    mode="sleep_multihop",
+                    hop_str=hop_str,
+                ):
+                    _add_line(seq)
 
             # 3. Consolidate multi-hop causal wave cascades
             has_causal = any(

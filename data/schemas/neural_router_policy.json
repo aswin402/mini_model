@@ -11,6 +11,19 @@
   ],
   "entropy_threshold": 0.35,
   "uncertainty_margin": 0.15,
+  "generic_words": [
+    "who", "what", "is", "are", "you", "your", "today", "can",
+    "the", "a", "an", "or", "by", "in", "on", "of", "for", "to",
+    "with", "and", "me", "my", "please"
+  ],
+  "code_intent_phrases": [
+    "write code", "generate code", "python code", "write a function",
+    "synthesize code", "implement", "code for", "code to", "python function",
+    "program to", "script to"
+  ],
+  "code_intent_tokens": [
+    "code", "function", "write", "generate", "synthesize", "implement", "script", "program"
+  ],
   "semantic_clusters": {
     "math": [
       "add", "plus", "sum", "subtract", "minus", "difference",

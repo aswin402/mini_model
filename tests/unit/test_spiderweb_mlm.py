@@ -1701,3 +1701,80 @@ def test_spiderweb_mlm_phase68_zero_regex_across_entire_codebase(
         assert "don't have that information" in res_unk.lower() or "unknown" in res_unk.lower()
         kernel.mlm.close()
 
+
+def test_spiderweb_mlm_phase69_to_71_online_router_feedback_and_cell_cot_synthesis(
+    tmp_path,
+) -> None:
+    """Verify Phases 69-71: Policy-driven code/generic-word routing, online NeuralRouter feedback in CognitiveKernel, cell-routed CoT synthesis (_synthesize_cell_cot_sequences), and unified structured wave arbitration (_is_structured_arena_wave)."""
+    from little.core.kernel import CognitiveKernel
+    from little.mlu.spiderweb_net import MLMQueryResult
+    from little.neural import Pathway
+
+    db_file = str(tmp_path / "phase69_71_unified.db")
+    with MemoryStore(db_file, seed_ontology=True) as mem:
+        kernel = CognitiveKernel(mem, workspace_root=tmp_path)
+
+        # Phase 69a: Verify NeuralRouterPolicy provides generic_words and is_code_intent without hardcoded kernel tuples
+        policy = kernel.neural_router.policy
+        assert "the" in policy.generic_words
+        assert policy.is_code_intent("write a function to compute fibonacci", "code")
+        assert not policy.is_code_intent("Is a dog an animal?", "chat")
+
+        # Phase 69b: Verify online self-supervised NeuralRouter learning inside CognitiveKernel
+        story_query = (
+            "Sarah has 15 apples. She gives 4 apples to Bob. How many apples does Sarah have now?"
+        )
+        before_route = kernel.neural_router.route(story_query)
+        before_math_prob = before_route.probabilities[Pathway.MATH]
+        res_math = kernel.chat(story_query)
+        assert "11" in res_math
+        after_route = kernel.neural_router.route(story_query)
+        assert after_route.probabilities[Pathway.MATH] > before_math_prob
+
+        # Phase 70: Verify _synthesize_cell_cot_sequences routes across all 6 neural cells + modes
+        mlm = kernel.mlm
+        cot_tax = mlm._synthesize_cell_cot_sequences("falcon", "is_a", "bird", mode="direct")
+        assert len(cot_tax) == 2 and "taxonomic child" in cot_tax[0]
+
+        cot_cap = mlm._synthesize_cell_cot_sequences("falcon", "capable_of", "dive", mode="direct")
+        assert len(cot_cap) == 1 and "procedural spoke" in cot_cap[0]
+
+        cot_neg = mlm._synthesize_cell_cot_sequences("penguin", "can", "fly", mode="negated")
+        assert len(cot_neg) == 1 and "capability spoke" in cot_neg[0]
+
+        cot_ana = mlm._synthesize_cell_cot_sequences(
+            "dolphin",
+            "lives_in",
+            "ocean",
+            mode="sleep_analogical",
+            analog_source="orca",
+            shared_attractor="cetacean",
+        )
+        assert len(cot_ana) == 1 and "spatial transfer" in cot_ana[0]
+
+        cot_hop = mlm._synthesize_cell_cot_sequences(
+            "jupiter",
+            "larger_than",
+            "mars",
+            mode="sleep_multihop",
+            hop_str="jupiter to saturn to mars",
+        )
+        assert len(cot_hop) == 1 and "dynamics spoke" in cot_hop[0]
+
+        # Phase 71: Verify _is_structured_arena_wave arbitrator
+        dummy_wave = MLMQueryResult(
+            query="Why?",
+            focal_concept="FALCON",
+            status="VERIFIED",
+            answer="Because falcon is a bird.",
+            confidence=0.92,
+            epistemic_entropy=0.08,
+            active_subcore="SUBCORE_TAXONOMY",
+            activated_mlus=["FALCON", "BIRD"],
+            spoke_predictions=[],
+            inspectable_trace="[MLU-360-EXPLAIN] hops=1 | proof=FALCON -> BIRD",
+            fluent_english="Because falcon is a bird.",
+        )
+        assert mlm._is_structured_arena_wave(dummy_wave) is True
+        mlm.close()
+
