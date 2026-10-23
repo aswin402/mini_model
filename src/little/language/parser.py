@@ -6,8 +6,8 @@ a monolithic LLM, and dispatches learning and inference operations.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 from little.core.contracts import (
@@ -31,7 +31,7 @@ from little.core.runtime_policy import RuntimePolicy
 from little.dynamics.cfc import ContinuousDynamicsEngine
 from little.inference.engine import InferenceEngine
 from little.inference.invariant_gates import DeepSeekInvariantVerifier
-from little.language.construction import ConstructionEngine
+from little.language.construction import ConstructionEngine, _replace_word_boundary_ci
 from little.language.dialogue import DialogueContext
 from little.language.dialogue_surface import DialogueSurfaceEngine
 from little.language.math_policy import MathCapture
@@ -41,6 +41,331 @@ from little.memory.store import MemoryStore
 from little.procedural.math_cas import UnitConversionGraph
 from little.procedural.runner import SkillRunner
 from little.procedural.skills import register_builtin_skills
+
+
+def _is_word_char(ch: str) -> bool:
+    return ch.isalnum() or ch == "_"
+
+
+def _escape_pattern_lit(text: str) -> str:
+    specials = set(r"\.^$*+?()[]|")
+    return "".join(f"\\{ch}" if ch in specials else ch for ch in text)
+
+
+class _PolicyMatch:
+    """Result of matching a policy grammar pattern without regex."""
+
+    def __init__(
+        self, text: str, start: int, end: int, groups: dict[int, str]
+    ) -> None:
+        self._text = text
+        self._start = start
+        self._end = end
+        self._groups = groups
+
+    def group(self, idx: int = 0) -> str:
+        if idx == 0:
+            return self._text[self._start : self._end]
+        return self._groups.get(idx, "")
+
+    def start(self) -> int:
+        return self._start
+
+    def end(self) -> int:
+        return self._end
+
+
+@lru_cache(maxsize=512)
+def _compile_policy_pattern(pat: str) -> tuple[Any, ...]:
+    """Compile a declarative policy pattern string into a recursive-descent AST."""
+    n = len(pat)
+    group_counter = [0]
+
+    def parse_char_class(i: int) -> tuple[tuple[Any, ...], int]:
+        negated = False
+        if i < n and pat[i] == "^":
+            negated = True
+            i += 1
+        chars: set[str] = set()
+        preds: list[str] = []
+        while i < n and pat[i] != "]":
+            if pat[i] == "\\" and i + 1 < n:
+                esc = pat[i + 1]
+                if esc == "s":
+                    preds.append("space")
+                elif esc == "d":
+                    preds.append("digit")
+                elif esc == "w":
+                    preds.append("word")
+                else:
+                    chars.add(esc)
+                i += 2
+            elif i + 2 < n and pat[i + 1] == "-" and pat[i + 2] != "]":
+                c1, c2 = pat[i], pat[i + 2]
+                for code in range(ord(c1), ord(c2) + 1):
+                    chars.add(chr(code))
+                i += 3
+            else:
+                chars.add(pat[i])
+                i += 1
+        if i < n and pat[i] == "]":
+            i += 1
+        chars_lower = frozenset(c.lower() for c in chars)
+        return ("class", negated, frozenset(chars), chars_lower, tuple(preds)), i
+
+    def parse_atom(i: int) -> tuple[tuple[Any, ...], int]:
+        ch = pat[i]
+        if ch == "^":
+            return ("start",), i + 1
+        if ch == "$":
+            return ("end",), i + 1
+        if ch == ".":
+            return ("any",), i + 1
+        if ch == "[":
+            return parse_char_class(i + 1)
+        if ch == "(":
+            if pat[i : i + 3] == "(?:":
+                branches, nxt = parse_alt(i + 3)
+                if nxt < n and pat[nxt] == ")":
+                    nxt += 1
+                return ("group", None, branches, False), nxt
+            if pat[i : i + 3] == "(?=":
+                branches, nxt = parse_alt(i + 3)
+                if nxt < n and pat[nxt] == ")":
+                    nxt += 1
+                return ("group", None, branches, True), nxt
+            group_counter[0] += 1
+            gid = group_counter[0]
+            branches, nxt = parse_alt(i + 1)
+            if nxt < n and pat[nxt] == ")":
+                nxt += 1
+            return ("group", gid, branches, False), nxt
+        if ch == "\\" and i + 1 < n:
+            esc = pat[i + 1]
+            if esc == "b":
+                return ("boundary",), i + 2
+            if esc == "s":
+                return ("pred", "space"), i + 2
+            if esc == "d":
+                return ("pred", "digit"), i + 2
+            if esc == "w":
+                return ("pred", "word"), i + 2
+            return ("lit", esc), i + 2
+        return ("lit", ch), i + 1
+
+    def parse_seq(i: int) -> tuple[tuple[Any, ...], int]:
+        seq: list[tuple[Any, ...]] = []
+        while i < n and pat[i] not in "|)":
+            atom, i = parse_atom(i)
+            if i < n and pat[i] in "?*+":
+                q = pat[i]
+                i += 1
+                greedy = True
+                if i < n and pat[i] == "?":
+                    greedy = False
+                    i += 1
+                min_c = 0 if q in "?*" else 1
+                max_c = 1 if q == "?" else None
+                atom = ("repeat", atom, min_c, max_c, greedy)
+            seq.append(atom)
+        return tuple(seq), i
+
+    def parse_alt(i: int) -> tuple[tuple[Any, ...], int]:
+        branches: list[tuple[Any, ...]] = []
+        while True:
+            seq, i = parse_seq(i)
+            branches.append(seq)
+            if i < n and pat[i] == "|":
+                i += 1
+            else:
+                break
+        return tuple(branches), i
+
+    branches, _ = parse_alt(0)
+    return ("group", None, branches, False)
+
+
+def _eval_node(
+    node: tuple[Any, ...],
+    text: str,
+    pos: int,
+    groups: dict[int, str],
+    ci: bool,
+):
+    kind = node[0]
+    n = len(text)
+    if kind == "start":
+        if pos == 0:
+            yield pos, groups
+        return
+    if kind == "end":
+        if pos == n:
+            yield pos, groups
+        return
+    if kind == "boundary":
+        left_w = pos > 0 and _is_word_char(text[pos - 1])
+        right_w = pos < n and _is_word_char(text[pos])
+        if left_w != right_w:
+            yield pos, groups
+        return
+    if kind == "any":
+        if pos < n and text[pos] != "\n":
+            yield pos + 1, groups
+        return
+    if kind == "lit":
+        ch = node[1]
+        if pos < n:
+            tc = text[pos]
+            if (tc.lower() == ch.lower()) if ci else (tc == ch):
+                yield pos + 1, groups
+        return
+    if kind == "pred":
+        p = node[1]
+        if pos < n:
+            tc = text[pos]
+            if (
+                (p == "space" and tc.isspace())
+                or (p == "digit" and tc.isdigit())
+                or (p == "word" and _is_word_char(tc))
+            ):
+                yield pos + 1, groups
+        return
+    if kind == "class":
+        _, negated, chars, chars_lower, preds = node
+        if pos < n:
+            tc = text[pos]
+            in_set = (tc.lower() in chars_lower) if ci else (tc in chars)
+            if not in_set and preds:
+                for p in preds:
+                    if (
+                        (p == "space" and tc.isspace())
+                        or (p == "digit" and tc.isdigit())
+                        or (p == "word" and _is_word_char(tc))
+                    ):
+                        in_set = True
+                        break
+            if in_set != negated:
+                yield pos + 1, groups
+        return
+    if kind == "group":
+        _, gid, branches, lookahead = node
+        for branch in branches:
+            if lookahead:
+                for _, new_g in _eval_seq(branch, 0, text, pos, groups, ci):
+                    yield pos, new_g
+                    break
+            else:
+                for end_pos, new_g in _eval_seq(branch, 0, text, pos, groups, ci):
+                    if gid is not None:
+                        g2 = dict(new_g)
+                        g2[gid] = text[pos:end_pos]
+                        yield end_pos, g2
+                    else:
+                        yield end_pos, new_g
+        return
+    if kind == "repeat":
+        _, child, min_c, max_c, greedy = node
+
+        def _step(cur_pos: int, cur_g: dict[int, str], count: int):
+            if not greedy and count >= min_c:
+                yield cur_pos, cur_g
+            if max_c is None or count < max_c:
+                for nxt_pos, nxt_g in _eval_node(child, text, cur_pos, cur_g, ci):
+                    if nxt_pos == cur_pos and count >= min_c:
+                        continue
+                    yield from _step(nxt_pos, nxt_g, count + 1)
+            if greedy and count >= min_c:
+                yield cur_pos, cur_g
+
+        yield from _step(pos, groups, 0)
+
+
+def _eval_seq(
+    seq: tuple[Any, ...],
+    idx: int,
+    text: str,
+    pos: int,
+    groups: dict[int, str],
+    ci: bool,
+):
+    if idx == len(seq):
+        yield pos, groups
+        return
+    for nxt_pos, nxt_g in _eval_node(seq[idx], text, pos, groups, ci):
+        yield from _eval_seq(seq, idx + 1, text, nxt_pos, nxt_g, ci)
+
+
+def _match_pattern(pat: str, text: str, ci: bool = True) -> _PolicyMatch | None:
+    if not pat:
+        return None
+    ast_root = _compile_policy_pattern(pat)
+    for end_pos, groups in _eval_node(ast_root, text, 0, {}, ci):
+        return _PolicyMatch(text, 0, end_pos, groups)
+    return None
+
+
+def _search_pattern(pat: str, text: str, ci: bool = True) -> _PolicyMatch | None:
+    if not pat:
+        return None
+    ast_root = _compile_policy_pattern(pat)
+    for start_pos in range(len(text) + 1):
+        for end_pos, groups in _eval_node(ast_root, text, start_pos, {}, ci):
+            return _PolicyMatch(text, start_pos, end_pos, groups)
+    return None
+
+
+def _split_pattern(pat: str, text: str, ci: bool = True) -> list[str]:
+    if not pat or not text:
+        return [text]
+    ast_root = _compile_policy_pattern(pat)
+    out: list[str] = []
+    n = len(text)
+    last = 0
+    pos = 0
+    while pos <= n:
+        matched_end = -1
+        for end_pos, _ in _eval_node(ast_root, text, pos, {}, ci):
+            if end_pos > pos:
+                matched_end = end_pos
+                break
+        if matched_end != -1:
+            out.append(text[last:pos])
+            last = matched_end
+            pos = matched_end
+        else:
+            pos += 1
+    out.append(text[last:])
+    return out
+
+
+def _sub_pattern(pat: str, repl: str, text: str, ci: bool = True) -> str:
+    if not pat or not text:
+        return text
+    ast_root = _compile_policy_pattern(pat)
+    out: list[str] = []
+    n = len(text)
+    last = 0
+    pos = 0
+    while pos <= n:
+        matched_end = -1
+        matched_groups: dict[int, str] = {}
+        for end_pos, groups in _eval_node(ast_root, text, pos, {}, ci):
+            if end_pos > pos:
+                matched_end = end_pos
+                matched_groups = groups
+                break
+        if matched_end != -1:
+            out.append(text[last:pos])
+            formatted = repl
+            for gid, gval in matched_groups.items():
+                formatted = formatted.replace(f"\\{gid}", gval)
+            out.append(formatted)
+            last = matched_end
+            pos = matched_end
+        else:
+            pos += 1
+    out.append(text[last:])
+    return "".join(out)
 
 
 @dataclass
@@ -194,8 +519,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
     def normalize_text(cls, text: str) -> str:
         s = text.strip()
         for source, replacement in cls._policy().normalization_replacements:
-            token_pattern = rf"(?<!\w){re.escape(source)}(?!\w)"
-            s = re.sub(token_pattern, replacement, s, flags=re.IGNORECASE)
+            s = _replace_word_boundary_ci(s, source, replacement)
 
         # Isolated greetings must NOT be stripped away to empty
         if s.lower() in cls._policy().isolated_greetings:
@@ -204,23 +528,26 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         # Conversational discourse markers e.g. "so what is 10+10", "hey what can u do", "well tell me..."
         protected = cls._policy().protected_discourse_prefixes
         if not any(
-            re.match(rf"^{re.escape(prefix)}\b", s, re.IGNORECASE)
+            _match_pattern(rf"^{_escape_pattern_lit(prefix)}\b", s, ci=True)
             for prefix in protected
         ):
-            markers = "|".join(re.escape(marker) for marker in cls._policy().discourse_markers)
-            s = re.sub(
+            markers = "|".join(
+                _escape_pattern_lit(marker)
+                for marker in cls._policy().discourse_markers
+            )
+            s = _sub_pattern(
                 rf"^(?:(?:{markers})\b[\s,]*)+",
                 "",
                 s,
-                flags=re.IGNORECASE,
+                ci=True,
             ).strip()
 
         # Conversational polite prefixes e.g. "Can you calculate ...", "Could you please tell me ...", "Do you know ..."
-        s = re.sub(
+        s = _sub_pattern(
             cls._policy().polite_prefix_pattern,
             "",
             s,
-            flags=re.IGNORECASE,
+            ci=True,
         ).strip()
         return s
 
@@ -253,16 +580,20 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
 
         anaphora = cls._policy().anaphora
         for guard_pattern in anaphora.guard_patterns:
-            if re.match(guard_pattern, s, re.IGNORECASE):
+            if _match_pattern(guard_pattern, s, ci=True):
                 return s
 
         for pattern in anaphora.patterns:
-            flags = re.IGNORECASE if pattern.case_insensitive else 0
             replacement = pattern.replacement.format(
                 subject=last_subject,
                 object=last_object or "",
             )
-            s = re.sub(pattern.pattern, replacement, s, flags=flags)
+            s = _sub_pattern(
+                pattern.pattern,
+                replacement,
+                s,
+                ci=pattern.case_insensitive,
+            )
         return s
 
     @classmethod
@@ -270,10 +601,18 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         raw_lower = text.strip().lower().rstrip(".?!,")
         if raw_lower in cls._policy().leading_articles:
             return ""
-        articles = "|".join(
-            re.escape(article) for article in cls._policy().leading_articles
-        )
-        s = re.sub(rf"^(?:{articles})\s+", "", raw_lower).strip()
+        s = raw_lower
+        for article in sorted(
+            cls._policy().leading_articles, key=len, reverse=True
+        ):
+            art_l = article.lower()
+            if (
+                s.startswith(art_l)
+                and len(s) > len(art_l)
+                and s[len(art_l)].isspace()
+            ):
+                s = s[len(art_l) :].strip()
+                break
         if not s:
             return ""
         if s in cls._policy().irregular_plurals:
@@ -321,8 +660,8 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
                 return None
             clauses = [
                 clause.strip()
-                for clause in re.split(
-                    pattern.delimiter_pattern, text, flags=re.IGNORECASE
+                for clause in _split_pattern(
+                    pattern.delimiter_pattern, text, ci=True
                 )
                 if clause.strip()
             ]
@@ -349,7 +688,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
                 or pattern.body_group is None
             ):
                 return None
-            match = re.match(pattern.pattern, text, re.IGNORECASE)
+            match = _match_pattern(pattern.pattern, text, ci=True)
             if match is None:
                 return None
 
@@ -390,10 +729,10 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
 
             clauses = [
                 clause.strip()
-                for clause in re.split(
+                for clause in _split_pattern(
                     pattern.clause_delimiter_pattern,
                     match.group(pattern.body_group).strip(),
-                    flags=re.IGNORECASE,
+                    ci=True,
                 )
                 if clause.strip()
             ]
@@ -559,7 +898,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
     ) -> tuple[str, str, dict[str, Any]] | None:
         """Apply configured arithmetic patterns and convert their captures."""
         for pattern in cls._math_patterns().patterns:
-            match = re.match(pattern.pattern, text, re.IGNORECASE)
+            match = _match_pattern(pattern.pattern, text, ci=True)
             if match is None:
                 continue
             try:
@@ -612,7 +951,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         """Apply one data-defined semantic pattern that needs a token boundary."""
         if pattern.split_strategy is None or pattern.body_group is None:
             return None
-        match = re.match(pattern.pattern, text, re.IGNORECASE)
+        match = _match_pattern(pattern.pattern, text, ci=True)
         if match is None:
             return None
         body = (match.group(pattern.body_group) or "").strip()
@@ -735,7 +1074,10 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
     ) -> tuple[str, str, Any] | None:
         """Extract (subject, predicate, target) from natural English questions."""
         q = cls.normalize_text(text).rstrip("?").strip()
-        if q.endswith(".") or q.endswith("!") and not re.search(r"\d+!$", q):
+        if q.endswith(".") or (
+            q.endswith("!")
+            and not (len(q) >= 2 and q[-2].isdigit())
+        ):
             q = q[:-1].strip()
         for pattern in cls._question_prefix_patterns().patterns:
             if pattern.strategy != "prefix_delegate":
@@ -743,11 +1085,13 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             prefixes = getattr(cls._policy(), pattern.prefix_source)
             if not prefixes:
                 continue
-            prefix_pattern = "|".join(re.escape(prefix) for prefix in prefixes)
-            match = re.match(
+            prefix_pattern = "|".join(
+                _escape_pattern_lit(prefix) for prefix in prefixes
+            )
+            match = _match_pattern(
                 rf"^(?:{prefix_pattern}){pattern.separator_pattern}(.+)$",
                 q,
-                re.IGNORECASE,
+                ci=True,
             )
             if match is None:
                 continue
@@ -759,9 +1103,9 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         for pattern in cls._indirect_question_patterns().patterns:
             if pattern.strategy != "embedded_polar":
                 continue
-            match = re.match(pattern.pattern, q, re.IGNORECASE)
-            if match is None or re.search(
-                pattern.exclusion_pattern, q, re.IGNORECASE
+            match = _match_pattern(pattern.pattern, q, ci=True)
+            if match is None or _search_pattern(
+                pattern.exclusion_pattern, q, ci=True
             ):
                 continue
             inner = match.group(pattern.body_group).strip()
@@ -769,8 +1113,8 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
             if stmt_triples:
                 triple = stmt_triples[0]
                 return (triple.subject, triple.predicate, triple.object_)
-            inverse_match = re.match(
-                pattern.inverse_pattern, inner, re.IGNORECASE
+            inverse_match = _match_pattern(
+                pattern.inverse_pattern, inner, ci=True
             )
             if inverse_match:
                 inv_q = " ".join(
@@ -787,7 +1131,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
                     return sub_parsed
 
         for pattern in cls._question_patterns().patterns:
-            if re.match(pattern.pattern, q, re.IGNORECASE):
+            if _match_pattern(pattern.pattern, q, ci=True):
                 return (pattern.subject, pattern.predicate, pattern.target)
 
         configured_math = cls._parse_configured_math(q)
@@ -805,7 +1149,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
 
         # 2. Temporal continuous-time routes are defined by the versioned catalog.
         for pattern in cls._temporal_patterns().patterns:
-            match = re.match(pattern.pattern, q, re.IGNORECASE)
+            match = _match_pattern(pattern.pattern, q, ci=True)
             if match:
                 subject = cls.clean_noun(match.group(pattern.subject_group))
                 duration = (
@@ -818,7 +1162,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         for pattern in cls._semantic_patterns().patterns:
             if pattern.split_strategy is not None:
                 continue
-            match = re.match(pattern.pattern, q, re.IGNORECASE)
+            match = _match_pattern(pattern.pattern, q, ci=True)
             if match is None:
                 continue
 
@@ -914,7 +1258,7 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
 
         # 6. Concept-definition routes are defined by the versioned catalog.
         for pattern in cls._definition_patterns().patterns:
-            match = re.match(pattern.pattern, q, re.IGNORECASE)
+            match = _match_pattern(pattern.pattern, q, ci=True)
             if match is None:
                 continue
             target_noun = cls.clean_noun(match.group(pattern.subject_group))
@@ -947,15 +1291,15 @@ class SimpleParser(metaclass=_ParserPolicyCompatibilityMeta):
         for pattern in cls._compound_question_patterns().patterns:
             if pattern.strategy != "delimiter":
                 continue
-            flags = re.IGNORECASE if pattern.case_insensitive else 0
+            ci = pattern.case_insensitive
             source = clean
             if pattern.terminal_suffix and source.endswith(pattern.terminal_suffix):
                 source = source[: -len(pattern.terminal_suffix)]
-            if re.search(pattern.pattern, source, flags=flags) is None:
+            if _search_pattern(pattern.pattern, source, ci=ci) is None:
                 continue
             parts = [
                 part.strip()
-                for part in re.split(pattern.pattern, clean, flags=flags)
+                for part in _split_pattern(pattern.pattern, clean, ci=ci)
                 if part.strip()
             ]
             if len(parts) > 1:
@@ -1158,24 +1502,26 @@ class LearningEngine:
         text = frame.source_text
 
         # Check for comparative assertion statement (strict partial orders)
-        from little.language.comparative import ComparativeOrderReasoner
+        from little.language.comparative import (
+            ComparativeOrderReasoner,
+            _parse_comparative_statement,
+            _split_comparative_clauses,
+        )
 
         comp_reasoner = ComparativeOrderReasoner(self.memory)
-        comp_sentences = [s.strip() for s in re.split(r"[.;\n]|,\s*(?:and\s+)?", text) if s.strip()]
+        comp_sentences = _split_comparative_clauses(text)
         comparative_matches: list[tuple[str, str, str]] = []
         for s in comp_sentences:
-            for pat in comp_reasoner.policy.statement_patterns:
-                m_comp = re.search(pat, s, re.IGNORECASE)
-                if m_comp:
-                    e_a, comp_w, e_b = m_comp.group(1).strip(), m_comp.group(2).strip(), m_comp.group(3).strip()
-                    if comp_reasoner.policy.find_dimension_by_comparative(comp_w):
-                        comparative_matches.append((e_a, comp_w, e_b))
-                        break
+            parsed_comp = _parse_comparative_statement(s)
+            if parsed_comp:
+                e_a, comp_w, e_b = parsed_comp
+                if comp_reasoner.policy.find_dimension_by_comparative(comp_w):
+                    comparative_matches.append((e_a, comp_w, e_b))
         if comparative_matches:
             created_concepts = set()
             created_rels: list[str] = []
             for e_a, comp_w, e_b in comparative_matches:
-                success, msg = comp_reasoner.assert_comparison(e_a, e_b, comp_w)
+                success, _msg = comp_reasoner.assert_comparison(e_a, e_b, comp_w)
                 if success:
                     created_concepts.update([e_a, e_b])
                     created_rels.append(f"({e_a} {comp_w}_than {e_b})")

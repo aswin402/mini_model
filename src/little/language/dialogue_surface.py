@@ -6,11 +6,169 @@ into warm, articulate, human-like dialogue governed by externalized schemas.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from little.core.models import BeliefStatus, InferenceResult, LearningResult
 from little.language.dialogue_surface_policy import DialogueSurfacePolicy
+
+
+def _is_word_char(ch: str) -> bool:
+    return ch.isalnum() or ch == "_"
+
+
+def _split_sentence_punct(text: str) -> list[str]:
+    out: list[str] = []
+    cur: list[str] = []
+    for ch in text:
+        if ch in ".!?":
+            s = "".join(cur).strip()
+            if s:
+                out.append(s)
+            cur = []
+        else:
+            cur.append(ch)
+    tail = "".join(cur).strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
+def _find_word_phrase_ci(text: str, phrase: str, start: int = 0) -> int:
+    if not text or not phrase:
+        return -1
+    t_low = text.lower()
+    p_low = phrase.lower()
+    p_len = len(p_low)
+    n = len(text)
+    i = start
+    while i <= n - p_len:
+        idx = t_low.find(p_low, i)
+        if idx == -1:
+            return -1
+        end = idx + p_len
+        left_ok = idx == 0 or not _is_word_char(text[idx - 1])
+        right_ok = end == n or not _is_word_char(text[end])
+        if left_ok and right_ok:
+            return idx
+        i = idx + 1
+    return -1
+
+
+def _split_word_ci(text: str, word: str) -> list[str]:
+    out: list[str] = []
+    last = 0
+    w_len = len(word)
+    idx = _find_word_phrase_ci(text, word, 0)
+    while idx != -1:
+        seg = text[last:idx].strip()
+        if seg:
+            out.append(seg)
+        last = idx + w_len
+        idx = _find_word_phrase_ci(text, word, last)
+    tail = text[last:].strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
+def _strip_leading_article(text: str) -> str:
+    s = text.strip()
+    low = s.lower()
+    for art in ("the ", "an ", "a "):
+        if low.startswith(art):
+            return s[len(art) :].strip()
+    return s
+
+
+def _match_has_question(query: str) -> tuple[str, str] | None:
+    q = query.strip().rstrip("?").strip()
+    tokens = q.split()
+    if len(tokens) < 3 or tokens[0].lower() not in ("does", "has"):
+        return None
+    low_tokens = [t.lower() for t in tokens]
+    for i in range(1, len(tokens) - 1):
+        if low_tokens[i] in ("have", "has"):
+            subj = _strip_leading_article(" ".join(tokens[1:i]))
+            feat = _strip_leading_article(" ".join(tokens[i + 1 :]))
+            if subj and feat:
+                return subj, feat
+    return None
+
+
+def _match_is_question(query: str) -> tuple[str, str] | None:
+    q = query.strip().rstrip("?").strip()
+    tokens = q.split()
+    if len(tokens) < 3 or tokens[0].lower() != "is":
+        return None
+    rest = _strip_leading_article(" ".join(tokens[1:]))
+    rest_tokens = rest.split()
+    if len(rest_tokens) < 2:
+        return None
+    low_rest = [t.lower() for t in rest_tokens]
+    for i in range(1, len(rest_tokens)):
+        if low_rest[i] in ("a", "an", "the") and i + 1 < len(rest_tokens):
+            subj = " ".join(rest_tokens[:i]).strip()
+            target = " ".join(rest_tokens[i + 1 :]).strip()
+            if subj and target:
+                return subj, target
+    return " ".join(rest_tokens[:-1]).strip(), rest_tokens[-1].strip()
+
+
+def _match_can_question(query: str) -> tuple[str, str] | None:
+    q = query.strip().rstrip("?").strip()
+    tokens = q.split()
+    if len(tokens) < 3 or tokens[0].lower() != "can":
+        return None
+    rest = _strip_leading_article(" ".join(tokens[1:]))
+    rest_tokens = rest.split()
+    if len(rest_tokens) < 2:
+        return None
+    return " ".join(rest_tokens[:-1]).strip(), rest_tokens[-1].strip()
+
+
+def _extract_unknown_query_subject(query: str) -> str:
+    q = query.strip().rstrip("?").strip()
+    low = q.lower()
+    prefixes = (
+        "what color is ",
+        "where does ",
+        "where is ",
+        "what is ",
+        "does ",
+        "can ",
+        "is ",
+    )
+    body = ""
+    for pref in prefixes:
+        idx = low.find(pref)
+        if idx != -1 and (idx == 0 or not _is_word_char(q[idx - 1])):
+            body = q[idx + len(pref) :].strip()
+            break
+    if not body:
+        return "that concept"
+    body = _strip_leading_article(body)
+    stop_words = {
+        "a",
+        "an",
+        "the",
+        "have",
+        "in",
+        "on",
+        "at",
+        "can",
+        "fly",
+        "swim",
+        "live",
+        "color",
+    }
+    toks = body.split()
+    kept: list[str] = []
+    for t in toks:
+        if kept and t.lower() in stop_words:
+            break
+        kept.append(t)
+    res = " ".join(kept).strip()
+    return res if res else "that concept"
 
 
 class DialogueSurfaceEngine:
@@ -37,9 +195,9 @@ class DialogueSurfaceEngine:
             _, response = matched
             return response
 
-        clauses = [p.strip() for p in re.split(r"[.!?]+", text) if p.strip()]
-        if len(clauses) <= 1 and re.search(r"\band\b", text, re.IGNORECASE):
-            and_clauses = [p.strip() for p in re.split(r"\band\b", text, flags=re.IGNORECASE) if p.strip()]
+        clauses = _split_sentence_punct(text)
+        if len(clauses) <= 1 and _find_word_phrase_ci(text, "and") != -1:
+            and_clauses = _split_word_ci(text, "and")
             if len(and_clauses) > 1 and all(self.policy.match_social_intent(c) for c in and_clauses):
                 clauses = and_clauses
 
@@ -111,17 +269,28 @@ class DialogueSurfaceEngine:
             return text
 
         first = parts[0]
-        m = re.match(r"^([a-zA-Z0-9_\s-]+?)\s+(is(?:\s+a)?\s+.+)$", first, re.IGNORECASE)
-        if not m:
+        first_low = first.lower()
+        is_idx = first_low.find(" is ")
+        if is_idx == -1:
             return text
 
-        subj = m.group(1).strip()
+        subj = first[:is_idx].strip()
+        if not subj or not all(ch.isalnum() or ch.isspace() or ch in "_-" for ch in subj):
+            return text
         subj_clean = subj.lower()
         subj_art = self._article(subj_clean, capitalize=True)
         sentences: list[str] = []
 
-        tax_raw = m.group(2).strip().rstrip(".")
-        raw_items = [re.sub(r"^(?:is\s+(?:a\s+)?)", "", item).strip() for item in tax_raw.split(",")]
+        tax_raw = first[is_idx + 1 :].strip().rstrip(".")
+        raw_items: list[str] = []
+        for item in tax_raw.split(","):
+            it_s = item.strip()
+            it_l = it_s.lower()
+            if it_l.startswith("is a "):
+                it_s = it_s[5:].strip()
+            elif it_l.startswith("is "):
+                it_s = it_s[3:].strip()
+            raw_items.append(it_s)
         tax_items = [
             f"{self._article(item)} {item}"
             for item in raw_items
@@ -160,7 +329,11 @@ class DialogueSurfaceEngine:
                     tpl_parts = self.policy.get_template("definition_parts", "It consists of {parts}.")
                     sentences.append(tpl_parts.format(parts=f_str))
             elif p_strip.startswith(("is not a ", "is not ")):
-                raw_disj = re.sub(r"^is\s+not\s+(?:a\s+)?", "", p_strip).strip()
+                raw_disj = (
+                    p_strip[9:].strip()
+                    if p_strip.lower().startswith("is not a ")
+                    else p_strip[7:].strip()
+                )
                 items = [
                     it.strip()
                     for it in raw_disj.split(",")
@@ -206,14 +379,14 @@ class DialogueSurfaceEngine:
         pronouns = {"it", "they", "this", "that", "he", "she"}
 
         def _clean(text: str) -> str:
-            res = re.sub(r" +", " ", text)
+            res = "\n".join(" ".join(line.split()) for line in text.split("\n"))
             res = res.replace(" ,", ",").replace(" .", ".").replace(" ?", "?").replace(" !", "!")
             return res.strip()
 
         def _restore_casing(name: str) -> str:
-            m = re.search(rf"\b{re.escape(name)}\b", query, re.IGNORECASE)
-            if m and m.group(0)[0].isupper():
-                return m.group(0)
+            idx = _find_word_phrase_ci(query, name)
+            if idx != -1 and query[idx].isupper():
+                return query[idx : idx + len(name)]
             return name
 
         # 1. Custom traces & multi-step solutions (Socratic syllogisms, CAS math traces, ODE simulations, posets)
@@ -250,12 +423,7 @@ class DialogueSurfaceEngine:
             if parsed_query and len(parsed_query) >= 1 and parsed_query[0]:
                 subject = str(parsed_query[0]).strip()
             if not subject:
-                m_subj = re.search(
-                    r"\b(?:is|can|does|what color is|where is|where does|what is)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)(?:\s+(?:a|an|the|have|in|on|at|can|fly|swim|live|color)|\?|$)",
-                    query,
-                    re.IGNORECASE,
-                )
-                subject = m_subj.group(1).strip() if m_subj else "that concept"
+                subject = _extract_unknown_query_subject(query)
             if subject.lower() in pronouns and resolved_subject:
                 subject = resolved_subject
             tpl = self.policy.get_template(
@@ -293,12 +461,8 @@ class DialogueSurfaceEngine:
 
             if parsed_query and len(parsed_query) == 3 and parsed_query[1] in {"has", "has_feature", "has_part"}:
                 s_name = _restore_casing(str(parsed_query[0]).strip())
-                m_has = re.search(
-                    r"(?:Does|Has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\s+(?:have|has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\?*$",
-                    query.strip(),
-                    re.IGNORECASE,
-                )
-                raw_feature = m_has.group(2).strip() if m_has else str(parsed_query[2]).strip()
+                m_has = _match_has_question(query)
+                raw_feature = m_has[1] if m_has else str(parsed_query[2]).strip()
                 feature = _restore_casing(raw_feature)
                 if s_name.lower() in pronouns and resolved_subject:
                     s_name = _restore_casing(resolved_subject)
@@ -311,14 +475,9 @@ class DialogueSurfaceEngine:
                     target=feature,
                 ))
 
-            m_tax = re.search(
-                r"Is\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\?*$",
-                query.strip(),
-                re.IGNORECASE,
-            )
+            m_tax = _match_is_question(query)
             if m_tax:
-                s_name = m_tax.group(1).strip()
-                t_name = m_tax.group(2).strip()
+                s_name, t_name = m_tax
                 if s_name.lower() in pronouns and resolved_subject:
                     s_name = resolved_subject
                 tpl = self.policy.get_template(
@@ -330,14 +489,9 @@ class DialogueSurfaceEngine:
                     target_article=self._article(t_name, capitalize=False),
                     target=t_name,
                 ))
-            m_can = re.search(
-                r"Can\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\s+([a-zA-Z0-9_\s]+?)\?*$",
-                query.strip(),
-                re.IGNORECASE,
-            )
+            m_can = _match_can_question(query)
             if m_can:
-                s_name = m_can.group(1).strip()
-                action = m_can.group(2).strip()
+                s_name, action = m_can
                 if s_name.lower() in pronouns and resolved_subject:
                     s_name = resolved_subject
                 tpl = self.policy.get_template(
@@ -345,14 +499,9 @@ class DialogueSurfaceEngine:
                 )
                 return _clean(tpl.format(subject=s_name, action=action))
 
-            m_has = re.search(
-                r"(?:Does|Has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\s+(?:have|has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\?*$",
-                query.strip(),
-                re.IGNORECASE,
-            )
+            m_has = _match_has_question(query)
             if m_has:
-                s_name = m_has.group(1).strip()
-                feature = m_has.group(2).strip()
+                s_name, feature = m_has
                 if s_name.lower() in pronouns and resolved_subject:
                     s_name = resolved_subject
                 tpl = self.policy.get_template(
@@ -399,12 +548,8 @@ class DialogueSurfaceEngine:
 
                 if parsed_query and len(parsed_query) == 3 and parsed_query[1] in {"has", "has_feature", "has_part"}:
                     s_name = _restore_casing(str(parsed_query[0]).strip())
-                    m_has = re.search(
-                        r"(?:Does|Has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\s+(?:have|has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\?*$",
-                        query.strip(),
-                        re.IGNORECASE,
-                    )
-                    raw_feature = m_has.group(2).strip() if m_has else str(parsed_query[2]).strip()
+                    m_has = _match_has_question(query)
+                    raw_feature = m_has[1] if m_has else str(parsed_query[2]).strip()
                     feature = _restore_casing(raw_feature)
                     if s_name.lower() in pronouns and resolved_subject:
                         s_name = _restore_casing(resolved_subject)
@@ -428,14 +573,9 @@ class DialogueSurfaceEngine:
                     tpl = self.policy.get_template("affirmative_relation", "Yes, {subject} {predicate} {target}.")
                     return _clean(tpl.format(subject=s_name, predicate=pred_3sg, target=t_name))
 
-                m_can = re.search(
-                    r"Can\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\s+([a-zA-Z0-9_\s]+?)\?*$",
-                    query.strip(),
-                    re.IGNORECASE,
-                )
+                m_can = _match_can_question(query)
                 if m_can:
-                    s_name = m_can.group(1).strip()
-                    action = m_can.group(2).strip()
+                    s_name, action = m_can
                     if s_name.lower() in pronouns and resolved_subject:
                         s_name = resolved_subject
                     tpl = self.policy.get_template(
@@ -443,14 +583,9 @@ class DialogueSurfaceEngine:
                     )
                     return _clean(tpl.format(subject=s_name, action=action))
 
-                m_tax = re.search(
-                    r"Is\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\?*$",
-                    query.strip(),
-                    re.IGNORECASE,
-                )
+                m_tax = _match_is_question(query)
                 if m_tax:
-                    s_name = m_tax.group(1).strip()
-                    t_name = m_tax.group(2).strip()
+                    s_name, t_name = m_tax
                     if s_name.lower() in pronouns and resolved_subject:
                         s_name = resolved_subject
                     tpl = self.policy.get_template(
@@ -464,14 +599,9 @@ class DialogueSurfaceEngine:
                         target=t_name,
                     ))
 
-                m_has = re.search(
-                    r"(?:Does|Has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\s+(?:have|has)\s+(?:(?:a|an|the)\s+)?([a-zA-Z0-9_\s]+?)\?*$",
-                    query.strip(),
-                    re.IGNORECASE,
-                )
+                m_has = _match_has_question(query)
                 if m_has:
-                    s_name = m_has.group(1).strip()
-                    feature = m_has.group(2).strip()
+                    s_name, feature = m_has
                     if s_name.lower() in pronouns and resolved_subject:
                         s_name = resolved_subject
                     tpl = self.policy.get_template(

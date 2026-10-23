@@ -6,11 +6,69 @@ and resolves pronouns ('it', 'they', 'that', 'the former', 'the latter') without
 
 from __future__ import annotations
 
-import re
 import time
 from dataclasses import dataclass, field
 
 from little.language.dialogue_policy import DialogueReferencePolicy
+
+
+def _is_word_char(ch: str) -> bool:
+    return ch.isalnum() or ch == "_"
+
+
+def _matches_prefix_guard(text: str, pattern: str) -> bool:
+    if not pattern:
+        return False
+    s = text.strip()
+    if pattern == r"^if\s+":
+        return len(s) > 2 and s[:2].lower() == "if" and s[2].isspace()
+    clean_pat = pattern.lstrip("^")
+    if clean_pat.endswith(r"\s+"):
+        kw = clean_pat[:-3].strip()
+        return (
+            bool(kw)
+            and len(s) > len(kw)
+            and s[: len(kw)].lower() == kw.lower()
+            and s[len(kw)].isspace()
+        )
+    return s.lower().startswith(clean_pat.lower())
+
+
+def _find_word_phrase_ci(text: str, phrase: str, start_idx: int = 0) -> int:
+    if not text or not phrase:
+        return -1
+    t_low = text.lower()
+    p_low = phrase.lower()
+    p_len = len(p_low)
+    n = len(text)
+    i = start_idx
+    while i <= n - p_len:
+        idx = t_low.find(p_low, i)
+        if idx == -1:
+            return -1
+        end = idx + p_len
+        left_ok = idx == 0 or not _is_word_char(text[idx - 1])
+        right_ok = end == n or not _is_word_char(text[end])
+        if left_ok and right_ok:
+            return idx
+        i = idx + 1
+    return -1
+
+
+def _replace_word_phrase_ci(text: str, phrase: str, replacement: str) -> str:
+    if not text or not phrase:
+        return text
+    p_len = len(phrase)
+    out: list[str] = []
+    last = 0
+    idx = _find_word_phrase_ci(text, phrase, 0)
+    while idx != -1:
+        out.append(text[last:idx])
+        out.append(replacement)
+        last = idx + p_len
+        idx = _find_word_phrase_ci(text, phrase, last)
+    out.append(text[last:])
+    return "".join(out)
 
 
 @dataclass
@@ -195,7 +253,7 @@ class DialogueContext:
     def resolve_anaphora_in_text(self, text: str) -> str:
         """Replace referring pronouns in text with resolved antecedent nouns."""
         s = text.strip()
-        if re.match(self.policy.conditional_guard_pattern, s, re.IGNORECASE):
+        if _matches_prefix_guard(s, self.policy.conditional_guard_pattern):
             return text
 
         # Multi-word referring expressions first
@@ -205,51 +263,51 @@ class DialogueContext:
             self.policy.latter_references,
         ):
             for reference in references:
-                reference_pattern = rf"\b{re.escape(reference)}\b"
-                if re.search(reference_pattern, t_mod, flags=re.IGNORECASE):
+                if _find_word_phrase_ci(t_mod, reference) != -1:
                     resolved = self.resolve_pronoun(reference)
                     if resolved:
-                        t_mod = re.sub(
-                            reference_pattern,
-                            resolved,
-                            t_mod,
-                            flags=re.IGNORECASE,
-                        )
+                        t_mod = _replace_word_phrase_ci(t_mod, reference, resolved)
                     break
-
-        # Single word pronoun replacement
-        def replace_token(match: re.Match) -> str:
-            token = match.group(0)
-            t_lower = token.lower()
-            start = match.start()
-            end = match.end()
-
-            # Guard: Do not replace 'that', 'these', 'those' when acting as relative pronouns or determiners
-            if t_lower in self.policy.relative_pronouns:
-                prefix = t_mod[:start].strip()
-                if prefix:
-                    last_word = prefix.split()[-1].lower()
-                    if last_word not in self.policy.relative_prefix_exclusions:
-                        # Preceded by a content noun -> relative clause (e.g. "mammals that live")
-                        return token
-                suffix = t_mod[end:].strip()
-                if suffix:
-                    first_word = suffix.split()[0].lower()
-                    if first_word not in self.policy.relative_suffix_exclusions:
-                        # Followed by a noun -> determiner (e.g. "that animal")
-                        return token
-
-            if t_lower in self.policy.text_pronouns:
-                res = self.resolve_pronoun(t_lower)
-                if res:
-                    return res if token.islower() else res.capitalize()
-            return token
 
         if not self.policy.text_pronouns:
             return t_mod
-        pronouns = "|".join(
-            re.escape(pronoun) for pronoun in self.policy.text_pronouns
-        )
-        pattern = rf"\b(?:{pronouns})\b"
-        resolved_text = re.sub(pattern, replace_token, t_mod, flags=re.IGNORECASE)
-        return resolved_text
+
+        text_pronouns_lower = {p.lower() for p in self.policy.text_pronouns}
+        relative_pronouns_lower = {p.lower() for p in self.policy.relative_pronouns}
+
+        out: list[str] = []
+        n = len(t_mod)
+        i = 0
+        while i < n:
+            if _is_word_char(t_mod[i]):
+                start = i
+                while i < n and _is_word_char(t_mod[i]):
+                    i += 1
+                end = i
+                token = t_mod[start:end]
+                t_lower = token.lower()
+
+                if t_lower in text_pronouns_lower:
+                    skip = False
+                    if t_lower in relative_pronouns_lower:
+                        prefix = t_mod[:start].strip()
+                        if prefix:
+                            last_word = prefix.split()[-1].lower()
+                            if last_word not in self.policy.relative_prefix_exclusions:
+                                skip = True
+                        if not skip:
+                            suffix = t_mod[end:].strip()
+                            if suffix:
+                                first_word = suffix.split()[0].lower()
+                                if first_word not in self.policy.relative_suffix_exclusions:
+                                    skip = True
+                    if not skip:
+                        res = self.resolve_pronoun(t_lower)
+                        if res:
+                            out.append(res if token.islower() else res.capitalize())
+                            continue
+                out.append(token)
+            else:
+                out.append(t_mod[i])
+                i += 1
+        return "".join(out)

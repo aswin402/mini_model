@@ -1665,5 +1665,39 @@ def test_spiderweb_mlm_phase67_zero_regex_across_12_cognitive_packages(
         kernel.mlm.close()
 
 
+def test_spiderweb_mlm_phase68_zero_regex_across_entire_codebase(
+    tmp_path,
+) -> None:
+    """Verify Phase 68: 100% Zero Regex Across the Entire src/little/ Codebase (All 13 Packages Including language/parser.py, dialogue_surface.py, dialogue_surface_policy.py, dialogue.py)."""
+    from pathlib import Path
 
+    repo_root = Path(__file__).resolve().parents[2]
+    src_little = repo_root / "src" / "little"
+    all_py_files = sorted(src_little.rglob("*.py"))
+    assert len(all_py_files) >= 55
+
+    for py_file in all_py_files:
+        lines = [ln.strip() for ln in py_file.read_text(encoding="utf-8").splitlines()]
+        assert "import re" not in lines, f"Found 'import re' in {py_file}"
+        assert not any(
+            ln.startswith("from re import") for ln in lines
+        ), f"Found 'from re import' in {py_file}"
+
+    # Verify end-to-end Language Parser, DialogueSurfaceEngine, DialogueContext, and SpiderWebMLM without regex
+    db_file = str(tmp_path / "phase68_zero_regex_all.db")
+    with MemoryStore(db_file, seed_ontology=True) as mem:
+        from little.core.kernel import CognitiveKernel
+
+        kernel = CognitiveKernel(mem, workspace_root=tmp_path)
+        res_learn = kernel.chat("Hello! An axolotl is an amphibian, and can regenerate_limbs.")
+        assert "Hello!" in res_learn
+        assert "learned" in res_learn.lower()
+
+        res_ask = kernel.chat("Is an axolotl an animal?")
+        assert "yes" in res_ask.lower()
+        assert "animal" in res_ask.lower()
+
+        res_unk = kernel.chat("Is a hyper_quasar an animal?")
+        assert "don't have that information" in res_unk.lower() or "unknown" in res_unk.lower()
+        kernel.mlm.close()
 

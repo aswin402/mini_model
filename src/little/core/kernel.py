@@ -577,18 +577,29 @@ class CognitiveKernel:
                 parsed_queries=frame.parsed_queries,
                 question_parts=frame.question_parts,
             )
+            parsed_subj = (
+                frame.parsed_query[0]
+                if isinstance(frame.parsed_query, tuple) and len(frame.parsed_query) >= 1
+                else getattr(frame.parsed_query, "subject", None)
+                if frame.parsed_query is not None
+                else None
+            )
+            parsed_subj_cid = (
+                str(parsed_subj).strip().upper().replace(" ", "_")
+                if parsed_subj
+                else ""
+            )
             if (
                 thinking.inference.status in (BeliefStatus.SUPPORTED, BeliefStatus.REFUTED)
-                and frame.parsed_query is not None
-                and getattr(frame.parsed_query, "subject", None)
+                and parsed_subj_cid
+                and parsed_subj_cid in self.mlm.nodes
             ):
-                subj_cid = str(frame.parsed_query.subject).strip().upper().replace(" ", "_")
-                if subj_cid in self.mlm.nodes:
-                    self.mlm._update_conversation_context(subj_cid)
+                self.mlm._update_conversation_context(parsed_subj_cid)
             if (
                 thinking.inference.status == BeliefStatus.UNKNOWN
                 and hasattr(self, "mlm")
                 and self.mlm is not None
+                and (not parsed_subj_cid or parsed_subj_cid in self.mlm.nodes)
             ):
                 mlm_res = self.mlm.query_360(text)
                 if mlm_res.status in ("VERIFIED", "REFUTED"):
@@ -599,7 +610,7 @@ class CognitiveKernel:
                     )
                     return KernelOutcome(
                         frame=frame,
-                        mode=CognitiveMode.SLOW,
+                        mode=CognitiveMode.THINK,
                         inference=InferenceResult(
                             query=text,
                             status=mapped_status,

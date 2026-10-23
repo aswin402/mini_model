@@ -1720,6 +1720,21 @@ class SpiderWebMLM:
             )
         )
 
+        unknown_explicit_subjects = (
+            [
+                t
+                for t in tokens[1:focal_pos]
+                if t not in self.frame_policy.stop_determiners
+                and self._operator_token_mass.get(t, 0.0) == 0.0
+                and self._token_salience(t) >= 2.5
+            ]
+            if focal_cid is not None and target_cid is None and has_leading_operator
+            else []
+        )
+        if unknown_explicit_subjects:
+            target_cid = focal_cid
+            focal_cid = unknown_explicit_subjects[0].upper()
+
         # Multi-Turn Liquid Context Resonance for elliptic / follow-up inquiries & Proof Explanations
         if self.recent_focal_stack:
             top_ctx_cid = self.recent_focal_stack[0][0]
