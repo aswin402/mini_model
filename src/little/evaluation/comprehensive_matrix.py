@@ -12,7 +12,6 @@ Evaluates 6 core real-world capabilities:
 from __future__ import annotations
 
 import os
-import re
 import tempfile
 import time
 from dataclasses import asdict, dataclass
@@ -78,6 +77,23 @@ class SOTABenchmarkSuite:
             )
         )
 
+    @staticmethod
+    def _has_token(text: str, token: str) -> bool:
+        """Check if token appears in text bounded by non-alphanumeric characters."""
+        low = text.lower()
+        target = token.lower()
+        start = 0
+        while True:
+            idx = low.find(target, start)
+            if idx == -1:
+                return False
+            end = idx + len(target)
+            left_ok = idx == 0 or not (low[idx - 1].isalnum() or low[idx - 1] == "_")
+            right_ok = end == len(low) or not (low[end].isalnum() or low[end] == "_")
+            if left_ok and right_ok:
+                return True
+            start = idx + 1
+
     def run_all(self) -> dict[str, Any]:
         results: list[BenchmarkItemResult] = []
 
@@ -110,12 +126,12 @@ class SOTABenchmarkSuite:
                 "hello" in low or "glad" in low or "great" in low
             ) or exp_type.startswith("learned_") and not is_unknown and (
                 "learned" in low or "understood" in low or "recorded your name" in low
-            ) or exp_type in ("supported", "transitive_supported", "mutex_supported") and not is_unknown and bool(
-                re.search(r"\byes\b", low)
-            ) and not bool(re.search(r"\bno\b", low)) or exp_type == "refuted" and not is_unknown and not bool(
-                re.search(r"\byes\b", low)
-            ) and bool(
-                re.search(r"\b(no|refuted|impossible|distinct|incompatible)\b", low)
+            ) or exp_type in ("supported", "transitive_supported", "mutex_supported") and not is_unknown and self._has_token(
+                low, "yes"
+            ) and not self._has_token(low, "no") or exp_type == "refuted" and not is_unknown and not self._has_token(
+                low, "yes"
+            ) and any(
+                self._has_token(low, w) for w in ("no", "refuted", "impossible", "distinct", "incompatible")
             ) or exp_type == "recalled_identity" and not is_unknown and "aswin" in low:
                 passed = True
 
@@ -133,13 +149,13 @@ class SOTABenchmarkSuite:
         # 2. Mathematical Reasoning & Symbolic CAS
         # ---------------------------------------------------------------------
         math_tests: list[tuple[str, str, tuple[str, ...]]] = [
-            ("What is 125 * 8 - 45 / 3?", "125*8 - 45/3 = 985", (r"\b985\b",)),
-            ("What is (2/3) + (5/6)?", "3/2 = 1.5", (r"\b1\.5\b", r"\b3/2\b")),
-            ("Solve x: 3*x + 15 = 45", "x = 10", (r"\b10\b",)),
-            ("How many feet in 36 inches?", "3", (r"\b3(?:\.0+)?\b",)),
-            ("Is 104729 prime?", "True", (r"\byes\b", r"\btrue\b", r"\bis prime\b")),
-            ("What is the fibonacci of 20?", "6765", (r"\b6765\b",)),
-            ("Sarah has 15 apples. She gives 4 apples to Bob, then buys 7 more apples. How many apples does Sarah have now?", "18", (r"\b18\b",)),
+            ("What is 125 * 8 - 45 / 3?", "125*8 - 45/3 = 985", ("985",)),
+            ("What is (2/3) + (5/6)?", "3/2 = 1.5", ("1.5", "3/2")),
+            ("Solve x: 3*x + 15 = 45", "x = 10", ("10",)),
+            ("How many feet in 36 inches?", "3", ("3", "3.0")),
+            ("Is 104729 prime?", "True", ("yes", "true", "is prime")),
+            ("What is the fibonacci of 20?", "6765", ("6765",)),
+            ("Sarah has 15 apples. She gives 4 apples to Bob, then buys 7 more apples. How many apples does Sarah have now?", "18", ("18",)),
         ]
 
         for prompt, expected_ans, patterns in math_tests:
@@ -149,7 +165,7 @@ class SOTABenchmarkSuite:
             low = reply.lower()
 
             passed = not self._has_unknown_marker(low) and any(
-                re.search(pat, low) is not None for pat in patterns
+                self._has_token(low, pat) for pat in patterns
             )
 
             results.append(BenchmarkItemResult(
@@ -215,7 +231,7 @@ class SOTABenchmarkSuite:
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
             passed = False
-            if tool_name == "calculator" and re.search(r"\b1000\b", reply) or tool_name == "system_time" and ("time is" in reply.lower() or "utc" in reply.lower()) or tool_name == "web_search" and "quantum computing" in reply.lower() or tool_name == "file_writer" and "wrote" in reply.lower() or tool_name == "file_reader" and "benchmark data" in reply or tool_name == "python_repl" and re.search(r"\b84\b", reply):
+            if tool_name == "calculator" and self._has_token(reply, "1000") or tool_name == "system_time" and ("time is" in reply.lower() or "utc" in reply.lower()) or tool_name == "web_search" and "quantum computing" in reply.lower() or tool_name == "file_writer" and "wrote" in reply.lower() or tool_name == "file_reader" and "benchmark data" in reply or tool_name == "python_repl" and self._has_token(reply, "84"):
                 passed = True
 
             results.append(BenchmarkItemResult(

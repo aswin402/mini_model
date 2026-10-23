@@ -9,7 +9,6 @@ from __future__ import annotations
 import ast
 import math
 import operator
-import re
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -151,17 +150,43 @@ class SymbolicCAS:
     def __init__(self) -> None:
         self.ucg = UnitConversionGraph()
 
+    @staticmethod
+    def _is_uint_or_ufrac(tok: str) -> bool:
+        s = tok.strip()
+        if not s:
+            return False
+        if "/" in s:
+            parts = s.split("/")
+            return len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit()
+        return s.isdigit()
+
+    @classmethod
+    def _parse_binary_fraction_op(cls, expr: str) -> tuple[str, str, str] | None:
+        s = expr.strip()
+        if not s:
+            return None
+        # Find top-level binary operator (+, -, *, or spaced/second /)
+        for i, ch in enumerate(s):
+            if ch in "+-*" and i > 0:
+                left, right = s[:i].strip(), s[i + 1 :].strip()
+                if cls._is_uint_or_ufrac(left) and cls._is_uint_or_ufrac(right):
+                    return left, ch, right
+        # Check division '/' between two fractions or integers
+        slash_positions = [i for i, ch in enumerate(s) if ch == "/"]
+        for pos in reversed(slash_positions):
+            left, right = s[:pos].strip(), s[pos + 1 :].strip()
+            if cls._is_uint_or_ufrac(left) and cls._is_uint_or_ufrac(right):
+                return left, "/", right
+        return None
+
     def solve_rational_expression(self, expr: str) -> MathSolution:
         """Parse and evaluate rational expressions with exact Fractions and step-by-step reduction."""
         steps: list[str] = [f"Evaluating rational expression: '{expr}'"]
         if len(expr) > 4096:
             return MathSolution(status="ERROR", result=None, steps=["Expression size limit exceeded"])
         # Basic binary fraction operations: "A/B + C/D", "A/B * C/D", etc.
-        m = re.match(
-            r"^\s*(\d+(?:/\d+)?)\s*([\+\-\*\/])\s*(\d+(?:/\d+)?)\s*$",
-            expr.strip(),
-        )
-        if not m:
+        parsed_bin = self._parse_binary_fraction_op(expr)
+        if parsed_bin is None:
             # Fallback simple arithmetic evaluation using Fraction
             try:
                 tree = ast.parse(expr.strip(), mode="eval")
@@ -171,10 +196,11 @@ class SymbolicCAS:
                 def evaluate(node, depth=0):
                     if depth > 32: raise ValueError("Expression depth limit exceeded")
                     if isinstance(node, ast.Constant) and type(node.value) in (int, float):
-                        literal = ast.get_source_segment(expr.strip(), node)
-                        exponent = re.search(r"[eE]([+-]?\d+)$", literal)
-                        if exponent and abs(int(exponent.group(1))) > 1000:
-                            raise ValueError("Numeric literal exponent limit exceeded")
+                        literal = ast.get_source_segment(expr.strip(), node) or str(node.value)
+                        if "e" in literal.lower():
+                            _, exp_part = literal.lower().rsplit("e", 1)
+                            if exp_part.lstrip("+-").isdigit() and abs(int(exp_part)) > 1000:
+                                raise ValueError("Numeric literal exponent limit exceeded")
                         result = Fraction(literal)
                     elif isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
                         result = evaluate(node.operand, depth + 1) * (-1 if isinstance(node.op, ast.USub) else 1)
@@ -199,7 +225,7 @@ class SymbolicCAS:
             except Exception as e:
                 return MathSolution(status="ERROR", result=None, steps=[f"Parsing error: {e}"])
 
-        left_str, op, right_str = m.group(1), m.group(2), m.group(3)
+        left_str, op, right_str = parsed_bin
         try:
             f_left = Fraction(left_str)
             f_right = Fraction(right_str)

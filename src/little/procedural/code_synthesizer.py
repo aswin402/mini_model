@@ -36,8 +36,6 @@ class ASTCodeSynthesizer:
 
     def match_primitive(self, text: str) -> str | None:
         """Match natural language request to an available algorithmic primitive."""
-        import re
-
         low = text.lower()
         # The catalog provides canonical Python primitives, not general program synthesis.
         # Refuse unknown modifiers rather than silently verifying a simpler request.
@@ -127,28 +125,35 @@ class ASTCodeSynthesizer:
             "arr",
             "target",
         }
-        if (
-            any(token not in request_words for token in re.findall(r"[a-z0-9_]+", low))
-            or "%" in low
-        ):
+        tokens: list[str] = []
+        curr: list[str] = []
+        for ch in low:
+            if ("a" <= ch <= "z") or ("0" <= ch <= "9") or ch == "_":
+                curr.append(ch)
+            elif curr:
+                tokens.append("".join(curr))
+                curr = []
+        if curr:
+            tokens.append("".join(curr))
+
+        if any(token not in request_words for token in tokens) or "%" in low:
             return None
-        patterns = {
-            "is_prime": r"\b(prime|is_prime)\b",
-            "fibonacci": r"\b(fibonacci|fib)\b",
-            "factorial": r"\bfactorial\b",
-            "is_palindrome": r"\b(palindrome|is_palindrome)\b",
-            "reverse_string": r"\b(reverse|reverse_string|reversed)\b",
-            "gcd": r"\b(gcd|greatest\s+common\s+divisor)\b",
-            "binary_search": r"\bbinary[-_ ]search\b",
-            "sum_list": r"\b(sum|sum_list)\b",
-            "max_element": r"\b(max|maximum|max_element)\b",
-            "flatten": r"\bflatten\b",
+
+        tok_set = set(tokens)
+        norm_words = " ".join(tokens)
+        candidates = {
+            "is_prime": bool(tok_set & {"prime", "is_prime"}),
+            "fibonacci": bool(tok_set & {"fibonacci", "fib"}),
+            "factorial": "factorial" in tok_set,
+            "is_palindrome": bool(tok_set & {"palindrome", "is_palindrome"}),
+            "reverse_string": bool(tok_set & {"reverse", "reverse_string", "reversed"}),
+            "gcd": "gcd" in tok_set or "greatest common divisor" in norm_words,
+            "binary_search": "binary_search" in tok_set or "binary search" in norm_words,
+            "sum_list": bool(tok_set & {"sum", "sum_list"}),
+            "max_element": bool(tok_set & {"max", "maximum", "max_element"}),
+            "flatten": "flatten" in tok_set,
         }
-        matches = [
-            primitive
-            for primitive, pattern in patterns.items()
-            if re.search(pattern, low)
-        ]
+        matches = [prim for prim, hit in candidates.items() if hit]
         return matches[0] if len(matches) == 1 else None
 
     def synthesize_from_request(

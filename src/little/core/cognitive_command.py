@@ -2,22 +2,251 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from little.core.kernel import CognitiveKernel
 
 
 @dataclass(frozen=True)
+class _CommandMatch:
+    """Lightweight match result supporting .group() and .groupdict() without regex."""
+
+    groups_map: dict[str, str | None]
+
+    def group(self, key: str | int = 0) -> str:
+        if isinstance(key, int):
+            vals = list(self.groups_map.values())
+            return (vals[key - 1] or "") if 1 <= key <= len(vals) else ""
+        return self.groups_map.get(key) or ""
+
+    def groupdict(self) -> dict[str, str | None]:
+        return dict(self.groups_map)
+
+
+@dataclass(frozen=True)
+class _DirectiveMatcher:
+    """Callable-backed directive matcher providing a .search(text) interface."""
+
+    matcher_fn: Callable[[str], dict[str, str | None] | None]
+
+    def search(self, text: str) -> _CommandMatch | None:
+        res = self.matcher_fn(text)
+        return _CommandMatch(res) if res is not None else None
+
+
+def _is_ident_slug(token: str) -> bool:
+    return bool(token) and all(c.isalnum() or c in "_-" for c in token)
+
+
+def _is_num(token: str) -> bool:
+    s = token.strip()
+    if not s:
+        return False
+    if s.count(".") <= 1 and s.replace(".", "", 1).isdigit():
+        return True
+    return False
+
+
+def _colon_directive_matcher(
+    prefixes: tuple[str, ...], group_name: str
+) -> _DirectiveMatcher:
+    def _match(text: str) -> dict[str, str | None] | None:
+        if ":" not in text:
+            return None
+        head, tail = text.split(":", 1)
+        norm_head = " ".join(head.lower().split())
+        if norm_head in prefixes and tail.strip():
+            return {group_name: tail.strip()}
+        return None
+
+    return _DirectiveMatcher(_match)
+
+
+def _prefix_target_matcher(
+    prefixes: tuple[str, ...], group_name: str, allow_punct: bool = False
+) -> _DirectiveMatcher:
+    def _match(text: str) -> dict[str, str | None] | None:
+        stripped = text.strip()
+        if stripped.endswith("?"):
+            stripped = stripped[:-1].strip()
+        tokens = stripped.split()
+        low_tokens = [t.lower() for t in tokens]
+        for pref in prefixes:
+            pref_tokens = pref.split()
+            n = len(pref_tokens)
+            if len(tokens) > n and low_tokens[:n] == pref_tokens:
+                target = " ".join(tokens[n:]).strip()
+                if not target:
+                    continue
+                if not allow_punct and any(c in target for c in "?.!"):
+                    continue
+                return {group_name: target}
+        return None
+
+    return _DirectiveMatcher(_match)
+
+
+def _trigger_prefix_matcher(
+    prefixes: tuple[str, ...], exact_only: bool = False
+) -> _DirectiveMatcher:
+    def _match(text: str) -> dict[str, str | None] | None:
+        stripped = text.strip()
+        if stripped.endswith("?"):
+            stripped = stripped[:-1].strip()
+        norm = " ".join(stripped.lower().split())
+        if exact_only:
+            return {} if norm in prefixes else None
+        for pref in prefixes:
+            if norm == pref or norm.startswith(pref + " "):
+                return {}
+        return None
+
+    return _DirectiveMatcher(_match)
+
+
+def _match_study_concept(text: str) -> dict[str, str | None] | None:
+    stripped = text.strip()
+    if stripped.endswith("?"):
+        stripped = stripped[:-1].strip()
+    tokens = stripped.split()
+    if len(tokens) not in (3, 5):
+        return None
+    if tokens[0].lower() not in ("study", "explore") or tokens[1].lower() != "concept":
+        return None
+    target = tokens[2]
+    if not _is_ident_slug(target):
+        return None
+    axis: str | None = None
+    if len(tokens) == 5:
+        if tokens[3].lower() not in ("on", "for", "axis") or not _is_ident_slug(tokens[4]):
+            return None
+        axis = tokens[4]
+    return {"target": target, "axis": axis}
+
+
+def _match_simulate_dynamics(text: str) -> dict[str, str | None] | None:
+    stripped = text.strip()
+    if stripped.endswith("?"):
+        stripped = stripped[:-1].strip()
+    tokens = stripped.split()
+    low_tokens = [t.lower() for t in tokens]
+    prefixes = (
+        ("simulate", "physical", "dynamics", "of"),
+        ("simulate", "physical", "dynamics", "for"),
+        ("simulate", "dynamics", "of"),
+        ("simulate", "dynamics", "for"),
+        ("what", "would", "happen", "if", "i", "leave"),
+        ("what", "happens", "to"),
+        ("predict",),
+    )
+    idx = -1
+    for p in prefixes:
+        if len(low_tokens) > len(p) and tuple(low_tokens[: len(p)]) == p:
+            idx = len(p)
+            break
+    if idx == -1:
+        return None
+    if idx < len(low_tokens) and low_tokens[idx] in ("a", "an"):
+        idx += 1
+    if idx >= len(tokens) or not _is_ident_slug(tokens[idx]):
+        return None
+    target = tokens[idx]
+    idx += 1
+
+    duration: str | None = None
+    unit: str | None = None
+    temp: str | None = None
+    valid_units = {"hour", "hours", "day", "days", "minute", "minutes", "hr", "hrs", "min", "mins"}
+
+    while idx < len(tokens):
+        lt = low_tokens[idx]
+        if lt in ("for", "over", "after") and idx + 1 < len(tokens):
+            cand = tokens[idx + 1]
+            # Handle attached unit like "10days" or separated "10 days"
+            num_part = ""
+            unit_part = ""
+            for ch in cand:
+                if (ch.isdigit() or ch == ".") and not unit_part:
+                    num_part += ch
+                else:
+                    unit_part += ch
+            if _is_num(num_part):
+                if unit_part.lower() in valid_units:
+                    duration = num_part
+                    unit = unit_part
+                    idx += 2
+                    continue
+                elif not unit_part and idx + 2 < len(tokens) and low_tokens[idx + 2].rstrip(".,") in valid_units:
+                    duration = num_part
+                    unit = tokens[idx + 2].rstrip(".,")
+                    idx += 3
+                    continue
+        if lt == "at" and idx + 1 < len(tokens):
+            cand_t = tokens[idx + 1].rstrip("°cC.,")
+            if _is_num(cand_t):
+                temp = cand_t
+                idx += 2
+                continue
+        idx += 1
+
+    return {"target": target, "duration": duration, "unit": unit, "temp": temp}
+
+
+def _match_physical_action(text: str) -> dict[str, str | None] | None:
+    stripped = text.strip()
+    if stripped.endswith("?"):
+        stripped = stripped[:-1].strip()
+    tokens = stripped.split()
+    low_tokens = [t.lower() for t in tokens]
+    prefixes = (
+        ("apply", "action"),
+        ("perform", "action"),
+        ("what", "happens", "if", "i"),
+        ("if", "i"),
+    )
+    idx = -1
+    for p in prefixes:
+        if len(low_tokens) > len(p) and tuple(low_tokens[: len(p)]) == p:
+            idx = len(p)
+            break
+    if idx == -1 or idx >= len(low_tokens):
+        return None
+    action = low_tokens[idx]
+    if action not in ("slice", "peel", "heat", "chill", "cool", "dehydrate", "dry"):
+        return None
+    idx += 1
+    if idx < len(low_tokens) and low_tokens[idx] in ("a", "an"):
+        idx += 1
+    if idx >= len(tokens):
+        return None
+    target = tokens[idx].rstrip(".,?!")
+    if not _is_ident_slug(target):
+        return None
+    idx += 1
+
+    count: str | None = None
+    while idx < len(tokens):
+        if low_tokens[idx] in ("into", "in") and idx + 1 < len(tokens):
+            cand = tokens[idx + 1]
+            digits = "".join(ch for ch in cand if ch.isdigit())
+            if digits:
+                count = digits
+                break
+        idx += 1
+
+    return {"action": action, "target": target, "count": count}
+
+
+@dataclass(frozen=True)
 class CognitiveCommand:
-    """A registered cognitive directive with compiled match patterns and execution handler."""
+    """A registered cognitive directive with matchers and execution handler."""
 
     command_id: str
-    patterns: tuple[re.Pattern[str], ...]
-    handler: Callable[[CognitiveKernel, str, re.Match[str]], str]
+    patterns: tuple[Any, ...]
+    handler: Callable[[CognitiveKernel, str, Any], str]
     description: str = ""
 
 
@@ -38,7 +267,7 @@ class CognitiveCommandRegistry:
         clean = utterance.strip()
         for cmd in self._commands:
             for pat in cmd.patterns:
-                m = pat.search(clean)
+                m = pat.search(clean) if hasattr(pat, "search") else pat(clean)
                 if m:
                     return cmd.handler(kernel, clean, m)
         return None
@@ -51,9 +280,16 @@ class CognitiveCommandRegistry:
                 command_id="knowledge_ingestion",
                 description="Autonomous knowledge crawling and document ingestion",
                 patterns=(
-                    re.compile(
-                        r"^(?:study|crawl|ingest)\s+(?:text|document)\s*:\s*(?P<doc_text>.+)$",
-                        re.IGNORECASE | re.DOTALL,
+                    _colon_directive_matcher(
+                        (
+                            "study text",
+                            "crawl text",
+                            "ingest text",
+                            "study document",
+                            "crawl document",
+                            "ingest document",
+                        ),
+                        "doc_text",
                     ),
                 ),
                 handler=cls._handle_knowledge_ingestion,
@@ -62,9 +298,10 @@ class CognitiveCommandRegistry:
                 command_id="wiki_semantic_search",
                 description="TurboQuant semantic search over living knowledge wiki",
                 patterns=(
-                    re.compile(
-                        r"^search\s+(?:the\s+)?wiki\s+for\s+(?P<query>.+?)\??$",
-                        re.IGNORECASE,
+                    _prefix_target_matcher(
+                        ("search the wiki for", "search wiki for"),
+                        "query",
+                        allow_punct=True,
                     ),
                 ),
                 handler=cls._handle_wiki_semantic_search,
@@ -73,9 +310,14 @@ class CognitiveCommandRegistry:
                 command_id="wiki_backlinks",
                 description="Query incoming graph backlinks for a concept",
                 patterns=(
-                    re.compile(
-                        r"^(?:backlinks\s+to|what\s+links\s+to|what\s+are\s+the\s+backlinks\s+to)\s+(?P<target>[^?.!]+)\??$",
-                        re.IGNORECASE,
+                    _prefix_target_matcher(
+                        (
+                            "what are the backlinks to",
+                            "what links to",
+                            "backlinks to",
+                        ),
+                        "target",
+                        allow_punct=False,
                     ),
                 ),
                 handler=cls._handle_wiki_backlinks,
@@ -84,9 +326,10 @@ class CognitiveCommandRegistry:
                 command_id="wiki_page_summary",
                 description="Retrieve OKF wiki page summary and structured relations",
                 patterns=(
-                    re.compile(
-                        r"^(?:show\s+)?wiki\s+page\s+for\s+(?P<target>[^?.!]+)\??$",
-                        re.IGNORECASE,
+                    _prefix_target_matcher(
+                        ("show wiki page for", "wiki page for"),
+                        "target",
+                        allow_punct=False,
                     ),
                 ),
                 handler=cls._handle_wiki_page_summary,
@@ -95,9 +338,21 @@ class CognitiveCommandRegistry:
                 command_id="concept_clustering",
                 description="Autonomous Cobweb concept clustering and latent knot induction",
                 patterns=(
-                    re.compile(
-                        r"^(?:run\s+)?(?:concept\s+clustering|concept\s+induction|cluster\s+concepts|discover\s+latent\s+(?:categories|knots)|induce\s+latent\s+knots)\b",
-                        re.IGNORECASE,
+                    _trigger_prefix_matcher(
+                        (
+                            "run concept clustering",
+                            "concept clustering",
+                            "run concept induction",
+                            "concept induction",
+                            "run cluster concepts",
+                            "cluster concepts",
+                            "run discover latent categories",
+                            "discover latent categories",
+                            "run discover latent knots",
+                            "discover latent knots",
+                            "run induce latent knots",
+                            "induce latent knots",
+                        )
                     ),
                 ),
                 handler=cls._handle_concept_clustering,
@@ -106,9 +361,15 @@ class CognitiveCommandRegistry:
                 command_id="list_latent_knots",
                 description="List active latent categories and concepts in memory",
                 patterns=(
-                    re.compile(
-                        r"^(?:what\s+latent\s+categories\s+(?:have\s+you\s+discovered|do\s+you\s+have)|(?:show|list)\s+latent\s+(?:knots|categories))\b",
-                        re.IGNORECASE,
+                    _trigger_prefix_matcher(
+                        (
+                            "what latent categories have you discovered",
+                            "what latent categories do you have",
+                            "show latent knots",
+                            "show latent categories",
+                            "list latent knots",
+                            "list latent categories",
+                        )
                     ),
                 ),
                 handler=cls._handle_list_latent_knots,
@@ -117,9 +378,10 @@ class CognitiveCommandRegistry:
                 command_id="explain_concept_cluster",
                 description="Explain latent concept cluster membership and shared features",
                 patterns=(
-                    re.compile(
-                        r"^explain\s+(?:concept\s+)?cluster\s+for\s+(?P<target>[^?.!]+)\??$",
-                        re.IGNORECASE,
+                    _prefix_target_matcher(
+                        ("explain concept cluster for", "explain cluster for"),
+                        "target",
+                        allow_punct=False,
                     ),
                 ),
                 handler=cls._handle_explain_concept_cluster,
@@ -128,9 +390,16 @@ class CognitiveCommandRegistry:
                 command_id="dream_cycle",
                 description="Autonomous cognitive dream cycle and curiosity-driven self-study",
                 patterns=(
-                    re.compile(
-                        r"^(?:dream|run\s+(?:a\s+)?dream\s+cycle|run\s+(?:autonomous\s+)?self\s+study|curiosity\s+cycle|autonomous\s+study)\b",
-                        re.IGNORECASE,
+                    _trigger_prefix_matcher(
+                        (
+                            "run a dream cycle",
+                            "run dream cycle",
+                            "run autonomous self study",
+                            "run self study",
+                            "curiosity cycle",
+                            "autonomous study",
+                            "dream",
+                        )
                     ),
                 ),
                 handler=cls._handle_dream_cycle,
@@ -139,9 +408,13 @@ class CognitiveCommandRegistry:
                 command_id="knowledge_gaps",
                 description="Identify concepts with highest missing radial spoke entropy and wiki stubs",
                 patterns=(
-                    re.compile(
-                        r"^(?:what\s+are\s+your\s+knowledge\s+gaps|show\s+knowledge\s+gaps|explore\s+knowledge\s+gaps|what\s+are\s+your\s+epistemic\s+gaps)\b",
-                        re.IGNORECASE,
+                    _trigger_prefix_matcher(
+                        (
+                            "what are your knowledge gaps",
+                            "show knowledge gaps",
+                            "explore knowledge gaps",
+                            "what are your epistemic gaps",
+                        )
                     ),
                 ),
                 handler=cls._handle_knowledge_gaps,
@@ -149,43 +422,28 @@ class CognitiveCommandRegistry:
             CognitiveCommand(
                 command_id="study_concept",
                 description="Targeted autonomous curiosity inquiry on a specific concept",
-                patterns=(
-                    re.compile(
-                        r"^(?:study|explore)\s+concept\s+(?P<target>[a-zA-Z0-9_\-]+)(?:\s+(?:on|for|axis)\s+(?P<axis>[a-zA-Z0-9_\-]+))?\??$",
-                        re.IGNORECASE,
-                    ),
-                ),
+                patterns=(_DirectiveMatcher(_match_study_concept),),
                 handler=cls._handle_study_concept,
             ),
             CognitiveCommand(
                 command_id="simulate_dynamics",
                 description="Predict continuous-time physical state evolution over arbitrary time deltas",
-                patterns=(
-                    re.compile(
-                        r"^(?:simulate\s+(?:physical\s+)?dynamics\s+(?:of|for)|predict|what\s+happens\s+to|what\s+would\s+happen\s+if\s+I\s+leave)\s+(?:an?\s+)?(?P<target>[a-zA-Z0-9_\-]+)(?:\s+(?:for|over|after)\s+(?P<duration>\d+(?:\.\d+)?)\s*(?P<unit>hours?|days?|minutes?|hrs?|mins?))?(?:\s+at\s+(?P<temp>\d+(?:\.\d+)?)\s*(?:°?C|degrees?(?:\s+celsius)?|celsius|centigrade)?)?(?:.*)?\??$",
-                        re.IGNORECASE,
-                    ),
-                ),
+                patterns=(_DirectiveMatcher(_match_simulate_dynamics),),
                 handler=cls._handle_simulate_dynamics,
             ),
             CognitiveCommand(
                 command_id="physical_action",
                 description="Perform physical action jump (slice, peel, heat, chill, dehydrate) with QPT mass conservation",
-                patterns=(
-                    re.compile(
-                        r"^(?:apply\s+action|perform\s+action|what\s+happens\s+if\s+I|if\s+I)\s+(?P<action>slice|peel|heat|chill|cool|dehydrate|dry)\s+(?:an?\s+)?(?P<target>[a-zA-Z0-9_\-]+)(?:\s+(?:into|in)\s+(?P<count>\d+)\s*(?:pieces|slices|wedges)?)?(?:.*)?\??$",
-                        re.IGNORECASE,
-                    ),
-                ),
+                patterns=(_DirectiveMatcher(_match_physical_action),),
                 handler=cls._handle_physical_action,
             ),
             CognitiveCommand(
                 command_id="sensory_observation",
                 description="Ground multimodal sensory observations to 0° episodic instance axis",
                 patterns=(
-                    re.compile(
-                        r"^(?:sensory\s+observation|observe\s+sensor|perceive\s+sensor):\s*(?P<reading>.+)$",
-                        re.IGNORECASE,
+                    _colon_directive_matcher(
+                        ("sensory observation", "observe sensor", "perceive sensor"),
+                        "reading",
                     ),
                 ),
                 handler=cls._handle_sensory_observation,
@@ -194,9 +452,22 @@ class CognitiveCommandRegistry:
                 command_id="cognitive_status",
                 description="Inspect live cognitive telemetry (paging, plasticity, growth brakes, canary, 360° MLM)",
                 patterns=(
-                    re.compile(
-                        r"^(?:show\s+)?(?:cognitive\s+status|telemetry\s+status|plasticity\s+status|growth\s+brakes|mlu\s+status|mlm\s+status)\??$",
-                        re.IGNORECASE,
+                    _trigger_prefix_matcher(
+                        (
+                            "show cognitive status",
+                            "cognitive status",
+                            "show telemetry status",
+                            "telemetry status",
+                            "show plasticity status",
+                            "plasticity status",
+                            "show growth brakes",
+                            "growth brakes",
+                            "show mlu status",
+                            "mlu status",
+                            "show mlm status",
+                            "mlm status",
+                        ),
+                        exact_only=True,
                     ),
                 ),
                 handler=cls._handle_cognitive_status,
@@ -205,9 +476,9 @@ class CognitiveCommandRegistry:
                 command_id="mlm_train",
                 description="Train the 360° Spider-Web Mini Learning Model (MLM/MLU) on raw text",
                 patterns=(
-                    re.compile(
-                        r"^(?:mlm\s+train|train\s+mlm|mlu\s+train|train\s+mlu)\s*:\s*(?P<train_text>.+)$",
-                        re.IGNORECASE | re.DOTALL,
+                    _colon_directive_matcher(
+                        ("mlm train", "train mlm", "mlu train", "train mlu"),
+                        "train_text",
                     ),
                 ),
                 handler=cls._handle_mlm_train,
@@ -216,9 +487,9 @@ class CognitiveCommandRegistry:
                 command_id="mlm_ask",
                 description="Query the 360° Spider-Web Mini Learning Model (MLM/MLU)",
                 patterns=(
-                    re.compile(
-                        r"^(?:mlm\s+ask|ask\s+mlm|mlu\s+ask|ask\s+mlu)\s*:\s*(?P<query_text>.+)$",
-                        re.IGNORECASE,
+                    _colon_directive_matcher(
+                        ("mlm ask", "ask mlm", "mlu ask", "ask mlu"),
+                        "query_text",
                     ),
                 ),
                 handler=cls._handle_mlm_ask,
@@ -227,7 +498,7 @@ class CognitiveCommandRegistry:
 
     @staticmethod
     def _handle_knowledge_ingestion(
-        kernel: CognitiveKernel, text: str, match: re.Match[str]
+        kernel: CognitiveKernel, text: str, match: Any
     ) -> str:
         doc_text = match.group("doc_text").strip()
         report = kernel.crawler.crawl_text(doc_text, source_reference="chat_ingest")
@@ -235,7 +506,7 @@ class CognitiveCommandRegistry:
 
     @staticmethod
     def _handle_wiki_semantic_search(
-        kernel: CognitiveKernel, text: str, match: re.Match[str]
+        kernel: CognitiveKernel, text: str, match: Any
     ) -> str:
         query_str = match.group("query").strip()
         search_results = kernel.wiki.search_semantic(query_str, top_k=5)
@@ -243,7 +514,7 @@ class CognitiveCommandRegistry:
 
     @staticmethod
     def _handle_wiki_backlinks(
-        kernel: CognitiveKernel, text: str, match: re.Match[str]
+        kernel: CognitiveKernel, text: str, match: Any
     ) -> str:
         target = match.group("target").strip().lower()
         backlinks = kernel.wiki.get_backlinks(target)
@@ -251,7 +522,7 @@ class CognitiveCommandRegistry:
 
     @staticmethod
     def _handle_wiki_page_summary(
-        kernel: CognitiveKernel, text: str, match: re.Match[str]
+        kernel: CognitiveKernel, text: str, match: Any
     ) -> str:
         target = match.group("target").strip().lower()
         page = kernel.wiki.get_page(target)
@@ -261,14 +532,14 @@ class CognitiveCommandRegistry:
 
     @staticmethod
     def _handle_concept_clustering(
-        kernel: CognitiveKernel, text: str, match: re.Match[str]
+        kernel: CognitiveKernel, text: str, match: Any
     ) -> str:
         report = kernel.latent_inducer.induce_latent_knots(min_cluster_size=2)
         return kernel.dialogue_surface.verbalize_latent_induction(report)
 
     @staticmethod
     def _handle_list_latent_knots(
-        kernel: CognitiveKernel, text: str, match: re.Match[str]
+        kernel: CognitiveKernel, text: str, match: Any
     ) -> str:
         all_concepts = kernel.memory.list_concepts()
         latent_concepts = [
@@ -280,7 +551,7 @@ class CognitiveCommandRegistry:
 
     @staticmethod
     def _handle_explain_concept_cluster(
-        kernel: CognitiveKernel, text: str, match: re.Match[str]
+        kernel: CognitiveKernel, text: str, match: Any
     ) -> str:
         target = match.group("target").strip().rstrip("?.!")
         info = kernel.latent_inducer.explain_concept_cluster(target)
@@ -290,25 +561,27 @@ class CognitiveCommandRegistry:
 
     @staticmethod
     def _handle_dream_cycle(
-        kernel: CognitiveKernel, text: str, match: re.Match[str]
+        kernel: CognitiveKernel, text: str, match: Any
     ) -> str:
         steps = 1
-        m_steps = re.search(r"\b(\d+)\s+steps?\b", text, re.IGNORECASE)
-        if m_steps:
-            steps = min(5, int(m_steps.group(1)))
+        words = text.lower().split()
+        for idx, w in enumerate(words[:-1]):
+            if w.isdigit() and words[idx + 1].rstrip("?.!,") in ("step", "steps"):
+                steps = min(5, int(w))
+                break
         report = kernel.self_study.dream(max_steps=steps)
         return kernel.dialogue_surface.verbalize_dream_report(report)
 
     @staticmethod
     def _handle_knowledge_gaps(
-        kernel: CognitiveKernel, text: str, match: re.Match[str]
+        kernel: CognitiveKernel, text: str, match: Any
     ) -> str:
         gaps = kernel.self_study.get_epistemic_gaps(top_n=5)
         return kernel.dialogue_surface.verbalize_epistemic_gaps(gaps)
 
     @staticmethod
     def _handle_study_concept(
-        kernel: CognitiveKernel, text: str, match: re.Match[str]
+        kernel: CognitiveKernel, text: str, match: Any
     ) -> str:
         target = match.group("target").strip().lower()
         axis_match = match.groupdict().get("axis")
@@ -320,7 +593,7 @@ class CognitiveCommandRegistry:
 
     @staticmethod
     def _handle_simulate_dynamics(
-        kernel: CognitiveKernel, text: str, match: re.Match[str]
+        kernel: CognitiveKernel, text: str, match: Any
     ) -> str:
         target = match.group("target").strip().lower()
         duration_val = match.groupdict().get("duration")
@@ -353,7 +626,7 @@ class CognitiveCommandRegistry:
 
     @staticmethod
     def _handle_physical_action(
-        kernel: CognitiveKernel, text: str, match: re.Match[str]
+        kernel: CognitiveKernel, text: str, match: Any
     ) -> str:
         from little.core.concept_knot import ConceptKnot
         from little.dynamics.cfc_ode import apply_action_jump
@@ -412,7 +685,7 @@ class CognitiveCommandRegistry:
 
     @staticmethod
     def _handle_sensory_observation(
-        kernel: CognitiveKernel, text: str, match: re.Match[str]
+        kernel: CognitiveKernel, text: str, match: Any
     ) -> str:
         obs = kernel.sensory_engine.parse_sensory_directive(text)
         if not obs:
@@ -422,7 +695,7 @@ class CognitiveCommandRegistry:
 
     @staticmethod
     def _handle_cognitive_status(
-        kernel: CognitiveKernel, text: str, match: re.Match[str]
+        kernel: CognitiveKernel, text: str, match: Any
     ) -> str:
         snap = kernel.get_telemetry_snapshot()
         mem = snap["memory"]
@@ -446,7 +719,7 @@ class CognitiveCommandRegistry:
 
     @staticmethod
     def _handle_mlm_train(
-        kernel: CognitiveKernel, text: str, match: re.Match[str]
+        kernel: CognitiveKernel, text: str, match: Any
     ) -> str:
         raw_text = match.group("train_text").strip()
         rep = kernel.mlm.train_on_text(raw_text)
@@ -465,7 +738,7 @@ class CognitiveCommandRegistry:
 
     @staticmethod
     def _handle_mlm_ask(
-        kernel: CognitiveKernel, text: str, match: re.Match[str]
+        kernel: CognitiveKernel, text: str, match: Any
     ) -> str:
         q_text = match.group("query_text").strip()
         res = kernel.mlm.query_360(q_text)

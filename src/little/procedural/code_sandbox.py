@@ -118,8 +118,14 @@ class CodeSandbox:
         if result.success:
             return result
         # Identify the failing assertion from the child traceback line number.
-        import re
-        lines = [int(ln) for ln in re.findall(r'File "<restricted>", line (\d+)', result.stderr)]
+        marker = 'File "<restricted>", line '
+        lines: list[int] = []
+        for err_line in result.stderr.splitlines():
+            if marker in err_line:
+                after = err_line.split(marker, 1)[1]
+                digits = "".join(ch for ch in after.split(",", 1)[0] if ch.isdigit())
+                if digits:
+                    lines.append(int(digits))
         func_lines = len(func_code.splitlines())
         assert_lines = [ln - func_lines - 1 for ln in lines if 0 <= ln - func_lines - 1 < len(assertions)]
         index = assert_lines[0] if assert_lines else -1

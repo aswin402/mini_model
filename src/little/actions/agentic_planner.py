@@ -8,7 +8,6 @@ with goal decomposition, variable binding across chained steps, DeepSeek-R1 inva
 from __future__ import annotations
 
 import datetime
-import re
 import sqlite3
 import sys
 import time
@@ -17,7 +16,7 @@ from copy import deepcopy
 from dataclasses import replace
 from typing import Any
 
-from little.actions.action_router import ActionRouter
+from little.actions.action_router import ActionRouter, _is_file_path_token
 from little.actions.grounding import ToolGroundingEngine
 from little.actions.models import (
     AgenticPlanExecutionResult,
@@ -32,6 +31,82 @@ from little.actions.pre_dispatch_verifier import PreDispatchVerifier
 from little.actions.tool_executor import ToolExecutor
 from little.actions.tool_policy import ActionPolicy, ToolDefinitionsPolicy
 from little.memory.store import MemoryStore
+
+
+def _has_bounded_phrase(text: str, phrase: str) -> bool:
+    low = text.lower()
+    target = phrase.lower()
+    start = 0
+    while True:
+        idx = low.find(target, start)
+        if idx == -1:
+            return False
+        end = idx + len(target)
+        left_ok = idx == 0 or not (low[idx - 1].isalnum() or low[idx - 1] == "_")
+        right_ok = end == len(low) or not (low[end].isalnum() or low[end] == "_")
+        if left_ok and right_ok:
+            return True
+        start = idx + 1
+
+
+def _mask_quoted_spans(text: str) -> str:
+    chars = list(text)
+    n = len(chars)
+    i = 0
+    while i < n:
+        if chars[i] in ('"', "'"):
+            quote = chars[i]
+            j = i + 1
+            while j < n:
+                if chars[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if chars[j] == quote:
+                    j += 1
+                    break
+                j += 1
+            for k in range(i, j):
+                chars[k] = " "
+            i = j
+        else:
+            i += 1
+    return "".join(chars)
+
+
+def _find_variable_tokens(text: str) -> list[tuple[int, int, int | None]]:
+    """Scan text for $step_N[.output] or $(prev|previous|result|output)[.output] tokens."""
+    spans: list[tuple[int, int, int | None]] = []
+    n = len(text)
+    i = 0
+    while i < n:
+        if text[i] != "$":
+            i += 1
+            continue
+        end = -1
+        step_idx: int | None = None
+        if text.startswith("$step_", i):
+            j = i + 6
+            while j < n and text[j].isdigit():
+                j += 1
+            if j > i + 6:
+                step_idx = int(text[i + 6 : j])
+                end = j
+        else:
+            for kw in ("$previous", "$prev", "$result", "$output"):
+                if text.startswith(kw, i):
+                    end = i + len(kw)
+                    break
+        if end == -1:
+            i += 1
+            continue
+        if text.startswith(".output", end):
+            end += 7
+        if end < n and (text[end].isalnum() or text[end] in "_."):
+            i += 1
+            continue
+        spans.append((i, end, step_idx))
+        i = end
+    return spans
 
 
 class AgenticPlanner:
@@ -68,27 +143,30 @@ class AgenticPlanner:
         # Must contain at least one conjunction delimiter or step marker
         has_conjunction = (
             any(
-                re.search(rf"\b{re.escape(d)}\b", text, re.IGNORECASE)
+                _has_bounded_phrase(text, d)
                 for d in self.policy.conjunction_delimiters
                 if d != ";"
             )
             or ";" in text
         )
 
-        has_step_marker = bool(
-            re.search(
-                r"(?:^|\s)(?:step\s+\d+:?|\d+\.\s+|first\b|second\b)",
-                text,
-                re.IGNORECASE,
+        words_low = [w.strip(",:;?.!") for w in text.lower().split()]
+        has_step_marker = (
+            any(w in ("first", "second") for w in words_low)
+            or any(
+                words_low[i] == "step" and words_low[i + 1].isdigit()
+                for i in range(len(words_low) - 1)
+            )
+            or any(
+                line.lstrip() and line.lstrip().split(" ", 1)[0].endswith(".") and line.lstrip().split(" ", 1)[0][:-1].isdigit()
+                for line in text.splitlines()
             )
         )
 
-        has_compound_action = bool(
-            re.search(
-                r"\b(?:and|then)\s+(?:write|save|read|run|exec|compute|calculate|search)\b",
-                text,
-                re.IGNORECASE,
-            )
+        action_verbs = {"write", "save", "read", "run", "exec", "compute", "calculate", "search"}
+        has_compound_action = any(
+            words_low[i] in ("and", "then") and words_low[i + 1] in action_verbs
+            for i in range(len(words_low) - 1)
         )
 
         if not (has_conjunction or has_step_marker or has_compound_action):
@@ -139,10 +217,8 @@ class AgenticPlanner:
                     ):
                         if idx > 1:
                             deps.append(idx - 1)
-                    m_step = re.search(r"\$step_(\d+)", arg_val)
-                    if m_step:
-                        step_ref = int(m_step.group(1))
-                        if 1 <= step_ref < idx:
+                    for _, _, step_ref in _find_variable_tokens(arg_val):
+                        if step_ref is not None and 1 <= step_ref < idx:
                             deps.append(step_ref)
 
             # If no explicit variable reference but sequential action, default dependency on previous step
@@ -181,20 +257,14 @@ class AgenticPlanner:
         plan = self.decompose_goal(goal)
         return self.execute_plan(plan)
 
-    _VARIABLE = re.compile(
-        r"\$(?:step_(?P<index>\d+)|(?P<previous>prev(?:ious)?|result|output))(?:\.output)?(?![\w.])"
-    )
-
     def _variable_dependencies(
         self, arguments: dict[str, Any], previous: int
     ) -> set[int]:
         references: set[int] = set()
         for value in arguments.values():
             if isinstance(value, str):
-                for match in self._VARIABLE.finditer(value):
-                    references.add(
-                        int(match.group("index")) if match.group("index") else previous
-                    )
+                for _, _, step_idx in _find_variable_tokens(value):
+                    references.add(step_idx if step_idx is not None else previous)
         return references
 
     def execute_plan(self, plan: Plan) -> AgenticPlanExecutionResult:
@@ -407,53 +477,159 @@ class AgenticPlanner:
     def _split_compound_utterance(self, text: str) -> list[str]:
         """Split compound sentence into sub-goal clauses while respecting quoted expressions."""
         clean = text.strip()
+        masked = _mask_quoted_spans(clean)
+        low_masked = masked.lower()
+        n = len(masked)
 
-        # Mask quoted spans while retaining offsets into the original text.
-        masked = re.sub(
-            r"\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'",
-            lambda match: " " * len(match.group()),
-            clean,
-        )
-        numbered = False
-        if re.search(r"(?:^|\s)step\s+\d+:?", masked, re.IGNORECASE):
-            pattern = r"(?:^|\s)step\s+\d+:?"
-            numbered = True
-        elif re.search(r"(?:^|\n)\d+\.\s+", masked):
-            pattern = r"(?:^|\n)\d+\.\s+"
-            numbered = True
-        else:
-            delimiters = "|".join(
-                re.escape(value)
-                for value in sorted(
-                    self.policy.conjunction_delimiters, key=len, reverse=True
-                )
-                if value != ";"
-            )
-            pattern = (
-                rf"(?:;|\b(?:{delimiters})\b"
-                r"|,?\s*\band\s+(?=(?:write|save|read|run|exec|calculate|compute|search)\b))"
-            )
+        # 1. Check for numbered "step <digits>[:]" markers
+        step_spans: list[tuple[int, int]] = []
+        i = 0
+        while i < n:
+            if (i == 0 or low_masked[i - 1].isspace()) and low_masked.startswith("step", i):
+                j = i + 4
+                if j < n and low_masked[j].isspace():
+                    while j < n and low_masked[j].isspace():
+                        j += 1
+                    k = j
+                    while k < n and low_masked[k].isdigit():
+                        k += 1
+                    if k > j:
+                        if k < n and low_masked[k] == ":":
+                            k += 1
+                        start_pos = i - 1 if (i > 0 and low_masked[i - 1].isspace()) else i
+                        step_spans.append((start_pos, k))
+                        i = k
+                        continue
+            i += 1
+
+        if step_spans:
+            parts: list[str] = []
+            cursor = 0
+            for sp_start, sp_end in step_spans:
+                piece = clean[cursor:sp_start].strip()
+                if not (cursor == 0 and not piece):
+                    parts.append(piece)
+                cursor = sp_end
+            parts.append(clean[cursor:].strip())
+            return parts
+
+        # 2. Check for "<digits>. " at start of line
+        num_dot_spans: list[tuple[int, int]] = []
+        i = 0
+        while i < n:
+            if (i == 0 or low_masked[i - 1] == "\n") and low_masked[i].isdigit():
+                j = i
+                while j < n and low_masked[j].isdigit():
+                    j += 1
+                if j < n and low_masked[j] == "." and j + 1 < n and low_masked[j + 1].isspace():
+                    k = j + 1
+                    while k < n and low_masked[k].isspace():
+                        k += 1
+                    start_pos = i - 1 if (i > 0 and low_masked[i - 1] == "\n") else i
+                    num_dot_spans.append((start_pos, k))
+                    i = k
+                    continue
+            i += 1
+
+        if num_dot_spans:
+            parts = []
+            cursor = 0
+            for sp_start, sp_end in num_dot_spans:
+                piece = clean[cursor:sp_start].strip()
+                if not (cursor == 0 and not piece):
+                    parts.append(piece)
+                cursor = sp_end
+            parts.append(clean[cursor:].strip())
+            return parts
+
+        # 3. Conjunction delimiters and ",? and <action_verb>"
+        delims = [
+            d.lower()
+            for d in sorted(self.policy.conjunction_delimiters, key=len, reverse=True)
+            if d != ";"
+        ]
+        action_verbs = ("write", "save", "read", "run", "exec", "calculate", "compute", "search")
+
+        split_spans: list[tuple[int, int]] = []
+        i = 0
+        while i < n:
+            if low_masked[i] == ";":
+                split_spans.append((i, i + 1))
+                i += 1
+                continue
+
+            matched_delim = False
+            for d in delims:
+                if low_masked.startswith(d, i):
+                    end = i + len(d)
+                    left_ok = i == 0 or not (low_masked[i - 1].isalnum() or low_masked[i - 1] == "_")
+                    right_ok = end == n or not (low_masked[end].isalnum() or low_masked[end] == "_")
+                    if left_ok and right_ok:
+                        split_spans.append((i, end))
+                        i = end
+                        matched_delim = True
+                        break
+            if matched_delim:
+                continue
+
+            # Check optional comma + spaces + "and " + lookahead for action_verb
+            sp_start = i
+            j = i
+            if j < n and low_masked[j] == ",":
+                j += 1
+            while j < n and low_masked[j].isspace():
+                j += 1
+            if (j == 0 or not (low_masked[j - 1].isalnum() or low_masked[j - 1] == "_")) and low_masked.startswith("and", j):
+                k = j + 3
+                if k < n and low_masked[k].isspace():
+                    while k < n and low_masked[k].isspace():
+                        k += 1
+                    for verb in action_verbs:
+                        if low_masked.startswith(verb, k):
+                            v_end = k + len(verb)
+                            if v_end == n or not (low_masked[v_end].isalnum() or low_masked[v_end] == "_"):
+                                split_spans.append((sp_start, k))
+                                i = k
+                                matched_delim = True
+                                break
+            if not matched_delim:
+                i += 1
+
         parts = []
         cursor = 0
-        for match in re.finditer(pattern, masked, re.IGNORECASE):
-            piece = clean[cursor : match.start()].strip()
-            if not (numbered and cursor == 0 and not piece):
-                parts.append(piece)
-            cursor = match.end()
+        for sp_start, sp_end in split_spans:
+            parts.append(clean[cursor:sp_start].strip())
+            cursor = sp_end
         parts.append(clean[cursor:].strip())
         return parts
 
     def _clean_subgoal_text(self, text: str) -> str:
         """Strip introductory ordinal words and punctuation from sub-goal segment."""
         s = text.strip()
-        s = re.sub(
-            r"^(?:first|second|third|fourth|finally|next|please|now)\s*,?\s*",
-            "",
-            s,
-            flags=re.IGNORECASE,
-        )
-        s = re.sub(r"^step\s*\d+\s*:\s*", "", s, flags=re.IGNORECASE)
-        s = re.sub(r"^\d+\.\s*", "", s)
+        intro_words = ("first", "second", "third", "fourth", "finally", "next", "please", "now")
+        low_s = s.lower()
+        for w in intro_words:
+            if low_s.startswith(w) and (len(s) == len(w) or not s[len(w)].isalnum()):
+                rest = s[len(w) :].lstrip()
+                if rest.startswith(","):
+                    rest = rest[1:].lstrip()
+                s = rest
+                low_s = s.lower()
+                break
+        if low_s.startswith("step"):
+            rest = s[4:].lstrip()
+            j = 0
+            while j < len(rest) and rest[j].isdigit():
+                j += 1
+            if j > 0:
+                after_num = rest[j:].lstrip()
+                if after_num.startswith(":"):
+                    s = after_num[1:].lstrip()
+        j = 0
+        while j < len(s) and s[j].isdigit():
+            j += 1
+        if j > 0 and j < len(s) and s[j] == ".":
+            s = s[j + 1 :].lstrip()
         return s.strip().rstrip(";,")
 
     def _resolve_subgoal_tool_call(
@@ -472,58 +648,71 @@ class AgenticPlanner:
                     )
             return ToolCall(tool_name=direct_call.tool_name, arguments=args)
 
+        clean = text.strip()
+        low = clean.lower()
+
         # 2. File Writer shortcuts: "write [the] result to [file] <path>", "save [the] result to <path>"
-        m_write_res = re.search(
-            r"^(?:write|save)\s+(?:the\s+)?(?:result|output|answer|that|results|it)?\s*(?:to\s+(?:file\s+)?)?(?P<file_path>[a-zA-Z0-9_\-\./]+)(?:\s*:\s*(?P<content>.+))?$",
-            text,
-            re.IGNORECASE,
-        )
-        if m_write_res:
-            file_path = m_write_res.group("file_path").strip()
-            content_val = m_write_res.group("content")
-            if content_val:
-                content_template = self._normalize_variable_reference_string(
-                    content_val.strip(), prev_step_index
-                )
-            else:
-                content_template = "$prev.output"
-            return ToolCall(
-                tool_name="file_writer",
-                arguments={"file_path": file_path, "content": content_template},
-            )
+        for pref in ("write ", "save "):
+            if low.startswith(pref):
+                rest = clean[len(pref) :].strip()
+                content_val: str | None = None
+                if ":" in rest:
+                    rest, content_val = rest.split(":", 1)
+                tokens = rest.strip().split()
+                low_toks = [t.lower() for t in tokens]
+                idx = 0
+                if idx < len(low_toks) and low_toks[idx] == "the":
+                    idx += 1
+                if idx < len(low_toks) and low_toks[idx] in ("result", "output", "answer", "that", "results", "it"):
+                    idx += 1
+                if idx < len(low_toks) and low_toks[idx] == "to":
+                    idx += 1
+                    if idx < len(low_toks) and low_toks[idx] == "file":
+                        idx += 1
+                if idx == len(tokens) - 1 and _is_file_path_token(tokens[idx]):
+                    file_path = tokens[idx].strip()
+                    if content_val is not None and content_val.strip():
+                        content_template = self._normalize_variable_reference_string(
+                            content_val.strip(), prev_step_index
+                        )
+                    else:
+                        content_template = "$prev.output"
+                    return ToolCall(
+                        tool_name="file_writer",
+                        arguments={"file_path": file_path, "content": content_template},
+                    )
 
         # 3. File Reader shortcuts: "read [file] <path>"
-        m_read = re.search(
-            r"^(?:read|view|cat)\s+(?:file\s+)?(?P<file_path>[a-zA-Z0-9_\-\./]+)$",
-            text,
-            re.IGNORECASE,
-        )
-        if m_read:
-            return ToolCall(
-                tool_name="file_reader",
-                arguments={"file_path": m_read.group("file_path").strip()},
-            )
+        for pref in ("read ", "view ", "cat "):
+            if low.startswith(pref):
+                tokens = clean[len(pref) :].strip().split()
+                if tokens and tokens[0].lower() == "file":
+                    tokens = tokens[1:]
+                if len(tokens) == 1 and _is_file_path_token(tokens[0]):
+                    return ToolCall(
+                        tool_name="file_reader",
+                        arguments={"file_path": tokens[0].strip()},
+                    )
 
         # 4. Calculator shortcuts: "calculate X", "what is 250 * 4", etc.
-        m_calc = re.search(r"^(?:calc(?:ulate)?|compute)\s+(.+)$", text, re.IGNORECASE)
-        if not m_calc:
-            m_what_math = re.search(
-                r"^(?:what\s+is|how\s+much\s+is|evaluate)\s+(.+?)\??$",
-                text,
-                re.IGNORECASE,
-            )
-            if m_what_math:
-                math_cand = m_what_math.group(1).strip()
+        for pref in ("calculate ", "calc ", "compute "):
+            if low.startswith(pref):
+                expr = clean[len(pref) :].strip()
+                if expr:
+                    return ToolCall(
+                        tool_name="calculator",
+                        arguments={"expression": expr},
+                    )
+        for pref in ("what is ", "how much is ", "evaluate "):
+            if low.startswith(pref):
+                math_cand = clean[len(pref) :].rstrip("?").strip()
                 if any(c.isdigit() for c in math_cand) and any(
                     op in math_cand for op in ("+", "-", "*", "/", "%", "of")
                 ):
-                    m_calc = m_what_math
-
-        if m_calc:
-            return ToolCall(
-                tool_name="calculator",
-                arguments={"expression": m_calc.group(1).strip()},
-            )
+                    return ToolCall(
+                        tool_name="calculator",
+                        arguments={"expression": math_cand},
+                    )
 
         return None
 
@@ -531,15 +720,33 @@ class AgenticPlanner:
         self, text: str, prev_step_index: int
     ) -> str:
         """Replace natural pronouns like 'the result', 'the answer' with standard variable references."""
-        s = text
-        s = re.sub(
-            r"\b(?:the\s+result|the\s+output|the\s+answer|that\s+result|it)\b",
+        replacement = (
             f"$step_{prev_step_index}.output"
             if prev_step_index > 0
-            else "$prev.output",
-            s,
-            flags=re.IGNORECASE,
+            else "$prev.output"
         )
+        phrases = ("the result", "the output", "the answer", "that result", "it")
+        s = text
+        for ph in phrases:
+            low = s.lower()
+            idx = 0
+            out: list[str] = []
+            while True:
+                pos = low.find(ph, idx)
+                if pos == -1:
+                    out.append(s[idx:])
+                    break
+                end = pos + len(ph)
+                left_ok = pos == 0 or not (low[pos - 1].isalnum() or low[pos - 1] == "_")
+                right_ok = end == len(low) or not (low[end].isalnum() or low[end] == "_")
+                if left_ok and right_ok:
+                    out.append(s[idx:pos])
+                    out.append(replacement)
+                    idx = end
+                else:
+                    out.append(s[idx : pos + 1])
+                    idx = pos + 1
+            s = "".join(out)
         return s
 
     # -------------------------------------------------------------------------
@@ -582,20 +789,26 @@ class AgenticPlanner:
                 resolved[key] = val
                 continue
 
-            def binding(match: re.Match[str]) -> Any:
-                index = (
-                    int(match.group("index")) if match.group("index") else prev_step_idx
-                )
+            def binding(step_idx: int | None) -> Any:
+                index = step_idx if step_idx is not None else prev_step_idx
                 if index not in step_outputs:
                     raise ValueError(f"Missing output binding for step {index}")
                 return step_outputs[index]
 
-            exact = self._VARIABLE.fullmatch(val)
-            resolved[key] = (
-                binding(exact)
-                if exact
-                else self._VARIABLE.sub(lambda match: str(binding(match)), val)
-            )
+            spans = _find_variable_tokens(val)
+            if len(spans) == 1 and spans[0][0] == 0 and spans[0][1] == len(val):
+                resolved[key] = binding(spans[0][2])
+            elif spans:
+                chunks: list[str] = []
+                cursor = 0
+                for start_i, end_i, step_i in spans:
+                    chunks.append(val[cursor:start_i])
+                    chunks.append(str(binding(step_i)))
+                    cursor = end_i
+                chunks.append(val[cursor:])
+                resolved[key] = "".join(chunks)
+            else:
+                resolved[key] = val
 
             # Type conformity check against ToolDefinition schema
             if tool_def and key in tool_def.parameters:
@@ -626,11 +839,17 @@ class AgenticPlanner:
         # Case 1: Python REPL missing standard import
         if tool_name == "python_repl" and "code" in arguments:
             code = str(arguments["code"])
-            m_name = re.search(
-                r"name\s+'([a-zA-Z0-9_]+)'\s+is\s+not\s+defined", error_msg
-            )
-            if m_name:
-                missing_mod = m_name.group(1)
+            missing_mod: str | None = None
+            marker = "name '"
+            suffix = "' is not defined"
+            if marker in error_msg and suffix in error_msg:
+                start_idx = error_msg.index(marker) + len(marker)
+                end_idx = error_msg.find(suffix, start_idx)
+                if end_idx > start_idx:
+                    cand = error_msg[start_idx:end_idx]
+                    if cand.isidentifier():
+                        missing_mod = cand
+            if missing_mod:
                 stdlib_modules = getattr(
                     sys,
                     "stdlib_module_names",

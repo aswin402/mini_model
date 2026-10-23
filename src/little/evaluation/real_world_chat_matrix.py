@@ -18,7 +18,6 @@ Profiles latency (ms), Headroom context token compression, and process RSS memor
 
 from __future__ import annotations
 
-import re
 import resource
 import shutil
 import sys
@@ -119,7 +118,24 @@ class RealWorldChatBenchmark:
         return round(usage / divisor, 2)
 
     @staticmethod
-    def _is_refuted_reply(r: str) -> bool:
+    def _has_token(text: str, token: str) -> bool:
+        """Check if token appears in text bounded by non-alphanumeric characters."""
+        low = text.lower()
+        target = token.lower()
+        start = 0
+        while True:
+            idx = low.find(target, start)
+            if idx == -1:
+                return False
+            end = idx + len(target)
+            left_ok = idx == 0 or not (low[idx - 1].isalnum() or low[idx - 1] == "_")
+            right_ok = end == len(low) or not (low[end].isalnum() or low[end] == "_")
+            if left_ok and right_ok:
+                return True
+            start = idx + 1
+
+    @classmethod
+    def _is_refuted_reply(cls, r: str) -> bool:
         low = r.lower()
         if any(
             u in low
@@ -132,10 +148,11 @@ class RealWorldChatBenchmark:
             )
         ):
             return False
-        if re.search(r"\byes\b", low):
+        if cls._has_token(low, "yes"):
             return False
-        return bool(
-            re.search(r"\b(no|not|distinct|refuted|impossible|incompatible)\b", low)
+        return any(
+            cls._has_token(low, w)
+            for w in ("no", "not", "distinct", "refuted", "impossible", "incompatible")
         )
 
     def run(self) -> dict[str, Any]:
@@ -202,15 +219,15 @@ class RealWorldChatBenchmark:
             # Category 5: Exact CAS & Symbolic Math
             # -------------------------------------------------------------
             ("Exact Math & CAS", "What is 45 * 12 + 180 / 6?", "compound_cas_arithmetic",
-             lambda r: bool(re.search(r"\b570\b", r))),
+             lambda r: self._has_token(r, "570")),
             ("Exact Math & CAS", "What is (3/4) + (2/5)?", "fraction_cas_arithmetic",
-             lambda r: bool(re.search(r"\b(1\.15|23/20)\b", r))),
+             lambda r: self._has_token(r, "1.15") or self._has_token(r, "23/20")),
             ("Exact Math & CAS", "Sarah has 15 apples. She gives 4 apples to Bob, then buys 7 more apples. How many apples does Sarah have now?", "word_problem_proportional",
-             lambda r: bool(re.search(r"\b18\b", r))),
+             lambda r: self._has_token(r, "18")),
             ("Exact Math & CAS", "Convert 36 inches to feet", "unit_conversion_graph",
-             lambda r: bool(re.search(r"\b3(?:\.0+)?\b", r))),
+             lambda r: self._has_token(r, "3") or self._has_token(r, "3.0")),
             ("Exact Math & CAS", "Is 104729 prime?", "symbolic_primality_test",
-             lambda r: bool(re.search(r"\b(yes|true)\b", r.lower())) and "not prime" not in r.lower()),
+             lambda r: (self._has_token(r, "yes") or self._has_token(r, "true")) and "not prime" not in r.lower()),
 
             # -------------------------------------------------------------
             # Category 6: Deterministic AST Code Synthesis

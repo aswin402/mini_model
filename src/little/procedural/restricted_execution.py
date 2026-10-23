@@ -177,13 +177,37 @@ exec(compiled_code, namespace, namespace)
 def symbolic_expression(text, transformations=()):
     """Construct bounded algebra directly from syntax nodes, without Python evaluation."""
     import ast
-    import re
 
     import sympy
     text = str(text).strip().replace('^', '**')
     if len(text) > 4096:
         raise ValueError('Symbolic expression size limit exceeded')
-    text = re.sub(r'(\d|\))\s*([A-Za-z(])', r'\1*\2', text)
+    out_chars = []
+    i = 0
+    while i < len(text):
+        out_chars.append(text[i])
+        if text[i].isdigit() or text[i] == ')':
+            j = i + 1
+            while j < len(text) and text[j].isspace():
+                j += 1
+            if j < len(text) and (text[j].isalpha() or text[j] == '('):
+                if (
+                    text[i].isdigit()
+                    and j == i + 1
+                    and text[j] in 'eE'
+                    and j + 1 < len(text)
+                    and (
+                        text[j + 1].isdigit()
+                        or (text[j + 1] in '+-' and j + 2 < len(text) and text[j + 2].isdigit())
+                    )
+                ):
+                    pass
+                else:
+                    out_chars.append('*')
+                    i = j
+                    continue
+        i += 1
+    text = ''.join(out_chars)
     tree = ast.parse(text, mode='eval')
     if sum(1 for _ in ast.walk(tree)) > 256:
         raise ValueError('Symbolic complexity limit exceeded')
@@ -192,10 +216,11 @@ def symbolic_expression(text, transformations=()):
         if depth > 32:
             raise ValueError('Symbolic depth limit exceeded')
         if isinstance(node, ast.Constant) and type(node.value) in (int, float):
-            literal = ast.get_source_segment(text, node)
-            exponent = re.search(r"[eE]([+-]?\d+)$", literal)
-            if exponent and abs(int(exponent.group(1))) > 1000:
-                raise ValueError('Numeric literal exponent limit exceeded')
+            literal = ast.get_source_segment(text, node) or str(node.value)
+            if 'e' in literal.lower():
+                _, exp_part = literal.lower().rsplit('e', 1)
+                if exp_part.lstrip('+-').isdigit() and abs(int(exp_part)) > 1000:
+                    raise ValueError('Numeric literal exponent limit exceeded')
             return sympy.Rational(literal)
         if isinstance(node, ast.Name) and node.id.isalpha() and len(node.id) <= 16:
             return {'pi': sympy.pi, 'E': sympy.E}.get(node.id, sympy.Symbol(node.id))

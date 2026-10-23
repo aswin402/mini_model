@@ -1620,4 +1620,50 @@ def test_spiderweb_mlm_phase66_zero_regex_across_8_cognitive_packages(
         mlm.close()
 
 
+def test_spiderweb_mlm_phase67_zero_regex_across_12_cognitive_packages(
+    tmp_path,
+) -> None:
+    """Verify Phase 67: Zero Regex Across 12 Full Packages (mlu, neural, reasoning, memory, perception, dynamics, knowledge, active, evaluation, core, actions, procedural)."""
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    zero_regex_packages = (
+        "mlu",
+        "neural",
+        "reasoning",
+        "memory",
+        "perception",
+        "dynamics",
+        "knowledge",
+        "active",
+        "evaluation",
+        "core",
+        "actions",
+        "procedural",
+    )
+    for pkg in zero_regex_packages:
+        for py_file in (repo_root / "src" / "little" / pkg).glob("*.py"):
+            lines = [ln.strip() for ln in py_file.read_text(encoding="utf-8").splitlines()]
+            assert "import re" not in lines, f"Found 'import re' in {py_file}"
+
+    # Verify CognitiveCommandRegistry, ActionRouter, AgenticPlanner, and MathStorySolver operate without regex
+    db_file = str(tmp_path / "phase67_zero_regex.db")
+    with MemoryStore(db_file, seed_ontology=True) as mem:
+        from little.core.kernel import CognitiveKernel
+
+        kernel = CognitiveKernel(mem, workspace_root=tmp_path)
+        reply_calc = kernel.chat("calculate 250 * 4")
+        assert "1000" in reply_calc
+
+        reply_story = kernel.chat(
+            "Sarah has 15 apples. She gives 4 apples to Bob, then buys 7 more apples. How many apples does Sarah have now?"
+        )
+        assert "18" in reply_story
+
+        reply_status = kernel.chat("show cognitive status")
+        assert "Cognitive Telemetry:" in reply_status
+        kernel.mlm.close()
+
+
+
 

@@ -17,6 +17,77 @@ from little.procedural.math_cas import SymbolicCAS
 from little.procedural.restricted_execution import run as restricted_run
 
 
+def _extract_words(text: str) -> list[str]:
+    words: list[str] = []
+    cur: list[str] = []
+    for ch in text:
+        if ch.isalnum() or ch == "_":
+            cur.append(ch)
+        elif cur:
+            words.append("".join(cur))
+            cur = []
+    if cur:
+        words.append("".join(cur))
+    return words
+
+
+def _strip_wiki_markup(text: str) -> str:
+    # Replace [[target|label]] -> label, [[target]] -> target
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i : i + 2] == "[[":
+            end = text.find("]]", i + 2)
+            if end != -1:
+                inner = text[i + 2 : end]
+                if "|" in inner:
+                    inner = inner.split("|")[-1]
+                out.append(inner)
+                i = end + 2
+                continue
+        if text[i : i + 3] == "'''":
+            i += 3
+            continue
+        if text[i : i + 2] == "''":
+            i += 2
+            continue
+        out.append(text[i])
+        i += 1
+    return " ".join("".join(out).split()).strip()
+
+
+def _expand_percent_expr(expr: str) -> str:
+    # Handle "X% of Y" -> "(X / 100) * Y"
+    lower = expr.lower()
+    if "% of " in lower:
+        idx = lower.find("% of ")
+        left = expr[:idx].strip()
+        right = expr[idx + 5 :].strip()
+        if left and right:
+            expr = f"({left} / 100) * {right}"
+    # Replace standalone N% -> (N / 100)
+    out: list[str] = []
+    i = 0
+    n = len(expr)
+    while i < n:
+        if expr[i].isdigit():
+            j = i
+            has_dot = False
+            while j < n and (expr[j].isdigit() or (expr[j] == "." and not has_dot)):
+                if expr[j] == ".":
+                    has_dot = True
+                j += 1
+            if j < n and expr[j] == "%":
+                num_str = expr[i:j]
+                out.append(f"({num_str} / 100)")
+                i = j + 1
+                continue
+        out.append(expr[i])
+        i += 1
+    return "".join(out)
+
+
 class ToolExecutor:
     """Safely dispatches and executes typed tools with verification gates."""
 
@@ -95,9 +166,7 @@ class ToolExecutor:
 
     def _exec_calculator(self, args: dict[str, Any]) -> tuple[Any, str | None, str | None, str | None]:
         """Execute exact math CAS expression."""
-        expr_str = str(args["expression"]).strip()
-        import re
-        expr_str = re.sub(r"(\d+(?:\.\d+)?)\s*%\s*(?:of\s*)?", r"(\1 / 100) * ", expr_str)
+        expr_str = _expand_percent_expr(str(args["expression"]).strip())
         cas = SymbolicCAS()
         try:
             sol = cas.solve_rational_expression(expr_str)
@@ -161,13 +230,11 @@ class ToolExecutor:
         self, query: str, max_results: int
     ) -> list[dict[str, Any]]:
         """Search local Living Wiki vault and world corpora for factual snippets matching query."""
-        import re
-
         from little.core.runtime_paths import RuntimePaths
 
         clean_q = query.strip()
         q_lower = clean_q.lower()
-        q_tokens = [w for w in re.findall(r"\w+", q_lower) if len(w) > 2]
+        q_tokens = [w for w in _extract_words(q_lower) if len(w) > 2]
         if not q_tokens:
             q_tokens = [clean_q.lower()]
 
@@ -205,15 +272,12 @@ class ToolExecutor:
                 if q_lower in raw_text.lower():
                     score += 35.0
 
-                stem_tokens = set(re.findall(r"\w+", stem_clean.lower()))
+                stem_tokens = set(_extract_words(stem_clean.lower()))
+                raw_words = _extract_words(raw_text.lower())
                 for tok in q_tokens:
                     if tok in stem_tokens:
                         score += 25.0
-                    matches = len(
-                        re.findall(
-                            r"\b" + re.escape(tok) + r"\b", raw_text, re.IGNORECASE
-                        )
-                    )
+                    matches = sum(1 for w in raw_words if w == tok)
                     score += min(matches * 4.0, 20.0)
 
                 if score <= 0.0:
@@ -224,12 +288,11 @@ class ToolExecutor:
                     parts = body.split("\n---\n", 1)
                     body = parts[1].strip()
 
-                title_match = re.search(r"^#\s+(.+)$", body, re.MULTILINE)
-                title = (
-                    title_match.group(1).strip()
-                    if title_match
-                    else stem_clean.title()
-                )
+                title = stem_clean.title()
+                for ln in body.splitlines():
+                    if ln.startswith("# "):
+                        title = ln[2:].strip()
+                        break
 
                 best_snippet = ""
                 best_para_score = -1
@@ -242,15 +305,9 @@ class ToolExecutor:
                     paragraphs = [body]
 
                 for p in paragraphs:
-                    clean_p = re.sub(r"\[\[(.*?)\]\]", r"\1", p)
-                    clean_p = re.sub(r"[*_`#]", "", clean_p)
-                    p_score = sum(
-                        1
-                        for tok in q_tokens
-                        if re.search(
-                            r"\b" + re.escape(tok) + r"\b", clean_p, re.IGNORECASE
-                        )
-                    )
+                    clean_p = _strip_wiki_markup(p)
+                    p_words = set(_extract_words(clean_p.lower()))
+                    p_score = sum(1 for tok in q_tokens if tok in p_words)
                     if p_score > best_para_score:
                         best_para_score = p_score
                         best_snippet = clean_p

@@ -6,11 +6,20 @@ into symbolic systems solved via Cramer's rule with verifiable <math_trace>.
 
 from __future__ import annotations
 
-import re
 from fractions import Fraction
 
 from little.procedural.algebraic_word_problem_policy import AlgebraicWordProblemPolicy
 from little.procedural.math_cas import MathSolution, SymbolicCAS
+
+
+def _is_num(tok: str) -> bool:
+    s = tok.strip().lstrip("$")
+    if not s:
+        return False
+    if s[0] in "+-":
+        s = s[1:]
+    return bool(s) and s.count(".") <= 1 and s.replace(".", "", 1).isdigit()
+
 
 
 class AlgebraicWordProblemSolver:
@@ -23,33 +32,33 @@ class AlgebraicWordProblemSolver:
     def is_algebraic_problem(self, text: str) -> bool:
         """Heuristic check if input contains algebraic word problem indicators."""
         s = text.lower()
+        toks = [t.strip(".,?!:;()") for t in s.split() if t.strip(".,?!:;()")]
         has_mult = any(m in s for m in self.policy.multipliers)
         has_sum = any(k in s for k in self.policy.sum_keywords)
         has_offset = any(o in s for o in self.policy.positive_offsets + self.policy.negative_offsets)
-        has_cost_system = bool(re.search(r"\b\d+\s+[a-zA-Z]+(?:\s+and\s+\d+\s+[a-zA-Z]+)?\s+cost\b", s))
-        has_proportional = bool(re.search(r"\bas\s+many\s+[a-zA-Z]+\s+as\b", s))
+        has_cost_system = "cost" in toks and any(
+            toks[i].isdigit() and toks[i + 1].isalpha()
+            for i in range(len(toks) - 1)
+        )
+        has_proportional = any(
+            toks[i] == "as" and toks[i + 1] == "many" and toks[i + 2].isalpha() and toks[i + 3] == "as"
+            for i in range(len(toks) - 3)
+        )
         return (has_mult or has_offset or has_cost_system or has_proportional) and (
-            has_sum or bool(re.search(r"\b(?:in|ago|cost|price|sum|total|together)\b", s))
+            has_sum or any(w in toks for w in ("in", "ago", "cost", "price", "sum", "total", "together"))
         )
 
     def _extract_temporal_shift(self, text: str) -> int:
         """Extract signed temporal shift in years (e.g. 'in 5 years' -> +5, '4 years ago' -> -4)."""
-        fut_pat = self.policy.temporal_shifts.get("future_regex", "")
-        if fut_pat:
-            m_fut = re.search(fut_pat, text, re.IGNORECASE)
-            if m_fut:
-                num_str = m_fut.group(1) or m_fut.group(2)
-                if num_str:
-                    return int(num_str)
-
-        past_pat = self.policy.temporal_shifts.get("past_regex", "")
-        if past_pat:
-            m_past = re.search(past_pat, text, re.IGNORECASE)
-            if m_past:
-                num_str = m_past.group(1)
-                if num_str:
-                    return -int(num_str)
-
+        toks = [t.strip(".,?!:;()") for t in text.lower().split() if t.strip(".,?!:;()")]
+        for i, tok in enumerate(toks):
+            if tok == "in" and i + 2 < len(toks) and toks[i + 1].isdigit() and toks[i + 2] in ("year", "years"):
+                return int(toks[i + 1])
+            if tok.isdigit() and i + 2 < len(toks) and toks[i + 1] in ("year", "years"):
+                if toks[i + 2] in ("later", "from"):
+                    return int(tok)
+                if toks[i + 2] in ("ago", "earlier", "before"):
+                    return -int(tok)
         return 0
 
     def solve(self, text: str) -> MathSolution | None:
@@ -75,11 +84,8 @@ class AlgebraicWordProblemSolver:
 
     def _solve_age_problem(self, text: str) -> MathSolution | None:
         """Solve age problems with multipliers/offsets and temporal sum/differences."""
-        # Find 2 entities (proper nouns / names)
-        # e.g. "Alice is twice as old as Bob. In 5 years, the sum of their ages will be 40. How old is Alice?"
-        # Relation 1: E1 is [multiplier / offset] as old as E2 (or older/younger than E2)
-        # Pattern: ([A-Z][a-zA-Z0-9_]*)\s+is\s+(.+?)\s+as\s+old\s+as\s+([A-Z][a-zA-Z0-9_]*)
-        # or ([A-Z][a-zA-Z0-9_]*)\s+is\s+(\d+)\s+years\s+(older|younger)\s+than\s+([A-Z][a-zA-Z0-9_]*)
+        toks = [t.strip(".,?!:;()") for t in text.split() if t.strip(".,?!:;()")]
+        low = [t.lower() for t in toks]
 
         e1: str | None = None
         e2: str | None = None
@@ -88,76 +94,83 @@ class AlgebraicWordProblemSolver:
         c1: Fraction = Fraction(0)
 
         # Check multiplier pattern: "Alice is twice as old as Bob" or "Alice is 3 times as old as Bob"
-        m_mult = re.search(
-            r"([A-Z][a-zA-Z0-9_]*)\s+is\s+([a-zA-Z0-9_\s]+?)\s+(?:times\s+)?as\s+old\s+as\s+([A-Z][a-zA-Z0-9_]*)",
-            text,
-            re.IGNORECASE,
-        )
-        if m_mult:
-            e1 = m_mult.group(1)
-            mult_str = m_mult.group(2).strip().lower()
-            e2 = m_mult.group(3)
-
-            # Map multiplier
-            mult_val = self.policy.multipliers.get(mult_str)
-            if mult_val is None:
-                # Try single number e.g. "3 times"
-                m_dig = re.match(r"^(\d+(?:\.\d+)?)$", mult_str)
-                if m_dig:
-                    mult_val = float(m_dig.group(1))
-
-            if mult_val is not None:
-                # E1 = mult * E2  =>  1 * E1 - mult * E2 = 0
-                b1 = -Fraction(mult_val).limit_denominator()
-                c1 = Fraction(0)
+        for i in range(1, len(toks)):
+            if low[i] == "is":
+                for j in range(i + 2, min(len(toks) - 3, i + 6)):
+                    if low[j : j + 3] == ["as", "old", "as"] and j + 3 < len(toks):
+                        cand_e1 = toks[i - 1]
+                        cand_e2 = toks[j + 3]
+                        mult_words = low[i + 1 : j]
+                        if mult_words and mult_words[-1] == "times" and len(mult_words) > 1:
+                            mult_clean = " ".join(mult_words[:-1])
+                        else:
+                            mult_clean = " ".join(mult_words)
+                        mult_val = self.policy.multipliers.get(" ".join(mult_words))
+                        if mult_val is None:
+                            mult_val = self.policy.multipliers.get(mult_clean)
+                        if mult_val is None and _is_num(mult_clean):
+                            mult_val = float(mult_clean)
+                        if mult_val is not None:
+                            e1 = cand_e1
+                            e2 = cand_e2
+                            b1 = -Fraction(mult_val).limit_denominator()
+                            c1 = Fraction(0)
+                            break
+                if e1 is not None:
+                    break
 
         # Check offset pattern: "David is 4 years older than Sarah"
         if e1 is None:
-            m_offset = re.search(
-                r"([A-Z][a-zA-Z0-9_]*)\s+is\s+(\d+(?:\.\d+)?)\s+years?\s+([a-zA-Z\s]+?)\s+than\s+([A-Z][a-zA-Z0-9_]*)",
-                text,
-                re.IGNORECASE,
-            )
-            if m_offset:
-                e1 = m_offset.group(1)
-                offset_val = float(m_offset.group(2))
-                rel = m_offset.group(3).strip().lower()
-                e2 = m_offset.group(4)
-
-                rel_full = f"{rel} than"
-                is_positive = any(p in rel_full or p.startswith(rel) for p in self.policy.positive_offsets)
-                is_negative = any(n in rel_full or n.startswith(rel) for n in self.policy.negative_offsets)
-
-                if is_positive:
-                    # E1 = E2 + offset => E1 - E2 = offset
-                    b1 = Fraction(-1)
-                    c1 = Fraction(offset_val).limit_denominator()
-                elif is_negative:
-                    # E1 = E2 - offset => E1 - E2 = -offset
-                    b1 = Fraction(-1)
-                    c1 = Fraction(-offset_val).limit_denominator()
+            for i in range(1, len(toks) - 5):
+                if (
+                    low[i] == "is"
+                    and _is_num(toks[i + 1])
+                    and low[i + 2] in ("year", "years")
+                    and low[i + 4] == "than"
+                ):
+                    cand_e1 = toks[i - 1]
+                    offset_val = float(toks[i + 1])
+                    rel = low[i + 3]
+                    cand_e2 = toks[i + 5]
+                    rel_full = f"{rel} than"
+                    is_positive = any(p in rel_full or p.startswith(rel) for p in self.policy.positive_offsets)
+                    is_negative = any(n in rel_full or n.startswith(rel) for n in self.policy.negative_offsets)
+                    if is_positive:
+                        e1, e2 = cand_e1, cand_e2
+                        b1 = Fraction(-1)
+                        c1 = Fraction(offset_val).limit_denominator()
+                        break
+                    if is_negative:
+                        e1, e2 = cand_e1, cand_e2
+                        b1 = Fraction(-1)
+                        c1 = Fraction(-offset_val).limit_denominator()
+                        break
 
         if e1 is None or e2 is None:
             return None
 
         # Equation 2: Sum of their ages with optional temporal shift
-        # "In 5 years, the sum of their ages will be 40"
-        # "4 years ago, the sum of their ages was 24"
-        # "The sum of their ages is 28"
         shift_years = self._extract_temporal_shift(text)
-        m_sum = re.search(
-            r"(?:sum\s+of\s+(?:their|the)\s+ages|combined\s+age|sum\s+is|sum\s+will\s+be|sum\s+was|total\s+age\s+is|together\s+they\s+are)\s+(?:will\s+be\s+|is\s+|was\s+)?(\d+(?:\.\d+)?)",
-            text,
-            re.IGNORECASE,
-        )
-        if not m_sum:
-            # Try alternate phrasing: "sum of their ages will be 40"
-            m_sum = re.search(r"sum\s+of\s+their\s+ages\s+(?:will\s+be|is|was)\s+(\d+(?:\.\d+)?)", text, re.IGNORECASE)
+        total_str: str | None = None
+        for i in range(len(toks)):
+            if low[i] in ("ages", "age", "sum", "together") or (
+                i > 0 and low[i - 1] in ("ages", "age", "sum", "together")
+            ):
+                # Look ahead up to 4 tokens for a number after is/was/will be
+                for k in range(i + 1, min(len(toks), i + 5)):
+                    if _is_num(toks[k]) and (
+                        k == 0 or low[k - 1] not in ("in", "years", "year")
+                    ):
+                        if any(v in low[i:k] for v in ("is", "be", "was", "are")):
+                            total_str = toks[k]
+                            break
+            if total_str is not None:
+                break
 
-        if not m_sum:
+        if total_str is None:
             return None
 
-        total_future_or_past = Fraction(m_sum.group(1)).limit_denominator()
+        total_future_or_past = Fraction(total_str).limit_denominator()
 
         # (E1 + shift) + (E2 + shift) = total => E1 + E2 = total - 2 * shift
         a2 = Fraction(1)
@@ -175,9 +188,10 @@ class AlgebraicWordProblemSolver:
 
         # Determine target question: e.g. "How old is Alice?" or "How old is Bob?"
         q_target = None
-        m_q = re.search(r"how\s+old\s+is\s+([A-Z][a-zA-Z0-9_]*)", text, re.IGNORECASE)
-        if m_q:
-            q_target = m_q.group(1).strip().capitalize()
+        for i in range(len(toks) - 3):
+            if low[i : i + 3] == ["how", "old", "is"]:
+                q_target = toks[i + 3].strip().capitalize()
+                break
 
         e1_cap = e1.capitalize()
         e2_cap = e2.capitalize()
@@ -193,7 +207,6 @@ class AlgebraicWordProblemSolver:
             other_name = e2_cap
             other_val = y_val
 
-        # Format steps and answer
         val_display = int(target_val) if target_val.denominator == 1 else f"{target_val.numerator}/{target_val.denominator}"
         other_display = int(other_val) if other_val.denominator == 1 else f"{other_val.numerator}/{other_val.denominator}"
 
@@ -219,42 +232,66 @@ class AlgebraicWordProblemSolver:
 
     def _solve_cost_problem(self, text: str) -> MathSolution | None:
         """Solve cost/pricing problems: 'A pen costs $3 more than a notebook. 2 pens and 3 notebooks cost $21.'"""
-        # Equation 1: Item A costs $D more/less than Item B
-        # Pattern: (?:a|an)?\s*([a-zA-Z]+)\s+costs?\s+(\d+(?:\.\d+)?)\s*(?:dollars?|\$)?\s*([a-zA-Z\s]+?)\s+than\s+(?:a|an)?\s*([a-zA-Z]+)
-        m_diff = re.search(
-            r"(?:a|an)?\s*([a-zA-Z]+)\s+costs?\s+(\d+(?:\.\d+)?)\s*(?:dollars?|\$)?\s*(more|less)\s+than\s+(?:a|an)?\s*([a-zA-Z]+)",
-            text,
-            re.IGNORECASE,
-        )
-        if not m_diff:
+        toks = [t.strip(".,?!:;()") for t in text.split() if t.strip(".,?!:;()")]
+        low = [t.lower() for t in toks]
+
+        item1: str | None = None
+        diff_val: float = 0.0
+        direction: str = "more"
+        item2: str | None = None
+
+        for i in range(1, len(toks) - 3):
+            if low[i] in ("cost", "costs") and _is_num(toks[i + 1]):
+                cand_item1 = low[i - 1]
+                cand_diff = float(toks[i + 1].lstrip("$"))
+                k = i + 2
+                if k < len(low) and low[k] in ("dollar", "dollars", "$"):
+                    k += 1
+                if k + 1 < len(low) and low[k] in ("more", "less") and low[k + 1] == "than":
+                    dir_tok = low[k]
+                    m_idx = k + 2
+                    if m_idx < len(low) and low[m_idx] in ("a", "an", "the"):
+                        m_idx += 1
+                    if m_idx < len(low) and low[m_idx].isalpha():
+                        item1 = cand_item1
+                        diff_val = cand_diff
+                        direction = dir_tok
+                        item2 = low[m_idx]
+                        break
+
+        if item1 is None or item2 is None:
             return None
 
-        item1 = m_diff.group(1).lower()
-        diff_val = float(m_diff.group(2))
-        direction = m_diff.group(3).lower()
-        item2 = m_diff.group(4).lower()
-
-        # Equation 1: x - y = diff (or -diff if less)
         a1 = Fraction(1)
         b1 = Fraction(-1)
         c1 = Fraction(diff_val if direction == "more" else -diff_val).limit_denominator()
 
-        # Equation 2: N1 items1 and N2 items2 cost $TOTAL
-        # e.g. "2 pens and 3 notebooks cost 21 dollars"
-        m_combo = re.search(
-            r"(\d+)\s+([a-zA-Z]+)\s+and\s+(\d+)\s+([a-zA-Z]+)\s+cost\s+(\d+(?:\.\d+)?)\s*(?:dollars?|\$)?",
-            text,
-            re.IGNORECASE,
-        )
-        if not m_combo:
+        # Equation 2: "<q_a> <name_a> and <q_b> <name_b> cost <total_cost>"
+        q_a: int | None = None
+        name_a: str = ""
+        q_b: int | None = None
+        total_cost: Fraction | None = None
+
+        for i in range(len(toks) - 5):
+            if (
+                toks[i].isdigit()
+                and low[i + 1].isalpha()
+                and low[i + 2] == "and"
+                and toks[i + 3].isdigit()
+                and low[i + 4].isalpha()
+                and low[i + 5] in ("cost", "costs")
+                and i + 6 < len(toks)
+                and _is_num(toks[i + 6])
+            ):
+                q_a = int(toks[i])
+                name_a = low[i + 1].rstrip("s")
+                q_b = int(toks[i + 3])
+                total_cost = Fraction(toks[i + 6].lstrip("$")).limit_denominator()
+                break
+
+        if q_a is None or q_b is None or total_cost is None:
             return None
 
-        q_a = int(m_combo.group(1))
-        name_a = m_combo.group(2).lower().rstrip("s")
-        q_b = int(m_combo.group(3))
-        total_cost = Fraction(m_combo.group(5)).limit_denominator()
-
-        # Match name_a and name_b to item1 and item2
         if name_a.startswith(item1[:3]):
             a2 = Fraction(q_a)
             b2 = Fraction(q_b)
@@ -271,14 +308,17 @@ class AlgebraicWordProblemSolver:
         x_val = vals["x"]
         y_val = vals["y"]
 
-        # Target question
-        # "What is the cost of a pen?"
         q_item = item1
-        m_q = re.search(r"cost\s+of\s+(?:a|an|the)?\s*([a-zA-Z]+)", text, re.IGNORECASE)
-        if m_q:
-            raw_q = m_q.group(1).lower().rstrip("s")
-            if raw_q.startswith(item2[:3]):
-                q_item = item2
+        for i in range(len(low) - 2):
+            if low[i : i + 2] == ["cost", "of"]:
+                k = i + 2
+                if k < len(low) and low[k] in ("a", "an", "the"):
+                    k += 1
+                if k < len(low):
+                    raw_q = low[k].rstrip("s")
+                    if raw_q.startswith(item2[:3]):
+                        q_item = item2
+                break
 
         target_val = x_val if q_item == item1 else y_val
         val_display = int(target_val) if target_val.denominator == 1 else f"{target_val.numerator}/{target_val.denominator}"
@@ -304,46 +344,60 @@ class AlgebraicWordProblemSolver:
 
     def _solve_proportional_quantity_problem(self, text: str) -> MathSolution | None:
         """Solve proportional quantity problems: 'Lucas has 3 times as many books as Maya. Together they have 48 books. How many books does Lucas have?'"""
-        # Relation 1: E1 has [multiplier] as many [noun] as E2
-        m_prop = re.search(
-            r"([A-Z][a-zA-Z0-9_]*)\s+has\s+([a-zA-Z0-9_\s]+?)\s+(?:times\s+)?as\s+many\s+([a-zA-Z0-9_]+)\s+as\s+([A-Z][a-zA-Z0-9_]*)",
-            text,
-            re.IGNORECASE,
-        )
-        if not m_prop:
+        toks = [t.strip(".,?!:;()") for t in text.split() if t.strip(".,?!:;()")]
+        low = [t.lower() for t in toks]
+
+        e1: str | None = None
+        mult_val: float | None = None
+        noun: str = ""
+        e2: str | None = None
+
+        for i in range(1, len(toks)):
+            if low[i] == "has":
+                for j in range(i + 2, min(len(toks) - 4, i + 6)):
+                    if low[j : j + 2] == ["as", "many"] and low[j + 3] == "as" and j + 4 < len(toks):
+                        cand_e1 = toks[i - 1]
+                        cand_noun = toks[j + 2]
+                        cand_e2 = toks[j + 4]
+                        mult_words = low[i + 1 : j]
+                        mult_full = " ".join(mult_words)
+                        mult_clean = (
+                            " ".join(mult_words[:-1])
+                            if mult_words and mult_words[-1] == "times" and len(mult_words) > 1
+                            else mult_full
+                        )
+                        mv = self.policy.multipliers.get(mult_full)
+                        if mv is None:
+                            mv = self.policy.multipliers.get(mult_clean)
+                        if mv is None:
+                            mv = self.policy.multipliers.get(f"{mult_clean} times")
+                        if mv is None and _is_num(mult_clean):
+                            mv = float(mult_clean)
+                        if mv is not None:
+                            e1, mult_val, noun, e2 = cand_e1, mv, cand_noun, cand_e2
+                            break
+                if e1 is not None:
+                    break
+
+        if e1 is None or mult_val is None or e2 is None:
             return None
 
-        e1 = m_prop.group(1).strip()
-        mult_str = m_prop.group(2).strip().lower()
-        noun = m_prop.group(3).strip()
-        e2 = m_prop.group(4).strip()
-
-        mult_val = self.policy.multipliers.get(mult_str)
-        if mult_val is None:
-            mult_val = self.policy.multipliers.get(f"{mult_str} times")
-        if mult_val is None:
-            m_dig = re.match(r"^(\d+(?:\.\d+)?)$", mult_str)
-            if m_dig:
-                mult_val = float(m_dig.group(1))
-
-        if mult_val is None:
-            return None
-
-        # Equation 1: 1 * E1 - mult * E2 = 0
         a1 = Fraction(1)
         b1 = -Fraction(mult_val).limit_denominator()
         c1 = Fraction(0)
 
         # Equation 2: E1 + E2 = total
-        m_sum = re.search(
-            r"(?:together\s+(?:they\s+have)?|the\s+sum\s+of\s+their\s+[a-zA-Z0-9_]+\s+is|in\s+total\s+(?:they\s+have)?|combined\s+they\s+have|they\s+have)\s*(\d+(?:\.\d+)?)",
-            text,
-            re.IGNORECASE,
-        )
-        if not m_sum:
+        total_str: str | None = None
+        for i in range(len(toks) - 1):
+            if low[i] in ("have", "is") and _is_num(toks[i + 1]):
+                if any(k in low[max(0, i - 4) : i + 1] for k in ("together", "sum", "total", "combined", "they")):
+                    total_str = toks[i + 1]
+                    break
+
+        if total_str is None:
             return None
 
-        total_val = Fraction(m_sum.group(1)).limit_denominator()
+        total_val = Fraction(total_str).limit_denominator()
         a2 = Fraction(1)
         b2 = Fraction(1)
         c2 = total_val
@@ -356,18 +410,18 @@ class AlgebraicWordProblemSolver:
         x_val = vals["x"]
         y_val = vals["y"]
 
-        # Target entity: "How many books does Lucas have?"
         e1_cap = e1.capitalize()
         e2_cap = e2.capitalize()
         target_name = e1_cap
 
-        m_q = re.search(r"how\s+many\s+(?:[a-zA-Z0-9_]+\s+)?does\s+([A-Z][a-zA-Z0-9_]*)\s+have", text, re.IGNORECASE)
-        if m_q:
-            cand = m_q.group(1).strip().capitalize()
-            if cand.lower() == e2_cap.lower():
-                target_name = e2_cap
-            elif cand.lower() == e1_cap.lower():
-                target_name = e1_cap
+        for i in range(len(low) - 2):
+            if low[i] == "does" and low[i + 2] == "have":
+                cand = toks[i + 1].capitalize()
+                if cand.lower() == e2_cap.lower():
+                    target_name = e2_cap
+                elif cand.lower() == e1_cap.lower():
+                    target_name = e1_cap
+                break
 
         if target_name.lower() == e2_cap.lower():
             target_val = y_val

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import re
 from typing import TYPE_CHECKING, Any
 
 from little.procedural.code_policy import CodeSynthesizerPolicy
@@ -83,13 +82,19 @@ class SocraticCodeRepair:
             return None
 
         # Pattern: func(arg1, ...) == expected
-        match = re.match(r"^([a-zA-Z_]\w*)\((.*)\)\s*==\s*(.+)$", failing_assert.strip())
-        if not match:
+        s_assert = failing_assert.strip()
+        if "==" not in s_assert:
             return None
-
-        _func_name, raw_args, raw_expected = match.groups()
-        raw_args = raw_args.strip()
+        left_call, raw_expected = s_assert.split("==", 1)
+        left_call = left_call.strip()
         raw_expected = raw_expected.strip()
+        if "(" not in left_call or not left_call.endswith(")") or not raw_expected:
+            return None
+        open_idx = left_call.index("(")
+        _func_name = left_call[:open_idx].strip()
+        if not _func_name.isidentifier():
+            return None
+        raw_args = left_call[open_idx + 1 : -1].strip()
 
         # Parse AST tree to clone
         try:
