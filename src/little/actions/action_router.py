@@ -81,121 +81,59 @@ class ActionRouter:
     def _match_policy_intent(
         self, tool_name: str, patterns: tuple[str, ...], text: str
     ) -> dict[str, str] | None:
-        """Match tool intent patterns defined in ActionPolicy without regex."""
+        """Match tool intent patterns defined in ActionPolicy using recursive-descent policy AST evaluation."""
+        from little.language.parser import _match_pattern
+
         clean = text.strip()
         low = clean.lower()
 
-        if tool_name == "calculator":
-            for pref in ("calculate ", "calc ", "compute "):
-                if low.startswith(pref):
-                    expr = clean[len(pref) :].strip()
-                    if expr:
-                        return {"expression": expr}
-            if low.startswith("what is ") or low.startswith("what's "):
-                pref_len = 8 if low.startswith("what is ") else 7
-                body = clean[pref_len:].rstrip("?").strip()
-                body_low = body.lower()
-                # Check if body is purely arithmetic or "<num>% of <num>"
-                allowed_chars = set("0123456789.+-*/^()% ")
-                if body and any(c.isdigit() for c in body):
-                    if all(c in allowed_chars for c in body) and any(
-                        op in body for op in ("+", "-", "*", "/", "^", "%")
-                    ):
-                        return {"expression": body}
-                    if " of " in body_low and "%" in body_low:
-                        parts = body_low.split(" of ", 1)
-                        left_p = parts[0].replace("%", "").strip()
-                        right_p = parts[1].strip()
-                        if _is_num_token(left_p) and _is_num_token(right_p):
-                            return {"expression": body}
+        if tool_name == "web_search" and low.startswith(
+            ("search wiki ", "search the wiki ")
+        ):
             return None
 
-        if tool_name == "python_repl":
-            for pref in (
-                "run python:",
-                "run python ",
-                "execute python:",
-                "execute python ",
-                "exec python:",
-                "exec python ",
-                "evaluate python:",
-                "evaluate python ",
-                "eval python:",
-                "eval python ",
-                "python:",
-            ):
-                if low.startswith(pref):
-                    code = clean[len(pref) :].lstrip(":").strip()
-                    if code:
-                        return {"code": code}
-            return None
-
-        if tool_name == "system_time":
-            norm = " ".join(low.rstrip("?").split())
-            if norm in {
-                "what's the time",
-                "what is the time",
-                "what's the current time",
-                "what is the current time",
-                "what time is it",
-                "what's today's date",
-                "what is today's date",
-                "what's today date",
-                "what is today date",
-                "current date",
-                "current date and time",
-                "time",
-            }:
-                return {}
-            return None
-
-        if tool_name == "web_search":
-            if low.startswith("search wiki ") or low.startswith("search the wiki "):
-                return None
-            for pref in (
-                "search the web for ",
-                "search for ",
-                "search ",
-                "google ",
-                "lookup ",
-            ):
-                if low.startswith(pref):
-                    q = clean[len(pref) :].rstrip("?").strip()
-                    if q:
-                        return {"query": q}
-            return None
-
-        if tool_name == "file_reader":
-            for pref in ("read file ", "view file ", "cat "):
-                if low.startswith(pref):
-                    fp = clean[len(pref) :].strip()
-                    if _is_file_path_token(fp):
-                        return {"file_path": fp}
-            return None
-
-        if tool_name == "file_writer":
-            if low.startswith("write to file ") and ":" in clean:
-                rest = clean[len("write to file ") :]
-                fp, content = rest.split(":", 1)
-                if _is_file_path_token(fp.strip()) and content.strip():
-                    return {"file_path": fp.strip(), "content": content.strip()}
-            return None
-
-        if tool_name == "bash_executor":
-            for pref in (
-                "run bash:",
-                "run bash ",
-                "execute bash:",
-                "execute bash ",
-                "exec bash:",
-                "exec bash ",
-                "bash:",
-            ):
-                if low.startswith(pref):
-                    cmd = clean[len(pref) :].lstrip(":").strip()
-                    if cmd:
-                        return {"command": cmd}
-            return None
+        # Evaluate declarative patterns from ActionPolicy via our regex-free policy AST compiler
+        for pat in patterns:
+            m = _match_pattern(pat, clean)
+            if m is not None:
+                captured = {
+                    k: str(v).strip()
+                    for k, v in m.groupdict().items()
+                    if v is not None and str(v).strip()
+                }
+                if tool_name == "calculator" and "expression" in captured:
+                    expr = captured["expression"].rstrip("?").strip()
+                    expr_low = expr.lower()
+                    if low.startswith(("what is ", "what's ")):
+                        allowed_chars = set("0123456789.+-*/^()% ")
+                        is_pure_math = (
+                            bool(expr)
+                            and any(c.isdigit() for c in expr)
+                            and all(c in allowed_chars for c in expr)
+                            and any(op in expr for op in ("+", "-", "*", "/", "^", "%"))
+                        )
+                        is_pct_of = False
+                        if " of " in expr_low and "%" in expr_low:
+                            parts = expr_low.split(" of ", 1)
+                            is_pct_of = _is_num_token(
+                                parts[0].replace("%", "").strip()
+                            ) and _is_num_token(parts[1].strip())
+                        if not (is_pure_math or is_pct_of):
+                            continue
+                    captured["expression"] = expr
+                if (
+                    tool_name == "file_reader"
+                    and "file_path" in captured
+                    and not _is_file_path_token(captured["file_path"])
+                ):
+                    continue
+                if tool_name == "file_writer" and not (
+                    "file_path" in captured
+                    and "content" in captured
+                    and _is_file_path_token(captured["file_path"])
+                ):
+                    continue
+                return captured
 
         return None
 
@@ -229,41 +167,85 @@ class ActionRouter:
         # Word-based binary operations:
         for idx, tok in enumerate(tokens):
             # "multiply 15 by 4", "times 15 by 4"
-            if tok in ("multiply", "times") and idx + 3 < len(tokens):
-                if _is_num_token(tokens[idx + 1]) and tokens[idx + 2] in ("by", "and", "*") and _is_num_token(tokens[idx + 3]):
-                    return f"{tokens[idx + 1]} * {tokens[idx + 3]}"
+            if (
+                tok in ("multiply", "times")
+                and idx + 3 < len(tokens)
+                and _is_num_token(tokens[idx + 1])
+                and tokens[idx + 2] in ("by", "and", "*")
+                and _is_num_token(tokens[idx + 3])
+            ):
+                return f"{tokens[idx + 1]} * {tokens[idx + 3]}"
             # "product of 15 and 4"
-            if tok == "product" and idx + 4 < len(tokens) and tokens[idx + 1] == "of":
-                if _is_num_token(tokens[idx + 2]) and tokens[idx + 3] in ("by", "and", "*") and _is_num_token(tokens[idx + 4]):
-                    return f"{tokens[idx + 2]} * {tokens[idx + 4]}"
+            if (
+                tok == "product"
+                and idx + 4 < len(tokens)
+                and tokens[idx + 1] == "of"
+                and _is_num_token(tokens[idx + 2])
+                and tokens[idx + 3] in ("by", "and", "*")
+                and _is_num_token(tokens[idx + 4])
+            ):
+                return f"{tokens[idx + 2]} * {tokens[idx + 4]}"
             # "15 times 4" or "15 * 4"
-            if tok in ("times", "*") and 0 < idx < len(tokens) - 1:
-                if _is_num_token(tokens[idx - 1]) and _is_num_token(tokens[idx + 1]):
-                    return f"{tokens[idx - 1]} * {tokens[idx + 1]}"
+            if (
+                tok in ("times", "*")
+                and 0 < idx < len(tokens) - 1
+                and _is_num_token(tokens[idx - 1])
+                and _is_num_token(tokens[idx + 1])
+            ):
+                return f"{tokens[idx - 1]} * {tokens[idx + 1]}"
             # "divide 100 by 5"
-            if tok == "divide" and idx + 3 < len(tokens):
-                if _is_num_token(tokens[idx + 1]) and tokens[idx + 2] in ("by", "/") and _is_num_token(tokens[idx + 3]):
-                    return f"{tokens[idx + 1]} / {tokens[idx + 3]}"
+            if (
+                tok == "divide"
+                and idx + 3 < len(tokens)
+                and _is_num_token(tokens[idx + 1])
+                and tokens[idx + 2] in ("by", "/")
+                and _is_num_token(tokens[idx + 3])
+            ):
+                return f"{tokens[idx + 1]} / {tokens[idx + 3]}"
             # "add 25 and 75"
-            if tok == "add" and idx + 3 < len(tokens):
-                if _is_num_token(tokens[idx + 1]) and tokens[idx + 2] in ("and", "to", "+") and _is_num_token(tokens[idx + 3]):
-                    return f"{tokens[idx + 1]} + {tokens[idx + 3]}"
+            if (
+                tok == "add"
+                and idx + 3 < len(tokens)
+                and _is_num_token(tokens[idx + 1])
+                and tokens[idx + 2] in ("and", "to", "+")
+                and _is_num_token(tokens[idx + 3])
+            ):
+                return f"{tokens[idx + 1]} + {tokens[idx + 3]}"
             # "sum of 25 and 75"
-            if tok == "sum" and idx + 4 < len(tokens) and tokens[idx + 1] == "of":
-                if _is_num_token(tokens[idx + 2]) and tokens[idx + 3] in ("and", "to", "+") and _is_num_token(tokens[idx + 4]):
-                    return f"{tokens[idx + 2]} + {tokens[idx + 4]}"
+            if (
+                tok == "sum"
+                and idx + 4 < len(tokens)
+                and tokens[idx + 1] == "of"
+                and _is_num_token(tokens[idx + 2])
+                and tokens[idx + 3] in ("and", "to", "+")
+                and _is_num_token(tokens[idx + 4])
+            ):
+                return f"{tokens[idx + 2]} + {tokens[idx + 4]}"
             # "25 plus 75" or "25 + 75"
-            if tok in ("plus", "+") and 0 < idx < len(tokens) - 1:
-                if _is_num_token(tokens[idx - 1]) and _is_num_token(tokens[idx + 1]):
-                    return f"{tokens[idx - 1]} + {tokens[idx + 1]}"
+            if (
+                tok in ("plus", "+")
+                and 0 < idx < len(tokens) - 1
+                and _is_num_token(tokens[idx - 1])
+                and _is_num_token(tokens[idx + 1])
+            ):
+                return f"{tokens[idx - 1]} + {tokens[idx + 1]}"
             # "subtract 10 from 50"
-            if tok == "subtract" and idx + 3 < len(tokens):
-                if _is_num_token(tokens[idx + 1]) and tokens[idx + 2] == "from" and _is_num_token(tokens[idx + 3]):
-                    return f"{tokens[idx + 3]} - {tokens[idx + 1]}"
+            if (
+                tok == "subtract"
+                and idx + 3 < len(tokens)
+                and _is_num_token(tokens[idx + 1])
+                and tokens[idx + 2] == "from"
+                and _is_num_token(tokens[idx + 3])
+            ):
+                return f"{tokens[idx + 3]} - {tokens[idx + 1]}"
             # "50 minus 10" or "50 - 10"
-            if tok in ("minus", "-") and 0 < idx < len(tokens) - 1:
-                if _is_num_token(tokens[idx - 1]) and _is_num_token(tokens[idx + 1]):
-                    return f"{tokens[idx - 1]} - {tokens[idx + 1]}"
+            if (
+                tok in ("minus", "-")
+                and 0 < idx < len(tokens) - 1
+                and _is_num_token(tokens[idx - 1])
+                and _is_num_token(tokens[idx + 1])
+            ):
+                return f"{tokens[idx - 1]} - {tokens[idx + 1]}"
 
         return None
 
@@ -312,91 +294,19 @@ class ActionRouter:
                 i += 1
         return None
 
-    _NATURAL_TIME_QUERIES = {
-        "what is the time",
-        "what's the time",
-        "what is the current time",
-        "what's the current time",
-        "what is the time and date",
-        "what's the time and date",
-        "what is the current time and date",
-        "what's the current time and date",
-        "what is the date",
-        "what's the date",
-        "what is the current date",
-        "what's the current date",
-        "what is the date and time",
-        "what's the date and time",
-        "what is the current date and time",
-        "what's the current date and time",
-        "what is the day",
-        "what's the day",
-        "what is the day today",
-        "what's the day today",
-        "what is the timestamp",
-        "what's the timestamp",
-        "what is the current timestamp",
-        "what's the current timestamp",
-        "what time is it",
-        "what time is it now",
-        "what day is it",
-        "what day is it today",
-        "what date is it",
-        "what date is it today",
-        "what is today's date",
-        "what's today's date",
-        "what is today date",
-        "what's today date",
-        "what is today",
-        "what's today",
-        "what date is today",
-        "tell me the time",
-        "tell me the current time",
-        "tell me the date",
-        "tell me the current date",
-        "tell me the time and date",
-        "tell me the current time and date",
-        "tell me the date and time",
-        "tell me the current date and time",
-        "current time",
-        "current date",
-        "current timestamp",
-        "current time and date",
-        "current date and time",
-        "system time",
-        "system date",
-        "system clock",
-        "current system clock",
-        "the time",
-        "the current time",
-        "time",
-    }
-
     def _extract_natural_tool(self, text: str) -> ToolCall | None:
-        """Extract tool invocation from conversational tool requests."""
+        """Extract tool invocation from conversational tool requests using policy-driven token checks."""
         clean = text.lower().strip()
-        norm_q = " ".join(clean.rstrip("?").split())
 
-        # System time & date query
-        if norm_q in self._NATURAL_TIME_QUERIES:
+        # System time & date query via compositional ActionPolicy token check
+        if self.action_policy.is_natural_time_query(clean):
             return ToolCall(tool_name="system_time", arguments={"timezone": "UTC"})
 
-        # Web search
-        if not (clean.startswith("search wiki ") or clean.startswith("search the wiki ")):
-            for pref in (
-                "search the web for ",
-                "search for ",
-                "search ",
-                "google ",
-                "lookup ",
-            ):
-                if clean.startswith(pref):
-                    query = text.strip()[len(pref) :].rstrip("?").strip()
-                    if query:
-                        return ToolCall(
-                            tool_name="web_search",
-                            arguments={"query": query},
-                        )
+        # Web search via ActionPolicy intent patterns or natural prefix
+        ws_patterns = self.action_policy.intent_patterns.get("web_search", ())
+        ws_args = self._match_policy_intent("web_search", ws_patterns, text)
+        if ws_args and "query" in ws_args:
+            return ToolCall(tool_name="web_search", arguments={"query": ws_args["query"]})
 
         return None
 

@@ -71,6 +71,15 @@ class ToolDefinitionsPolicy:
         return cls.load(RuntimePaths.default().schema_directory)
 
 
+_DEFAULT_TIME_QUERY_NOUNS: frozenset[str] = frozenset({
+    "time", "date", "day", "timestamp", "clock",
+})
+
+_DEFAULT_TIME_QUERY_FRAMING_WORDS: frozenset[str] = frozenset({
+    "what", "whats", "is", "the", "current", "it", "now", "today", "todays", "and", "tell", "me", "system",
+})
+
+
 @dataclass(frozen=True)
 class ActionPolicy:
     """Policy configuring intent matching and execution limits for tool routing."""
@@ -79,6 +88,25 @@ class ActionPolicy:
     allowed_bash_binaries: tuple[str, ...]
     workspace_root: Path
     max_execution_timeout_sec: float
+    time_query_nouns: frozenset[str] = _DEFAULT_TIME_QUERY_NOUNS
+    time_query_framing_words: frozenset[str] = _DEFAULT_TIME_QUERY_FRAMING_WORDS
+
+    def is_natural_time_query(self, text: str) -> bool:
+        """Compositional token-set check for natural time/date tool inquiries."""
+        norm = text.lower().strip().rstrip("?.!")
+        tokens = [
+            t.replace("'s", "s").strip("?.!,")
+            for t in norm.split()
+            if t.strip("?.!,")
+        ]
+        if not tokens:
+            return False
+        has_noun = any(t in self.time_query_nouns for t in tokens)
+        all_allowed = all(
+            t in self.time_query_nouns or t in self.time_query_framing_words
+            for t in tokens
+        )
+        return has_noun and all_allowed
 
     @classmethod
     def load(cls, directory: str | Path, workspace_root: Path | None = None) -> ActionPolicy:
@@ -101,12 +129,26 @@ class ActionPolicy:
         ws_fallback = payload.get("workspace_root_fallback", ".")
         root = workspace_root or Path(ws_fallback).resolve()
         max_timeout = float(payload.get("max_execution_timeout_sec", 10.0))
+        time_nouns = frozenset(
+            str(w).lower().strip()
+            for w in payload.get("time_query_nouns", list(_DEFAULT_TIME_QUERY_NOUNS))
+            if str(w).strip()
+        )
+        time_framing = frozenset(
+            str(w).lower().strip()
+            for w in payload.get(
+                "time_query_framing_words", list(_DEFAULT_TIME_QUERY_FRAMING_WORDS)
+            )
+            if str(w).strip()
+        )
 
         return cls(
             intent_patterns=intents,
             allowed_bash_binaries=allowed_binaries,
             workspace_root=root,
             max_execution_timeout_sec=max_timeout,
+            time_query_nouns=time_nouns,
+            time_query_framing_words=time_framing,
         )
 
     @classmethod

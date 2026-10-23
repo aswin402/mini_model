@@ -35,96 +35,9 @@ class ASTCodeSynthesizer:
         self.sandbox = sandbox or CodeSandbox(policy=self.policy)
 
     def match_primitive(self, text: str) -> str | None:
-        """Match natural language request to an available algorithmic primitive."""
+        """Match natural language request to an available algorithmic primitive dynamically from CodeSynthesizerPolicy."""
         low = text.lower()
-        # The catalog provides canonical Python primitives, not general program synthesis.
-        # Refuse unknown modifiers rather than silently verifying a simpler request.
-        request_words = {
-            "write",
-            "create",
-            "generate",
-            "synthesize",
-            "implement",
-            "build",
-            "make",
-            "give",
-            "me",
-            "please",
-            "can",
-            "could",
-            "you",
-            "a",
-            "an",
-            "the",
-            "python",
-            "code",
-            "function",
-            "program",
-            "algorithm",
-            "to",
-            "for",
-            "of",
-            "in",
-            "that",
-            "which",
-            "check",
-            "determine",
-            "test",
-            "if",
-            "whether",
-            "is",
-            "computes",
-            "compute",
-            "calculates",
-            "calculate",
-            "returns",
-            "return",
-            "number",
-            "numbers",
-            "integer",
-            "integers",
-            "non",
-            "negative",
-            "string",
-            "strings",
-            "list",
-            "lists",
-            "array",
-            "arrays",
-            "nested",
-            "two",
-            "dimensional",
-            "2d",
-            "prime",
-            "is_prime",
-            "fibonacci",
-            "fib",
-            "factorial",
-            "palindrome",
-            "is_palindrome",
-            "reverse",
-            "reverse_string",
-            "reversed",
-            "gcd",
-            "greatest",
-            "common",
-            "divisor",
-            "binary",
-            "search",
-            "binary_search",
-            "sum",
-            "sum_list",
-            "max",
-            "maximum",
-            "max_element",
-            "element",
-            "elements",
-            "flatten",
-            "n",
-            "s",
-            "arr",
-            "target",
-        }
+        allowed_words = self.policy.allowed_request_vocabulary
         tokens: list[str] = []
         curr: list[str] = []
         for ch in low:
@@ -136,24 +49,18 @@ class ASTCodeSynthesizer:
         if curr:
             tokens.append("".join(curr))
 
-        if any(token not in request_words for token in tokens) or "%" in low:
+        if any(token not in allowed_words for token in tokens) or "%" in low:
             return None
 
         tok_set = set(tokens)
         norm_words = " ".join(tokens)
-        candidates = {
-            "is_prime": bool(tok_set & {"prime", "is_prime"}),
-            "fibonacci": bool(tok_set & {"fibonacci", "fib"}),
-            "factorial": "factorial" in tok_set,
-            "is_palindrome": bool(tok_set & {"palindrome", "is_palindrome"}),
-            "reverse_string": bool(tok_set & {"reverse", "reverse_string", "reversed"}),
-            "gcd": "gcd" in tok_set or "greatest common divisor" in norm_words,
-            "binary_search": "binary_search" in tok_set or "binary search" in norm_words,
-            "sum_list": bool(tok_set & {"sum", "sum_list"}),
-            "max_element": bool(tok_set & {"max", "maximum", "max_element"}),
-            "flatten": "flatten" in tok_set,
-        }
-        matches = [prim for prim, hit in candidates.items() if hit]
+        matches: list[str] = []
+        for prim_key, spec in self.policy.primitives.items():
+            triggers = set(spec.trigger_tokens) | {prim_key.lower(), spec.name.lower()}
+            has_token_hit = bool(tok_set & triggers)
+            has_phrase_hit = any(phrase in norm_words for phrase in spec.trigger_phrases)
+            if has_token_hit or has_phrase_hit:
+                matches.append(prim_key)
         return matches[0] if len(matches) == 1 else None
 
     def synthesize_from_request(

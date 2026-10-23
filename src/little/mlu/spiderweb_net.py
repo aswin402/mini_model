@@ -3072,6 +3072,82 @@ class SpiderWebMLM:
         "[MLU-360-DIAGNOSE]",
     )
 
+    def ground_procedural_execution_360(
+        self,
+        name: str,
+        *,
+        kind: str = "tool",
+        status: str = "SUCCESS",
+        summary: str = "",
+        persist: bool = False,
+    ) -> dict[str, Any]:
+        """Phase 74: Ground a verified tool invocation or AST algorithm synthesis into the 360° Spider-Web MLM along the procedural & episodic spokes."""
+        clean_name = name.strip().lower().replace(" ", "_")
+        if not clean_name:
+            return {"grounded": False, "concept_id": "NONE"}
+        prefix = "TOOL" if kind == "tool" else "ALGO"
+        node_cid = f"{prefix}_{clean_name.upper()}"
+        target_unit = self.get_or_create_mlu(node_cid, preferred_spoke="procedural")
+        core_unit = self.nodes["CORE_ROOT"]
+        pred = "can_execute" if kind == "tool" else "synthesizes_ast"
+        verified = status.upper() in ("SUCCESS", "VERIFIED", "SYNTHESIZED")
+
+        lr = self.plasticity.concept_learning_rate(
+            is_trunk=False,
+            evidence_count=int(target_unit.verified_hits + target_unit.refuted_hits),
+        )
+        if self.rust_arena.is_native:
+            self.rust_arena.learn_spoke(
+                "CORE_ROOT",
+                pred,
+                target_unit.concept_id,
+                learning_rate=lr,
+                verified=verified,
+            )
+        surprise = core_unit.learn_spoke_relation(
+            predicate=pred,
+            target_concept=target_unit.concept_id,
+            target_vec=target_unit.anchor_vec,
+            learning_rate=lr,
+            verified=verified,
+        )
+        target_unit.forward_liquid_step([core_unit.hidden_state])
+        core_unit.forward_liquid_step([target_unit.hidden_state])
+        if verified:
+            target_unit.verified_hits += 1.0
+        else:
+            target_unit.refuted_hits += 1.0
+
+        self.episodic_working_memory.append(
+            {
+                "turn_step": self.cycle_step,
+                "query": f"{kind}:{clean_name}",
+                "focal_concept": target_unit.concept_id,
+                "target_concept": clean_name.upper(),
+                "status": "VERIFIED" if verified else "REFUTED",
+                "active_subcore": target_unit.parent_hub or "SUBCORE_PROCEDURAL",
+                "activated_mlus": ["CORE_ROOT", target_unit.concept_id],
+                "spoke_predictions": [],
+                "inspectable_trace": f"[MLU-360-PROCEDURAL] {kind}={clean_name} | status={status}",
+                "fluent_english": summary or f"Executed {kind} {clean_name} ({status}).",
+                "confidence": 0.95 if verified else 0.15,
+                "proof_steps": [("CORE_ROOT", pred, target_unit.concept_id)],
+            }
+        )
+        if len(self.episodic_working_memory) > 16:
+            self.episodic_working_memory = self.episodic_working_memory[-16:]
+
+        self._dirty_since_save = True
+        if persist:
+            self.save_nodes(["CORE_ROOT", target_unit.concept_id])
+        return {
+            "grounded": True,
+            "concept_id": target_unit.concept_id,
+            "predicate": pred,
+            "verified": verified,
+            "surprise": round(surprise, 4),
+        }
+
     def _is_structured_arena_wave(
         self, q_res: MLMQueryResult, *, has_leading_op: bool = False
     ) -> bool:
@@ -3081,8 +3157,29 @@ class SpiderWebMLM:
             has_leading_op
             or q_res.status == "REFUTED"
             or any(tag in tr for tag in self._STRUCTURED_WAVE_TAGS)
-            or ("[MLU-360-PLAN]" in tr and q_res.confidence >= 0.72)
+            or ("[MLU-360-PLAN]" in tr and q_res.confidence >= 0.65)
         )
+
+    _CANONICAL_COT_PREDICATES: frozenset[str] = frozenset(
+        {
+            "is_a",
+            "subclass_of",
+            "instance_of",
+            "has_part",
+            "has_property",
+            "has",
+            "can",
+            "capable_of",
+            "causes",
+            "located_in",
+            "lives_in",
+            "orbits",
+            "larger_than",
+            "greater_than",
+            "before",
+            "after",
+        }
+    )
 
     def _synthesize_cell_cot_sequences(
         self,
@@ -3096,28 +3193,29 @@ class SpiderWebMLM:
         shared_attractor: str = "subcore",
     ) -> list[str]:
         """Phase 70: Synthesize cell-aligned Chain-of-Thought ('think ... answer ...') sequences routed via _predicate_to_neural_cell (0..5)."""
-        s = " ".join(_tokenize_words(subj)).strip()
+        s = subj.lower().replace("_", " ").strip()
         p = pred.lower().replace("_", " ").strip()
-        o = " ".join(_tokenize_words(obj)).strip()
+        o = obj.lower().replace("_", " ").strip()
         if not s or not o:
             return []
         sa = "an" if s[0] in "aeiou" else "a"
         oa = "an" if o[0] in "aeiou" else "a"
-        clean_p = self.frame_policy.operator_canonical_map.get(
-            pred.strip().lower(), pred.strip().lower()
+        clean_p = pred.strip().lower()
+        is_disjoint = clean_p in (
+            "disjoint_with",
+            "cannot_be",
+            "different_from",
+            "not_a",
         )
-        is_disjoint = (
-            clean_p in self.verifier.disjoint_predicates
-            or clean_p in ("disjoint_with", "cannot_be", "different_from", "not_a")
-        )
+        is_canonical = clean_p in self._CANONICAL_COT_PREDICATES
         cell_idx, cell_label = self._predicate_to_neural_cell(clean_p)
 
         if mode == "negated":
-            if cell_idx == 4:
+            if is_canonical and cell_idx == 4:
                 return [
                     f"can {sa} {s} {o}? think 360 non monotonic exception gate refutes {s} on capability spoke answer no {sa} {s} cannot {o}."
                 ]
-            if cell_idx == 1:
+            if is_canonical and cell_idx == 1:
                 return [
                     f"does {sa} {s} have {o}? think 360 non monotonic exception gate refutes {s} on mereology spoke answer no {sa} {s} does not have {o}."
                 ]
@@ -3126,15 +3224,15 @@ class SpiderWebMLM:
             ]
 
         if mode == "sleep_analogical":
-            if cell_idx == 4:
+            if is_canonical and cell_idx == 4:
                 return [
                     f"can {sa} {s} {o}? think 360 sleep analogical capability transfer from {analog_source} via {shared_attractor} answer yes {sa} {s} can {o}."
                 ]
-            if cell_idx == 3:
+            if is_canonical and cell_idx == 3:
                 return [
                     f"where does {sa} {s} live? think 360 sleep analogical spatial transfer from {analog_source} via {shared_attractor} answer {sa} {s} lives in {o}."
                 ]
-            if cell_idx == 1:
+            if is_canonical and cell_idx == 1:
                 return [
                     f"does {sa} {s} have {o}? think 360 sleep analogical mereology transfer from {analog_source} via {shared_attractor} answer yes {sa} {s} has {o}."
                 ]
@@ -3143,6 +3241,8 @@ class SpiderWebMLM:
             ]
 
         if mode == "sleep_multihop":
+            if not is_canonical:
+                return []
             chain = hop_str or f"{s} to {o}"
             if cell_idx == 0 and not is_disjoint:
                 return [
@@ -3171,27 +3271,28 @@ class SpiderWebMLM:
             return [
                 f"is a {s} a {o}? think mutual exclusivity gate refutes {s} and {o} answer no a {s} is not a {o}."
             ]
-        if cell_idx == 0:
-            return [
-                f"is a {s} a {o}? think {s} is a verified taxonomic child of {o} in the 360 spider web answer yes a {s} is a {o}.",
-                f"what is a {s}? think querying 360 taxonomy spoke for {s} answer a {s} is a {o}.",
-            ]
-        if cell_idx == 4:
-            return [
-                f"can a {s} {o}? think checking procedural spoke of {s} for {o} answer yes a {s} can {o}."
-            ]
-        if cell_idx == 1:
-            return [
-                f"does a {s} have {o}? think checking mereology and attribute spokes of {s} for {o} answer yes a {s} has {o}."
-            ]
-        if cell_idx == 2:
-            return [
-                f"what causes {o}? think tracing backward causal spoke to {s} answer {s} causes {o}."
-            ]
-        if cell_idx == 5:
-            return [
-                f"is {s} {p} {o}? think 360 poset order on dynamics spoke confirms {s} {p} {o} answer yes {s} is {p} {o}."
-            ]
+        if is_canonical:
+            if cell_idx == 0:
+                return [
+                    f"is a {s} a {o}? think {s} is a verified taxonomic child of {o} in the 360 spider web answer yes a {s} is a {o}.",
+                    f"what is a {s}? think querying 360 taxonomy spoke for {s} answer a {s} is a {o}.",
+                ]
+            if cell_idx == 4:
+                return [
+                    f"can a {s} {o}? think checking procedural spoke of {s} for {o} answer yes a {s} can {o}."
+                ]
+            if cell_idx == 1:
+                return [
+                    f"does a {s} have {o}? think checking mereology and attribute spokes of {s} for {o} answer yes a {s} has {o}."
+                ]
+            if cell_idx == 2:
+                return [
+                    f"what causes {o}? think tracing backward causal spoke to {s} answer {s} causes {o}."
+                ]
+            if cell_idx == 5:
+                return [
+                    f"is {s} {p} {o}? think 360 poset order on dynamics spoke confirms {s} {p} {o} answer yes {s} is {p} {o}."
+                ]
         return [
             f"tell me about {s}? think activating 360 spokes around {s} answer {s} {p} {o}."
         ]

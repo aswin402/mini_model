@@ -445,6 +445,13 @@ class CognitiveKernel:
                     Pathway.MATH if tool_call.tool_name == "calculator" else Pathway.TOOL
                 )
                 self._adapt_router_from_outcome(routing, target_pw, learning_rate=0.12)
+                if hasattr(self, "mlm") and self.mlm is not None:
+                    self.mlm.ground_procedural_execution_360(
+                        tool_call.tool_name,
+                        kind="tool",
+                        status="SUCCESS",
+                        summary=str(exec_result.output),
+                    )
             body = self.dialogue_surface.verbalize_tool_result(exec_result)
             reply = self.dialogue_surface.compose_reply(greeting_word, body)
             self.headroom.record_turn(role="assistant", text=reply)
@@ -544,7 +551,17 @@ class CognitiveKernel:
             exec_result = self.tool_executor.execute(tool_call)
             self.tool_grounder.ground(exec_result)
             if exec_result.success:
-                self._adapt_router_from_outcome(routing, Pathway.TOOL)
+                target_pw = (
+                    Pathway.MATH if tool_call.tool_name == "calculator" else Pathway.TOOL
+                )
+                self._adapt_router_from_outcome(routing, target_pw)
+                if hasattr(self, "mlm") and self.mlm is not None:
+                    self.mlm.ground_procedural_execution_360(
+                        tool_call.tool_name,
+                        kind="tool",
+                        status="SUCCESS",
+                        summary=str(exec_result.output),
+                    )
             return KernelOutcome(
                 frame=CandidateFrame(
                     frame_id=generate_id("frame"),
@@ -564,6 +581,13 @@ class CognitiveKernel:
             if prim is not None:
                 prog = self.code_synthesizer.synthesize(prim, verify=True)
                 self._adapt_router_from_outcome(routing, Pathway.CODE)
+                if hasattr(self, "mlm") and self.mlm is not None:
+                    self.mlm.ground_procedural_execution_360(
+                        prog.name,
+                        kind="algorithm",
+                        status=prog.status,
+                        summary=prog.docstring,
+                    )
                 return KernelOutcome(
                     frame=CandidateFrame(
                         frame_id=generate_id("frame"),

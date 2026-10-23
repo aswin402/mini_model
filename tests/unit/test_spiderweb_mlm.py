@@ -1778,3 +1778,52 @@ def test_spiderweb_mlm_phase69_to_71_online_router_feedback_and_cell_cot_synthes
         assert mlm._is_structured_arena_wave(dummy_wave) is True
         mlm.close()
 
+
+def test_spiderweb_mlm_phase72_to_74_policy_ast_actions_dynamic_code_vocab_and_360_procedural_grounding(
+    tmp_path,
+) -> None:
+    """Verify Phases 72-74: Policy-AST pattern evaluation & compositional time routing in ActionRouter, dynamic primitive vocabulary in ASTCodeSynthesizer, and 360° procedural/tool grounding in SpiderWebMLM."""
+    from little.core.kernel import CognitiveKernel
+
+    db_file = str(tmp_path / "phase72_74_procedural.db")
+    with MemoryStore(db_file, seed_ontology=True) as mem:
+        kernel = CognitiveKernel(mem, workspace_root=tmp_path)
+
+        # Phase 72: ActionRouter evaluates ActionPolicy patterns via _match_pattern and compositional time queries
+        assert kernel.action_router.action_policy.is_natural_time_query(
+            "what is the current time and date today?"
+        )
+        assert not kernel.action_router.action_policy.is_natural_time_query(
+            "what is a dog?"
+        )
+        tc_calc = kernel.action_router.route("compute 125 * 8")
+        assert tc_calc is not None and tc_calc.tool_name == "calculator"
+        assert tc_calc.arguments["expression"] == "125 * 8"
+
+        # Phase 73: ASTCodeSynthesizer dynamically derives allowed vocabulary and triggers from CodeSynthesizerPolicy
+        vocab = kernel.code_synthesizer.policy.allowed_request_vocabulary
+        assert "fibonacci" in vocab and "greatest" in vocab and "palindrome" in vocab
+        assert (
+            kernel.code_synthesizer.match_primitive(
+                "write a python function for greatest common divisor"
+            )
+            == "gcd"
+        )
+
+        # Phase 74: Executing a tool and synthesizing an AST algorithm grounds both into SpiderWebMLM procedural & episodic memory
+        res_calc = kernel.chat("calculate 125 * 8")
+        assert "1000" in res_calc
+        assert "TOOL_CALCULATOR" in kernel.mlm.nodes
+        assert kernel.mlm.nodes["TOOL_CALCULATOR"].verified_hits >= 1.0
+
+        outcome_code = kernel.process("write code for fibonacci")
+        assert outcome_code.code_program is not None
+        assert outcome_code.code_program.name == "fibonacci"
+        assert "ALGO_FIBONACCI" in kernel.mlm.nodes
+        assert kernel.mlm.nodes["ALGO_FIBONACCI"].verified_hits >= 1.0
+        assert any(
+            ep.get("focal_concept") == "ALGO_FIBONACCI"
+            for ep in kernel.mlm.episodic_working_memory
+        )
+        kernel.mlm.close()
+

@@ -56,17 +56,20 @@ class _PolicyMatch:
     """Result of matching a policy grammar pattern without regex."""
 
     def __init__(
-        self, text: str, start: int, end: int, groups: dict[int, str]
+        self, text: str, start: int, end: int, groups: dict[int | str, str]
     ) -> None:
         self._text = text
         self._start = start
         self._end = end
         self._groups = groups
 
-    def group(self, idx: int = 0) -> str:
+    def group(self, idx: int | str = 0) -> str:
         if idx == 0:
             return self._text[self._start : self._end]
         return self._groups.get(idx, "")
+
+    def groupdict(self) -> dict[str, str]:
+        return {k: v for k, v in self._groups.items() if isinstance(k, str)}
 
     def start(self) -> int:
         return self._start
@@ -134,6 +137,16 @@ def _compile_policy_pattern(pat: str) -> tuple[Any, ...]:
                 if nxt < n and pat[nxt] == ")":
                     nxt += 1
                 return ("group", None, branches, True), nxt
+            if pat[i : i + 4] == "(?P<":
+                end_name = pat.find(">", i + 4)
+                if end_name != -1:
+                    gname = pat[i + 4 : end_name]
+                    group_counter[0] += 1
+                    gid = group_counter[0]
+                    branches, nxt = parse_alt(end_name + 1)
+                    if nxt < n and pat[nxt] == ")":
+                        nxt += 1
+                    return ("group", (gid, gname), branches, False), nxt
             group_counter[0] += 1
             gid = group_counter[0]
             branches, nxt = parse_alt(i + 1)
@@ -258,7 +271,12 @@ def _eval_node(
                 for end_pos, new_g in _eval_seq(branch, 0, text, pos, groups, ci):
                     if gid is not None:
                         g2 = dict(new_g)
-                        g2[gid] = text[pos:end_pos]
+                        val = text[pos:end_pos]
+                        if isinstance(gid, tuple):
+                            g2[gid[0]] = val
+                            g2[gid[1]] = val
+                        else:
+                            g2[gid] = val
                         yield end_pos, g2
                     else:
                         yield end_pos, new_g

@@ -29,12 +29,25 @@ class SandboxPolicy:
     )
 
 
+_DEFAULT_ALLOWED_FRAMING_WORDS: frozenset[str] = frozenset({
+    "write", "create", "generate", "synthesize", "implement", "build", "make", "give", "me",
+    "please", "can", "could", "you", "a", "an", "the", "python", "code", "function", "program",
+    "algorithm", "to", "for", "of", "in", "that", "which", "check", "determine", "test", "if",
+    "whether", "is", "computes", "compute", "calculates", "calculate", "returns", "return",
+    "number", "numbers", "integer", "integers", "non", "negative", "string", "strings", "list",
+    "lists", "array", "arrays", "nested", "two", "dimensional", "2d", "element", "elements",
+    "n", "s", "arr", "target",
+})
+
+
 @dataclass(frozen=True)
 class PrimitiveSpec:
     name: str
     params: tuple[str, ...]
     docstring: str
     assertions: tuple[str, ...]
+    trigger_tokens: tuple[str, ...] = ()
+    trigger_phrases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -42,6 +55,22 @@ class CodeSynthesizerPolicy:
     version: str = "1.0.0"
     sandbox: SandboxPolicy = field(default_factory=SandboxPolicy)
     primitives: dict[str, PrimitiveSpec] = field(default_factory=dict)
+    allowed_framing_words: frozenset[str] = _DEFAULT_ALLOWED_FRAMING_WORDS
+
+    @property
+    def allowed_request_vocabulary(self) -> frozenset[str]:
+        """Dynamically compute allowed request words from framing words and registered primitive specs."""
+        vocab = set(self.allowed_framing_words)
+        for key, spec in self.primitives.items():
+            vocab.add(key.lower())
+            vocab.add(spec.name.lower())
+            for tok in spec.trigger_tokens:
+                vocab.add(tok.lower())
+            for phrase in spec.trigger_phrases:
+                for w in phrase.lower().split():
+                    if w:
+                        vocab.add(w)
+        return frozenset(vocab)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CodeSynthesizerPolicy:
@@ -57,16 +86,26 @@ class CodeSynthesizerPolicy:
         )
         prims: dict[str, PrimitiveSpec] = {}
         for k, v in data.get("algorithmic_primitives", {}).items():
+            raw_triggers = v.get("trigger_tokens", [v["name"]])
+            raw_phrases = v.get("trigger_phrases", ())
             prims[k] = PrimitiveSpec(
                 name=v["name"],
                 params=tuple(v.get("params", ())),
                 docstring=v.get("docstring", ""),
                 assertions=tuple(v.get("assertions", ())),
+                trigger_tokens=tuple(str(t).lower().strip() for t in raw_triggers if str(t).strip()),
+                trigger_phrases=tuple(str(p).lower().strip() for p in raw_phrases if str(p).strip()),
             )
+        framing = frozenset(
+            str(w).lower().strip()
+            for w in data.get("allowed_framing_words", list(_DEFAULT_ALLOWED_FRAMING_WORDS))
+            if str(w).strip()
+        )
         return cls(
             version=str(data.get("version", "1.0.0")),
             sandbox=sandbox,
             primitives=prims,
+            allowed_framing_words=framing,
         )
 
     @classmethod
@@ -75,7 +114,7 @@ class CodeSynthesizerPolicy:
             registry = SchemaRegistry.default()
             payload = registry.load_schema_dict("code_synthesizer_policy")
             return cls.from_dict(payload)
-        except Exception:
+        except (AttributeError, KeyError, ValueError, OSError):
             path = Path(__file__).resolve().parents[3] / "data" / "schemas" / "code_synthesizer_policy.json"
             if path.exists():
                 with open(path, encoding="utf-8") as f:

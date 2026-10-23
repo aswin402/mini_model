@@ -46,6 +46,12 @@
     "pwd",
     "whoami"
   ],
+  "time_query_nouns": [
+    "time", "date", "day", "timestamp", "clock"
+  ],
+  "time_query_framing_words": [
+    "what", "whats", "is", "the", "current", "it", "now", "today", "todays", "and", "tell", "me", "system"
+  ],
   "workspace_root_fallback": ".",
   "max_execution_timeout_sec": 10.0
 }
